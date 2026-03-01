@@ -6,6 +6,8 @@ import {
 	commitStagedChanges,
 	isFileStaged,
 	loadFilesWithDiffs,
+	pullFromRemote,
+	pushToRemote,
 	toggleFileStage,
 } from "#data/git";
 import {
@@ -187,6 +189,18 @@ export function App(props: AppProps) {
 			setThemeName((current) =>
 				cycleThemeName(props.themeCatalog, current, key.shift ? -1 : 1),
 			);
+			return;
+		}
+
+		if (!key.ctrl && !key.meta && key.name === "p") {
+			const result = key.shift ? pushToRemote() : pullFromRemote();
+			if (!result.ok) {
+				setError(result.error ?? "Unable to sync with remote.");
+				return;
+			}
+
+			setError(null);
+			void refreshFiles(false);
 			return;
 		}
 
