@@ -1,8 +1,8 @@
 import { parseArgs } from "node:util";
 import { Data, Effect, Option, pipe } from "effect";
 import {
-	startReviewerTuiProgram,
 	type StartReviewerTuiError,
+	startReviewerTuiProgram,
 } from "#tui/bootstrap";
 
 export class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
@@ -14,48 +14,52 @@ interface ReviewerCliArgs {
 	readonly help: boolean;
 }
 
-function parseReviewerArgs(argv: string[]): Effect.Effect<ReviewerCliArgs, CliArgumentError> {
-	let parsed: ReturnType<typeof parseArgs>;
-	try {
-		parsed = parseArgs({
-			args: argv,
-			allowPositionals: true,
-			strict: true,
-			options: {
-				"chooser-file": {
-					type: "string",
-				},
-				help: {
-					type: "boolean",
-					short: "h",
-				},
-			},
-		});
-	} catch (error) {
-		return Effect.fail(
-			new CliArgumentError({
-				message: error instanceof Error ? error.message : String(error),
-			}),
-		);
-	}
+function parseReviewerArgs(
+	argv: string[],
+): Effect.Effect<ReviewerCliArgs, CliArgumentError> {
+	return pipe(
+		Effect.try({
+			try: () =>
+				parseArgs({
+					args: argv,
+					allowPositionals: true,
+					strict: true,
+					options: {
+						"chooser-file": {
+							type: "string",
+						},
+						help: {
+							type: "boolean",
+							short: "h",
+						},
+					},
+				}),
+			catch: (error) =>
+				new CliArgumentError({
+					message: error instanceof Error ? error.message : String(error),
+				}),
+		}),
 
-	if (parsed.positionals.length > 0) {
-		return Effect.fail(
-			new CliArgumentError({
-				message: `Unexpected positional arguments: ${parsed.positionals.join(" ")}`,
-			}),
-		);
-	}
+		Effect.flatMap((parsed) => {
+			if (parsed.positionals.length > 0) {
+				return Effect.fail(
+					new CliArgumentError({
+						message: `Unexpected positional arguments: ${parsed.positionals.join(" ")}`,
+					}),
+				);
+			}
 
-	const chooserFilePath =
-		typeof parsed.values["chooser-file"] === "string"
-			? Option.some(parsed.values["chooser-file"])
-			: Option.none<string>();
+			const chooserFilePath =
+				typeof parsed.values["chooser-file"] === "string"
+					? Option.some(parsed.values["chooser-file"])
+					: Option.none<string>();
 
-	return Effect.succeed({
-		help: parsed.values.help === true,
-		chooserFilePath,
-	});
+			return Effect.succeed({
+				help: parsed.values.help === true,
+				chooserFilePath,
+			});
+		}),
+	);
 }
 
 export function reviewerUsage(): string {
@@ -77,10 +81,9 @@ export function runReviewerCommand(
 	return Effect.gen(function* () {
 		const args = yield* parseReviewerArgs(argv);
 		if (args.help) {
-			yield* Effect.sync(() => {
+			return yield* Effect.sync(() => {
 				console.log(reviewerUsage());
 			});
-			return;
 		}
 
 		yield* startReviewerTuiProgram(
