@@ -1,4 +1,4 @@
-import type { ScrollBoxRenderable } from "@opentui/core";
+import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
@@ -40,6 +40,7 @@ export function App(props: AppProps) {
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [isCommitModalOpen, setIsCommitModalOpen] = useState(false);
 	const [commitMessage, setCommitMessage] = useState("");
+	const [commitError, setCommitError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const isRefreshingRef = useRef(false);
@@ -50,6 +51,12 @@ export function App(props: AppProps) {
 		[props.themeCatalog, themeName, themeMode],
 	);
 	const theme = themeBundle.theme;
+	const modalBackdropColor = RGBA.fromValues(
+		theme.background.r,
+		theme.background.g,
+		theme.background.b,
+		0.55,
+	);
 
 	const refreshFiles = useCallback(async (showLoading: boolean) => {
 		if (isRefreshingRef.current) {
@@ -118,16 +125,21 @@ export function App(props: AppProps) {
 	const selectedIndex = selectedFile
 		? files.findIndex((file) => file.path === selectedFile.path)
 		: -1;
+	const stagedFileCount = useMemo(
+		() => files.filter((file) => isFileStaged(file.status)).length,
+		[files],
+	);
 
 	const submitCommit = useCallback(
 		(rawMessage: string) => {
 			const result = commitStagedChanges(rawMessage);
 			if (!result.ok) {
-				setError(result.error ?? "Unable to create commit.");
+				setCommitError(result.error ?? "Unable to create commit.");
 				return;
 			}
 
 			setCommitMessage("");
+			setCommitError(null);
 			setIsCommitModalOpen(false);
 			setError(null);
 			void refreshFiles(false);
@@ -145,12 +157,7 @@ export function App(props: AppProps) {
 			if (key.name === "escape") {
 				setIsCommitModalOpen(false);
 				setCommitMessage("");
-				setError(null);
-				return;
-			}
-
-			if (key.name === "enter" || key.name === "return") {
-				submitCommit(commitMessage);
+				setCommitError(null);
 				return;
 			}
 
@@ -166,7 +173,11 @@ export function App(props: AppProps) {
 		}
 
 		if (!key.ctrl && !key.meta && key.name === "c") {
+			if (stagedFileCount === 0) {
+				return;
+			}
 			setCommitMessage("");
+			setCommitError(null);
 			setIsCommitModalOpen(true);
 			setError(null);
 			return;
@@ -373,7 +384,7 @@ export function App(props: AppProps) {
 					height="100%"
 					justifyContent="center"
 					alignItems="center"
-					backgroundColor={theme.background}
+					backgroundColor={modalBackdropColor}
 					zIndex={100}
 				>
 					<box
@@ -391,7 +402,19 @@ export function App(props: AppProps) {
 						<box marginTop={1}>
 							<input
 								value={commitMessage}
-								onChange={setCommitMessage}
+								onChange={(value) => {
+									setCommitMessage(value);
+									if (commitError) {
+										setCommitError(null);
+									}
+								}}
+								onSubmit={(payload: unknown) => {
+									if (typeof payload === "string") {
+										submitCommit(payload);
+										return;
+									}
+									submitCommit(commitMessage);
+								}}
 								placeholder="Enter commit message..."
 								focused
 								width="100%"
@@ -403,9 +426,13 @@ export function App(props: AppProps) {
 							/>
 						</box>
 						<box marginTop={1}>
-							<text fg={theme.textMuted}>
-								Enter commits. Esc closes without committing.
-							</text>
+							{commitError ? (
+								<text fg={theme.error}>{commitError}</text>
+							) : (
+								<text fg={theme.textMuted}>
+									Enter commits. Esc closes without committing.
+								</text>
+							)}
 						</box>
 					</box>
 				</box>
