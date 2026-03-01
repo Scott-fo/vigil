@@ -92,7 +92,7 @@ function AppContent(props: AppContentProps) {
 			backgroundColor={props.theme.background}
 		>
 			{props.uiShowSplash ? (
-				<Splash theme={props.theme} />
+				<Splash theme={props.theme} error={props.uiError} />
 			) : (
 				<>
 					<Reviewer

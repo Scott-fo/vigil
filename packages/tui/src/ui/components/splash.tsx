@@ -1,18 +1,30 @@
 import { memo } from "react";
+import { Match, Option } from "effect";
 import type { ResolvedTheme } from "#theme/theme";
 
 export interface SplashProps {
 	readonly theme: ResolvedTheme;
+	readonly error: Option.Option<string>;
 }
 
 export const Splash = memo(function Splash(props: SplashProps) {
+	const subtitle = Option.match(props.error, {
+		onNone: () => "No changed files in working tree",
+		onSome: (error) =>
+			Match.value(error).pipe(
+				Match.when(
+					(message) => /not a git repository/i.test(message),
+					() => "Not a git repo, init to use reviewer.",
+				),
+				Match.orElse((message) => message),
+			),
+	});
+
 	return (
 		<box flexGrow={1} justifyContent="center" alignItems="center">
 			<box flexDirection="column" rowGap={1} alignItems="center">
 				<ascii-font text="reviewer" font="block" color={props.theme.text} />
-				<text fg={props.theme.textMuted}>
-					Initialise git repo to use Reviewer
-				</text>
+				<text fg={props.theme.textMuted}>{subtitle}</text>
 			</box>
 		</box>
 	);

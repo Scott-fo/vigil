@@ -107,11 +107,15 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 				};
 			});
 			updateUiStatus((current) => {
-				if (!current.showSplash && Option.isNone(current.error)) {
+				const shouldShowSplash = result.files.length === 0;
+				if (
+					current.showSplash === shouldShowSplash &&
+					Option.isNone(current.error)
+				) {
 					return current;
 				}
 				return {
-					showSplash: false,
+					showSplash: shouldShowSplash,
 					error: Option.none(),
 				};
 			});
