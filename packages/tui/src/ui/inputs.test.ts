@@ -138,13 +138,13 @@ describe("decodeKeyboardIntent", () => {
 		}
 	});
 
-	test("maps j/k to theme preview movement when theme modal is open", () => {
+	test("maps up/down to theme preview movement when theme modal is open", () => {
 		const downIntent = decodeKeyboardIntent(
-			keyEvent({ name: "j" }),
+			keyEvent({ name: "down" }),
 			context({ isThemeModalOpen: true }),
 		);
 		const upIntent = decodeKeyboardIntent(
-			keyEvent({ name: "k" }),
+			keyEvent({ name: "up" }),
 			context({ isThemeModalOpen: true }),
 		);
 		expect(Option.isSome(downIntent)).toBe(true);
@@ -161,6 +161,19 @@ describe("decodeKeyboardIntent", () => {
 				direction: -1,
 			});
 		}
+	});
+
+	test("does not map j/k when theme modal is open", () => {
+		const downIntent = decodeKeyboardIntent(
+			keyEvent({ name: "j" }),
+			context({ isThemeModalOpen: true }),
+		);
+		const upIntent = decodeKeyboardIntent(
+			keyEvent({ name: "k" }),
+			context({ isThemeModalOpen: true }),
+		);
+		expect(Option.isNone(downIntent)).toBe(true);
+		expect(Option.isNone(upIntent)).toBe(true);
 	});
 
 	test("maps i to init git repository when allowed", () => {

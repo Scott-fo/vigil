@@ -8,12 +8,16 @@ export interface ThemeModalProps {
 	readonly modalBackdropColor: RGBA;
 	readonly themes: ReadonlyArray<string>;
 	readonly selectedThemeName: string;
+	readonly searchQuery: string;
+	readonly onSearchQueryChange: (value: string) => void;
 	readonly onSelectTheme: (themeName: string) => void;
 }
 
 export const ThemeModal = memo(function ThemeModal(props: ThemeModalProps) {
 	const themeScrollRef = useRef<ScrollBoxRenderable | null>(null);
-	const selectedRowId = `theme-row:${props.selectedThemeName}`;
+	const selectedRowId = props.themes.includes(props.selectedThemeName)
+		? `theme-row:${props.selectedThemeName}`
+		: null;
 
 	useScrollFollowSelection({
 		scrollRef: themeScrollRef,
@@ -34,44 +38,62 @@ export const ThemeModal = memo(function ThemeModal(props: ThemeModalProps) {
 		>
 			<box
 				width={56}
-				height={20}
+				height={22}
+				padding={1}
+				gap={1}
 				border
 				borderStyle="rounded"
 				borderColor={props.theme.borderActive}
 				backgroundColor={props.theme.backgroundPanel}
-				padding={1}
 				flexDirection="column"
 			>
 				<text fg={props.theme.text}>
 					<strong>Themes</strong>
 				</text>
-				<box marginTop={1} marginBottom={1}>
-					<text fg={props.theme.textMuted}>
-						Use ↑↓ to preview, Enter to confirm, Esc to cancel.
-					</text>
-				</box>
+				<input
+					value={props.searchQuery}
+					onInput={props.onSearchQueryChange}
+					placeholder="Filter themes..."
+					focused
+					width="100%"
+					backgroundColor={props.theme.backgroundElement}
+					focusedBackgroundColor={props.theme.backgroundElement}
+					textColor={props.theme.text}
+					focusedTextColor={props.theme.text}
+					placeholderColor={props.theme.textMuted}
+				/>
 				<scrollbox ref={themeScrollRef} flexGrow={1}>
-					{props.themes.map((themeName) => {
-						const active = themeName === props.selectedThemeName;
-						return (
-							<box
-								key={themeName}
-								id={`theme-row:${themeName}`}
-								paddingX={1}
-								backgroundColor={active ? props.theme.primary : "transparent"}
-								onMouseDown={(event) => {
-									event.preventDefault();
-									props.onSelectTheme(themeName);
-								}}
-							>
-								<text
-									fg={active ? props.theme.selectedListItemText : props.theme.text}
+					{props.themes.length === 0 ? (
+						<box paddingX={1}>
+							<text fg={props.theme.textMuted}>No matching themes.</text>
+						</box>
+					) : (
+						props.themes.map((themeName) => {
+							const active = themeName === props.selectedThemeName;
+							return (
+								<box
+									key={themeName}
+									id={`theme-row:${themeName}`}
+									paddingX={1}
+									backgroundColor={active ? props.theme.primary : "transparent"}
+									onMouseDown={(event) => {
+										event.preventDefault();
+										props.onSelectTheme(themeName);
+									}}
 								>
-									{themeName}
-								</text>
-							</box>
-						);
-					})}
+									<text
+										fg={
+											active
+												? props.theme.selectedListItemText
+												: props.theme.text
+										}
+									>
+										{themeName}
+									</text>
+								</box>
+							);
+						})
+					)}
 				</scrollbox>
 			</box>
 		</box>

@@ -87,6 +87,8 @@ interface AppContentProps {
 	readonly onCopySelection: () => void;
 	readonly themeNames: ReadonlyArray<string>;
 	readonly selectedThemeName: string;
+	readonly themeSearchQuery: string;
+	readonly onThemeSearchQueryChange: (value: string) => void;
 	readonly onSelectThemeInModal: (themeName: string) => void;
 }
 
@@ -145,6 +147,8 @@ function AppContent(props: AppContentProps) {
 					modalBackdropColor={props.modalBackdropColor}
 					themes={props.themeNames}
 					selectedThemeName={props.selectedThemeName}
+					searchQuery={props.themeSearchQuery}
+					onSearchQueryChange={props.onThemeSearchQueryChange}
 					onSelectTheme={props.onSelectThemeInModal}
 				/>
 			)}
@@ -156,6 +160,7 @@ function AppContent(props: AppContentProps) {
 export function App(props: AppProps) {
 	const renderer = useRenderer();
 	const [themeName, setThemeName] = useState(props.initialThemeName);
+	const [themeSearchQuery, setThemeSearchQuery] = useState("");
 	const [themeMode] = useState<ThemeMode>(props.initialThemeMode);
 	const [fileView, setFileView] = useAtom(fileViewStateAtom);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
@@ -224,6 +229,15 @@ export function App(props: AppProps) {
 	const selectedThemeName = themeModal.isOpen
 		? themeModal.selectedThemeName
 		: themeName;
+	const filteredThemeNames = useMemo(() => {
+		const query = themeSearchQuery.trim().toLowerCase();
+		if (query.length === 0) {
+			return props.themeCatalog.order;
+		}
+		return props.themeCatalog.order.filter((themeCatalogName) =>
+			themeCatalogName.toLowerCase().includes(query),
+		);
+	}, [props.themeCatalog.order, themeSearchQuery]);
 	const commitMessage = commitModal.isOpen ? commitModal.message : "";
 	const commitError = commitModal.isOpen ? commitModal.error : Option.none();
 	const canInitializeGitRepo = pipe(
@@ -342,6 +356,13 @@ export function App(props: AppProps) {
 	}, [copyAndNotify, renderer]);
 
 	useEffect(() => {
+		if (!isThemeModalOpen) {
+			return;
+		}
+		setThemeSearchQuery("");
+	}, [isThemeModalOpen]);
+
+	useEffect(() => {
 		updateFileView((current) => {
 			if (visibleFilePaths.length === 0) {
 				return Option.isNone(current.selectedPath)
@@ -397,6 +418,7 @@ export function App(props: AppProps) {
 		diffScrollRef,
 		themeName,
 		themeCatalog: props.themeCatalog,
+		themeModalThemeNames: filteredThemeNames,
 		setThemeName,
 		stagedFileCount,
 		commitModal,
@@ -411,6 +433,24 @@ export function App(props: AppProps) {
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
 	});
+
+	useEffect(() => {
+		if (!isThemeModalOpen || filteredThemeNames.length === 0) {
+			return;
+		}
+		if (filteredThemeNames.includes(selectedThemeName)) {
+			return;
+		}
+		const firstFilteredThemeName = filteredThemeNames[0];
+		if (firstFilteredThemeName) {
+			onSelectThemeInModal(firstFilteredThemeName);
+		}
+	}, [
+		filteredThemeNames,
+		isThemeModalOpen,
+		onSelectThemeInModal,
+		selectedThemeName,
+	]);
 
 	useAppKeyboardInput({
 		isCommitModalOpen,
@@ -428,11 +468,11 @@ export function App(props: AppProps) {
 		<AppContent
 			theme={theme}
 			uiShowSplash={uiStatus.showSplash}
-				uiError={uiStatus.error}
-				isCommitModalOpen={isCommitModalOpen}
-				isHelpModalOpen={isHelpModalOpen}
-				isThemeModalOpen={isThemeModalOpen}
-				modalBackdropColor={modalBackdropColor}
+			uiError={uiStatus.error}
+			isCommitModalOpen={isCommitModalOpen}
+			isHelpModalOpen={isHelpModalOpen}
+			isThemeModalOpen={isThemeModalOpen}
+			modalBackdropColor={modalBackdropColor}
 			commitMessage={commitMessage}
 			commitError={commitError}
 			files={files}
@@ -447,12 +487,14 @@ export function App(props: AppProps) {
 			sidebarOpen={sidebarOpen}
 			onToggleSidebar={onToggleSidebar}
 			onCommitMessageChange={onCommitMessageChange}
-				onCommitSubmit={onCommitSubmit}
-				snackbarNotice={snackbarNotice}
-				onCopySelection={onCopySelection}
-				themeNames={props.themeCatalog.order}
-				selectedThemeName={selectedThemeName}
-				onSelectThemeInModal={onSelectThemeInModal}
-			/>
-		);
-	}
+			onCommitSubmit={onCommitSubmit}
+			snackbarNotice={snackbarNotice}
+			onCopySelection={onCopySelection}
+			themeNames={filteredThemeNames}
+			selectedThemeName={selectedThemeName}
+			themeSearchQuery={themeSearchQuery}
+			onThemeSearchQueryChange={setThemeSearchQuery}
+			onSelectThemeInModal={onSelectThemeInModal}
+		/>
+	);
+}

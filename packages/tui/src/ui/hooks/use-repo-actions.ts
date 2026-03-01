@@ -19,7 +19,7 @@ import {
 	type RepoActionError,
 	toggleFileStage,
 } from "#data/git";
-import { cycleThemeName, type ThemeCatalog } from "#theme/theme";
+import type { ThemeCatalog } from "#theme/theme";
 import type { FileEntry } from "#tui/types";
 import type { AppKeyboardIntent } from "#ui/inputs";
 import type {
@@ -46,6 +46,7 @@ interface UseRepoActionsOptions {
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
 	readonly themeName: string;
 	readonly themeCatalog: ThemeCatalog;
+	readonly themeModalThemeNames: ReadonlyArray<string>;
 	readonly setThemeName: Dispatch<SetStateAction<string>>;
 	readonly stagedFileCount: number;
 	readonly commitModal: CommitModalState;
@@ -78,6 +79,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		diffScrollRef,
 		themeName,
 		themeCatalog,
+		themeModalThemeNames,
 		setThemeName,
 		stagedFileCount,
 		commitModal,
@@ -336,11 +338,18 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			if (!themeModal.isOpen) {
 				return;
 			}
-			const nextThemeName = cycleThemeName(
-				themeCatalog,
+			if (themeModalThemeNames.length === 0) {
+				return;
+			}
+			const currentIndex = themeModalThemeNames.indexOf(
 				themeModal.selectedThemeName,
-				direction,
 			);
+			const baseIndex = currentIndex === -1 ? 0 : currentIndex;
+			const nextIndex =
+				(baseIndex + direction + themeModalThemeNames.length) %
+				themeModalThemeNames.length;
+			const nextThemeName =
+				themeModalThemeNames[nextIndex] ?? themeModal.selectedThemeName;
 			if (nextThemeName === themeModal.selectedThemeName) {
 				return;
 			}
@@ -351,7 +360,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 					: current,
 			);
 		},
-		[setThemeName, themeCatalog, themeModal, updateThemeModal],
+		[setThemeName, themeModal, themeModalThemeNames, updateThemeModal],
 	);
 
 	const selectThemeInModal = useCallback(

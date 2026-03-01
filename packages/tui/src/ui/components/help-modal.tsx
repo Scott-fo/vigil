@@ -17,8 +17,6 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	{ keys: "c", description: "Open commit dialog (if files staged)" },
 	{ keys: "p / P", description: "Pull / push" },
 	{ keys: "t", description: "Open theme picker" },
-	{ keys: "↑ / ↓", description: "Preview theme (theme picker)" },
-	{ keys: "enter / esc", description: "Confirm / cancel theme picker" },
 	{ keys: "q or esc", description: "Quit reviewer" },
 ];
 

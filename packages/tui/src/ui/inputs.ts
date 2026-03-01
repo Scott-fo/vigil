@@ -87,10 +87,10 @@ export function decodeKeyboardIntent(
 		if (key.name === "enter" || key.name === "return") {
 			return Option.some({ _tag: "ConfirmThemeModal" });
 		}
-		if (key.name === "down" || key.name === "j") {
+		if (key.name === "down") {
 			return Option.some({ _tag: "MoveThemeSelection", direction: 1 });
 		}
-		if (key.name === "up" || key.name === "k") {
+		if (key.name === "up") {
 			return Option.some({ _tag: "MoveThemeSelection", direction: -1 });
 		}
 		return Option.none();
