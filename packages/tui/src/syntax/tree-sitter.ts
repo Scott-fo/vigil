@@ -3,66 +3,90 @@ import {
   getTreeSitterClient,
   pathToFiletype,
   type FiletypeParserOptions,
-  type InjectionMapping,
   type TreeSitterClient,
 } from "@opentui/core";
+import { Data, Effect, pipe, Schema } from "effect";
 import parserConfig from "#config/parsers";
 
-type RawParserConfig = {
-  parsers?: unknown;
-};
+const ParserConfigSchema = Schema.Struct({
+  parsers: Schema.optional(Schema.Array(Schema.Unknown)),
+});
 
-type RawParser = {
-  filetype?: unknown;
-  wasm?: unknown;
-  queries?: {
-    highlights?: unknown;
-    injections?: unknown;
-  };
-  injectionMapping?: unknown;
-};
+const InjectionMappingSchema = Schema.Struct({
+  nodeTypes: Schema.optional(
+    Schema.Record({
+      key: Schema.String,
+      value: Schema.String,
+    }),
+  ),
+  infoStringMap: Schema.optional(
+    Schema.Record({
+      key: Schema.String,
+      value: Schema.String,
+    }),
+  ),
+});
+
+const ParserQueriesSchema = Schema.Struct({
+  highlights: Schema.Array(Schema.NonEmptyString).pipe(Schema.minItems(1)),
+  injections: Schema.optional(Schema.Array(Schema.NonEmptyString)),
+});
+
+const ParserEntrySchema = Schema.Struct({
+  filetype: Schema.NonEmptyString,
+  wasm: Schema.NonEmptyString,
+  queries: ParserQueriesSchema,
+  injectionMapping: Schema.optional(InjectionMappingSchema),
+});
+
+type ParserEntry = Schema.Schema.Type<typeof ParserEntrySchema>;
+
+export class TreeSitterInitializeError extends Data.TaggedError(
+  "TreeSitterInitializeError",
+)<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
 
 let parserOptionsCache: FiletypeParserOptions[] | null = null;
 let treeSitterInitPromise: Promise<TreeSitterClient> | null = null;
 
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
-}
-
-function asInjectionMapping(value: unknown): InjectionMapping | undefined {
-  if (!value || typeof value !== "object") {
+function normalizeInjectionMapping(
+  mapping: ParserEntry["injectionMapping"],
+): FiletypeParserOptions["injectionMapping"] | undefined {
+  if (!mapping) {
     return undefined;
   }
-  return value as InjectionMapping;
-}
 
-function normalizeParser(raw: RawParser): FiletypeParserOptions | null {
-  if (typeof raw.filetype !== "string" || raw.filetype.length === 0) {
-    return null;
+  const nodeTypes = mapping.nodeTypes
+    ? { ...mapping.nodeTypes }
+    : undefined;
+  const infoStringMap = mapping.infoStringMap
+    ? { ...mapping.infoStringMap }
+    : undefined;
+
+  if (!nodeTypes && !infoStringMap) {
+    return undefined;
   }
-
-  if (typeof raw.wasm !== "string" || raw.wasm.length === 0) {
-    return null;
-  }
-
-  const highlights = toStringArray(raw.queries?.highlights);
-  if (highlights.length === 0) {
-    return null;
-  }
-
-  const injections = toStringArray(raw.queries?.injections);
-  const injectionMapping = asInjectionMapping(raw.injectionMapping);
 
   return {
-    filetype: raw.filetype,
-    wasm: raw.wasm,
+    ...(nodeTypes ? { nodeTypes } : {}),
+    ...(infoStringMap ? { infoStringMap } : {}),
+  };
+}
+
+function toFiletypeParserOptions(parser: ParserEntry): FiletypeParserOptions {
+  const injections = parser.queries.injections;
+  const injectionMapping = normalizeInjectionMapping(parser.injectionMapping);
+
+  return {
+    filetype: parser.filetype,
+    wasm: parser.wasm,
     queries: {
-      highlights,
-      ...(injections.length > 0 ? { injections } : {}),
+      highlights: [...parser.queries.highlights],
+      ...(injections && injections.length > 0
+        ? { injections: [...injections] }
+        : {}),
     },
     ...(injectionMapping ? { injectionMapping } : {}),
   };
@@ -73,12 +97,32 @@ function getParserOptions(): FiletypeParserOptions[] {
     return parserOptionsCache;
   }
 
-  const config = parserConfig as RawParserConfig;
-  const list = Array.isArray(config.parsers) ? config.parsers : [];
+  const config = Effect.runSync(
+    pipe(
+      Schema.decodeUnknown(ParserConfigSchema)(parserConfig),
+      Effect.match({
+        onFailure: () =>
+          ({
+            parsers: [],
+          }) as Schema.Schema.Type<typeof ParserConfigSchema>,
+        onSuccess: (decoded) => decoded,
+      }),
+    ),
+  );
+  const list = config.parsers ?? [];
 
   parserOptionsCache = list
-    .filter((item): item is RawParser => !!item && typeof item === "object")
-    .map((item) => normalizeParser(item))
+    .map((entry) =>
+      Effect.runSync(
+        pipe(
+          Schema.decodeUnknown(ParserEntrySchema)(entry),
+          Effect.match({
+            onFailure: () => null,
+            onSuccess: (decoded) => toFiletypeParserOptions(decoded),
+          }),
+        ),
+      ),
+    )
     .filter((item): item is FiletypeParserOptions => item !== null);
 
   return parserOptionsCache;
@@ -89,19 +133,30 @@ export async function initializeTreeSitterClient(): Promise<TreeSitterClient> {
     return treeSitterInitPromise;
   }
 
-  treeSitterInitPromise = (async () => {
-    addDefaultParsers(getParserOptions());
-    const client = getTreeSitterClient();
-    await client.initialize();
-    return client;
-  })();
+  const initEffect = pipe(
+    Effect.sync(() => addDefaultParsers(getParserOptions())),
+    Effect.flatMap(() =>
+      Effect.tryPromise({
+        try: async () => {
+          const client = getTreeSitterClient();
+          await client.initialize();
+          return client;
+        },
+        catch: (cause) =>
+          new TreeSitterInitializeError({
+            message: "Failed to initialize Tree-sitter client.",
+            cause,
+          }),
+      }),
+    ),
+  );
 
-  try {
-    return await treeSitterInitPromise;
-  } catch (error) {
+  treeSitterInitPromise = Effect.runPromise(initEffect).catch((error) => {
     treeSitterInitPromise = null;
-    throw error;
-  }
+    return Promise.reject(error);
+  });
+
+  return treeSitterInitPromise;
 }
 
 export function resolveDiffFiletype(filePath: string): string | undefined {
