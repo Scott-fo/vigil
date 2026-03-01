@@ -7,7 +7,7 @@ import {
 	type SyntaxStyle,
 } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import { Effect, Option, pipe } from "effect";
+import { Effect, Match, Option, pipe } from "effect";
 import {
 	type RefObject,
 	useCallback,
@@ -16,11 +16,13 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { copyTextToClipboard } from "#data/clipboard";
 import { isFileStaged, type RepoActionError } from "#data/git";
 import { type ResolvedTheme, resolveThemeBundle, type ThemeMode } from "#theme/theme";
 import type { AppProps, FileEntry } from "#tui/types";
 import { CommitModal } from "#ui/components/commit-modal";
 import { Reviewer } from "#ui/components/reviewer";
+import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar";
 import { Splash } from "#ui/components/splash";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh";
 import { useRepoActions } from "#ui/hooks/use-repo-actions";
@@ -73,6 +75,8 @@ interface AppContentProps {
 	readonly onToggleSidebar: () => void;
 	readonly onCommitMessageChange: (value: string) => void;
 	readonly onCommitSubmit: (payload: unknown) => void;
+	readonly snackbarNotice: Option.Option<SnackbarNotice>;
+	readonly onCopySelection: () => void;
 }
 
 function AppContent(props: AppContentProps) {
@@ -102,6 +106,7 @@ function AppContent(props: AppContentProps) {
 						onSelectFilePath={props.onSelectFilePath}
 						sidebarOpen={props.sidebarOpen}
 						onToggleSidebar={props.onToggleSidebar}
+						onCopySelection={props.onCopySelection}
 					/>
 					{props.isCommitModalOpen && (
 						<CommitModal
@@ -113,6 +118,7 @@ function AppContent(props: AppContentProps) {
 							onCommitSubmit={props.onCommitSubmit}
 						/>
 					)}
+					<Snackbar theme={props.theme} notice={props.snackbarNotice} />
 				</>
 			)}
 		</box>
@@ -126,7 +132,11 @@ export function App(props: AppProps) {
 	const [fileView, setFileView] = useAtom(fileViewStateAtom);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
 	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
+	const [snackbarNotice, setSnackbarNotice] = useState<
+		Option.Option<SnackbarNotice>
+	>(Option.none());
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
+	const snackbarTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const updateFileView = useCallback<UpdateFileViewState>(
 		(update) => {
@@ -216,6 +226,65 @@ export function App(props: AppProps) {
 		() => files.filter((file) => isFileStaged(file.status)).length,
 		[files],
 	);
+	const showSnackbar = useCallback((notice: SnackbarNotice) => {
+		if (snackbarTimeoutRef.current) {
+			clearTimeout(snackbarTimeoutRef.current);
+		}
+		setSnackbarNotice(Option.some(notice));
+		const timeoutHandle = setTimeout(() => {
+			setSnackbarNotice(Option.none());
+		}, 2000);
+		timeoutHandle.unref?.();
+		snackbarTimeoutRef.current = timeoutHandle;
+	}, []);
+
+	const copyAndNotify = useCallback(
+		(text: string) => {
+			if (text.length === 0) {
+				return;
+			}
+
+			void Effect.runPromise(
+				pipe(
+					copyTextToClipboard(renderer, text),
+					Effect.match({
+						onFailure: (error) => {
+							showSnackbar({
+								message: Match.value(error).pipe(
+									Match.tag(
+										"NativeClipboardCopyError",
+										(typedError) => typedError.message,
+									),
+									Match.tag(
+										"ClipboardUnavailableError",
+										(typedError) => typedError.message,
+									),
+									Match.exhaustive,
+								),
+								variant: "error",
+							});
+						},
+						onSuccess: () => {
+							showSnackbar({
+								message: "Text copied to clipboard",
+								variant: "info",
+							});
+						},
+					}),
+				),
+			);
+		},
+		[renderer, showSnackbar],
+	);
+
+	const onCopySelection = useCallback(() => {
+		const text = renderer.getSelection()?.getSelectedText();
+		if (!text) {
+			return;
+		}
+		copyAndNotify(text);
+		renderer.clearSelection();
+	}, [copyAndNotify, renderer]);
 
 	useEffect(() => {
 		updateFileView((current) => {
@@ -236,6 +305,28 @@ export function App(props: AppProps) {
 			};
 		});
 	}, [updateFileView, visibleFilePaths]);
+
+	useEffect(
+		() => () => {
+			if (snackbarTimeoutRef.current) {
+				clearTimeout(snackbarTimeoutRef.current);
+			}
+		},
+		[],
+	);
+
+	useEffect(() => {
+		renderer.console.onCopySelection = (text: string) => {
+			if (!text) {
+				return;
+			}
+			copyAndNotify(text);
+			renderer.clearSelection();
+		};
+		return () => {
+			renderer.console.onCopySelection = undefined;
+		};
+	}, [copyAndNotify, renderer]);
 
 	const {
 		onCommitMessageChange,
@@ -290,6 +381,8 @@ export function App(props: AppProps) {
 			onToggleSidebar={onToggleSidebar}
 			onCommitMessageChange={onCommitMessageChange}
 			onCommitSubmit={onCommitSubmit}
+			snackbarNotice={snackbarNotice}
+			onCopySelection={onCopySelection}
 		/>
 	);
 }

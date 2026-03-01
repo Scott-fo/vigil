@@ -1,6 +1,6 @@
 [x] CTRL + B to close sidebar
 [x] Tab to switch from split diff to unified
-Selecting text auto copies to clipboard
+[x] Selecting text auto copies to clipboard
 E opens visual / editor
 No files changed in git status. show splash
 Theme switching is done via same modal as opencode

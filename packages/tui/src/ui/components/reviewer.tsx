@@ -271,6 +271,7 @@ export interface ReviewerProps {
 	readonly onSelectFilePath: (path: string) => void;
 	readonly sidebarOpen: boolean;
 	readonly onToggleSidebar: () => void;
+	readonly onCopySelection: () => void;
 }
 
 export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
@@ -280,7 +281,13 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 	);
 
 	return (
-		<box flexDirection="row" flexGrow={1}>
+		<box
+			flexDirection="row"
+			flexGrow={1}
+			onMouseUp={() => {
+				props.onCopySelection();
+			}}
+		>
 			{props.sidebarOpen ? (
 				<SidebarPanel
 					theme={props.theme}
