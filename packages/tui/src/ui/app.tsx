@@ -1,6 +1,6 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <opentui> */
 import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
-import { useKeyboard, useRenderer } from "@opentui/react";
+import { useRenderer } from "@opentui/react";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -16,179 +16,15 @@ import {
 import {
 	cycleThemeName,
 	resolveThemeBundle,
-	type ResolvedTheme,
 	type ThemeMode,
 } from "#theme/theme";
 import type { AppProps, FileEntry } from "#tui/types";
-
-function getStatusColor(status: string, theme: ResolvedTheme) {
-	if (status === "??" || status.includes("A")) {
-		return theme.diffHighlightAdded;
-	}
-	if (status.includes("U") || status.includes("D")) {
-		return theme.diffHighlightRemoved;
-	}
-	if (status.includes("R") || status.includes("C")) {
-		return theme.accent;
-	}
-	if (status.includes("M")) {
-		return theme.warning;
-	}
-	return theme.textMuted;
-}
-
-interface FileTreeNode {
-	name: string;
-	path: string;
-	directories: Map<string, FileTreeNode>;
-	files: Array<{ file: FileEntry; name: string }>;
-}
-
-type SidebarItem =
-	| {
-			kind: "header";
-			key: string;
-			path: string;
-			label: string;
-			depth: number;
-			collapsed: boolean;
-	  }
-	| {
-			kind: "file";
-			key: string;
-			file: FileEntry;
-			label: string;
-			depth: number;
-	  };
-
-function createTreeNode(name: string, path: string): FileTreeNode {
-	return {
-		name,
-		path,
-		directories: new Map<string, FileTreeNode>(),
-		files: [],
-	};
-}
-
-function compareFileEntries(a: FileEntry, b: FileEntry): number {
-	return a.path.localeCompare(b.path);
-}
-
-function displayNameFromPath(pathValue: string): string {
-	const parts = pathValue.split("/").filter((part) => part.length > 0);
-	return parts[parts.length - 1] ?? pathValue;
-}
-
-function getSidebarFileLabel(file: FileEntry, leafName: string): string {
-	if (!file.label.includes(" -> ")) {
-		return leafName;
-	}
-
-	const [fromRaw, toRaw] = file.label.split(" -> ");
-	const fromName = displayNameFromPath(fromRaw ?? "");
-	const toName = displayNameFromPath(toRaw ?? "");
-	if (fromName && toName) {
-		return `${fromName} -> ${toName}`;
-	}
-	return leafName;
-}
-
-function buildSidebarItems(
-	files: FileEntry[],
-	collapsedDirectories: Set<string>,
-): SidebarItem[] {
-	const root = createTreeNode("", "");
-
-	for (const file of files) {
-		const parts = file.path.split("/").filter((part) => part.length > 0);
-		const leafName = parts[parts.length - 1] ?? file.path;
-		const sidebarLabel = getSidebarFileLabel(file, leafName);
-
-		if (parts.length <= 1) {
-			root.files.push({ file, name: sidebarLabel });
-			continue;
-		}
-
-		let current = root;
-		let currentPath = "";
-		for (let index = 0; index < parts.length - 1; index += 1) {
-			const name = parts[index] ?? "";
-			currentPath = currentPath ? `${currentPath}/${name}` : name;
-
-			let next = current.directories.get(name);
-			if (!next) {
-				next = createTreeNode(name, currentPath);
-				current.directories.set(name, next);
-			}
-			current = next;
-		}
-
-		current.files.push({ file, name: sidebarLabel });
-	}
-
-	const items: SidebarItem[] = [];
-
-	function compressDirectoryChain(start: FileTreeNode): {
-		node: FileTreeNode;
-		label: string;
-	} {
-		let node = start;
-		const labelParts = [node.name];
-
-		while (node.files.length === 0 && node.directories.size === 1) {
-			const next = [...node.directories.values()][0];
-			if (!next) {
-				break;
-			}
-
-			node = next;
-			labelParts.push(node.name);
-		}
-
-		return {
-			node,
-			label: labelParts.join("/"),
-		};
-	}
-
-	function visit(node: FileTreeNode, depth: number) {
-		const directories = [...node.directories.values()].sort((a, b) =>
-			a.name.localeCompare(b.name),
-		);
-
-		for (const directory of directories) {
-			const compact = compressDirectoryChain(directory);
-			const isCollapsed = collapsedDirectories.has(compact.node.path);
-			items.push({
-				kind: "header",
-				key: `h:${compact.node.path}`,
-				path: compact.node.path,
-				label: compact.label,
-				depth,
-				collapsed: isCollapsed,
-			});
-			if (!isCollapsed) {
-				visit(compact.node, depth + 1);
-			}
-		}
-
-		const nodeFiles = [...node.files].sort((a, b) =>
-			compareFileEntries(a.file, b.file),
-		);
-		for (const fileEntry of nodeFiles) {
-			items.push({
-				kind: "file",
-				key: `f:${fileEntry.file.path}`,
-				file: fileEntry.file,
-				label: fileEntry.name,
-				depth,
-			});
-		}
-	}
-
-	visit(root, 0);
-	return items;
-}
+import { useAppKeyboardInput } from "#ui/inputs";
+import {
+	buildSidebarItems,
+	getStatusColor,
+	type SidebarItem,
+} from "#ui/sidebar";
 
 function quoteShellArg(value: string): string {
 	return `'${value.replace(/'/g, `'\"'\"'`)}'`;
@@ -389,48 +225,34 @@ export function App(props: AppProps) {
 		[props.chooserFilePath, refreshFiles, renderer],
 	);
 
-	useKeyboard((key) => {
-		if (key.ctrl && key.name === "c") {
-			renderer.destroy();
+	const closeCommitModal = useCallback(() => {
+		setIsCommitModalOpen(false);
+		setCommitMessage("");
+		setCommitError(null);
+	}, []);
+
+	const openCommitModal = useCallback(() => {
+		if (stagedFileCount === 0) {
 			return;
 		}
+		setCommitMessage("");
+		setCommitError(null);
+		setIsCommitModalOpen(true);
+		setError(null);
+	}, [stagedFileCount]);
 
-		if (isCommitModalOpen) {
-			if (key.name === "escape") {
-				setIsCommitModalOpen(false);
-				setCommitMessage("");
-				setCommitError(null);
-				return;
-			}
-
-			return;
-		}
-
-		if (key.name === "escape" || key.name === "q") {
-			renderer.destroy();
-			return;
-		}
-
-		if (!key.ctrl && !key.meta && key.name === "c") {
-			if (stagedFileCount === 0) {
-				return;
-			}
-			setCommitMessage("");
-			setCommitError(null);
-			setIsCommitModalOpen(true);
-			setError(null);
-			return;
-		}
-
-		if (!key.ctrl && !key.meta && key.name === "t") {
+	const cycleTheme = useCallback(
+		(direction: 1 | -1) => {
 			setThemeName((current) =>
-				cycleThemeName(props.themeCatalog, current, key.shift ? -1 : 1),
+				cycleThemeName(props.themeCatalog, current, direction),
 			);
-			return;
-		}
+		},
+		[props.themeCatalog],
+	);
 
-		if (!key.ctrl && !key.meta && key.name === "p") {
-			const result = key.shift ? pushToRemote() : pullFromRemote();
+	const syncRemote = useCallback(
+		(direction: "pull" | "push") => {
+			const result = direction === "push" ? pushToRemote() : pullFromRemote();
 			if (!result.ok) {
 				setError(result.error ?? "Unable to sync with remote.");
 				return;
@@ -438,38 +260,12 @@ export function App(props: AppProps) {
 
 			setError(null);
 			void refreshFiles(false);
-			return;
-		}
+		},
+		[refreshFiles],
+	);
 
-		if (key.ctrl && (key.name === "u" || key.name === "d")) {
-			const step = Math.max(6, Math.floor(renderer.height * 0.45));
-			diffScrollRef.current?.scrollBy({
-				x: 0,
-				y: key.name === "u" ? -step : step,
-			});
-			return;
-		}
-
-		if (visibleFilePaths.length === 0 || selectedVisibleIndex === -1) {
-			return;
-		}
-
-		if (key.name === "enter" || key.name === "return") {
-			const file = selectedFile;
-			if (!file) {
-				return;
-			}
-
-			void openSelectedFile(file.path);
-			return;
-		}
-
-		if (!key.ctrl && !key.meta && (key.name === "space" || key.name === " ")) {
-			const file = selectedFile;
-			if (!file) {
-				return;
-			}
-
+	const toggleSelectedFileStage = useCallback(
+		(file: FileEntry) => {
 			const result = toggleFileStage(file);
 			if (!result.ok) {
 				setError(result.error ?? "Unable to update staged state.");
@@ -478,23 +274,32 @@ export function App(props: AppProps) {
 
 			setError(null);
 			void refreshFiles(false);
-			return;
-		}
+		},
+		[refreshFiles],
+	);
 
-		if (key.name === "down" || key.name === "j") {
-			const nextIndex = Math.min(
-				selectedVisibleIndex + 1,
-				visibleFilePaths.length - 1,
-			);
-			setSelectedPath(visibleFilePaths[nextIndex] ?? null);
-			return;
-		}
+	const openSelectedFileFromKeyboard = useCallback(
+		(filePath: string) => {
+			void openSelectedFile(filePath);
+		},
+		[openSelectedFile],
+	);
 
-		if (key.name === "up" || key.name === "k") {
-			const nextIndex = Math.max(selectedVisibleIndex - 1, 0);
-			setSelectedPath(visibleFilePaths[nextIndex] ?? null);
-			return;
-		}
+	useAppKeyboardInput({
+		renderer,
+		isCommitModalOpen,
+		stagedFileCount,
+		visibleFilePaths,
+		selectedVisibleIndex,
+		selectedFile,
+		diffScrollRef,
+		closeCommitModal,
+		openCommitModal,
+		cycleTheme,
+		syncRemote,
+		setSelectedPath,
+		openSelectedFile: openSelectedFileFromKeyboard,
+		toggleSelectedFileStage,
 	});
 
 	return (
