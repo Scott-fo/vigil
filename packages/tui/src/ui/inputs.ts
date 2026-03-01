@@ -22,6 +22,7 @@ export interface KeyboardIntentContext {
 
 export type AppKeyboardIntent =
 	| { readonly _tag: "DestroyRenderer" }
+	| { readonly _tag: "ToggleSidebar" }
 	| { readonly _tag: "CloseCommitModal" }
 	| { readonly _tag: "OpenCommitModal" }
 	| { readonly _tag: "CycleTheme"; readonly direction: 1 | -1 }
@@ -41,6 +42,10 @@ export function decodeKeyboardIntent(
 ): Option.Option<AppKeyboardIntent> {
 	if (key.ctrl && key.name === "c") {
 		return Option.some({ _tag: "DestroyRenderer" });
+	}
+
+	if (key.ctrl && key.name === "b") {
+		return Option.some({ _tag: "ToggleSidebar" });
 	}
 
 	if (options.isCommitModalOpen) {

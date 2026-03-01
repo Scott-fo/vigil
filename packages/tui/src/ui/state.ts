@@ -36,6 +36,7 @@ export const commitModalAtom = Atom.make<CommitModalState>({
 
 export interface FileViewState {
 	readonly files: FileEntry[];
+	readonly sidebarOpen: boolean;
 	readonly collapsedDirectories: Set<string>;
 	readonly selectedPath: Option.Option<string>;
 	readonly loading: boolean;
@@ -47,6 +48,7 @@ export type UpdateFileViewState = (
 
 export const fileViewStateAtom = Atom.make<FileViewState>({
 	files: [],
+	sidebarOpen: true,
 	collapsedDirectories: new Set<string>(),
 	selectedPath: Option.none(),
 	loading: true,

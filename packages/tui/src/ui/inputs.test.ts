@@ -64,6 +64,17 @@ describe("decodeKeyboardIntent", () => {
 		expect(Option.isNone(blocked)).toBe(true);
 	});
 
+	test("maps ctrl+b to sidebar toggle", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "b", ctrl: true }),
+			context(),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("ToggleSidebar");
+		}
+	});
+
 	test("maps ctrl+d to half-page down scroll intent", () => {
 		const intent = decodeKeyboardIntent(
 			keyEvent({ name: "d", ctrl: true }),

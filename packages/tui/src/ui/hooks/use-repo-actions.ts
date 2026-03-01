@@ -187,7 +187,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		[chooserFilePath, renderer, runAction],
 	);
 
-	const toggleCollapsedDirectory = useCallback(
+const toggleCollapsedDirectory = useCallback(
 		(path: string) => {
 			updateFileView((current) => {
 				const next = new Set(current.collapsedDirectories);
@@ -201,6 +201,13 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		},
 		[updateFileView],
 	);
+
+	const toggleSidebar = useCallback(() => {
+		updateFileView((current) => ({
+			...current,
+			sidebarOpen: !current.sidebarOpen,
+		}));
+	}, [updateFileView]);
 
 	const selectFilePath = useCallback(
 		(path: string) => {
@@ -292,6 +299,9 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				Match.tag("DestroyRenderer", () => {
 					renderer.destroy();
 				}),
+				Match.tag("ToggleSidebar", () => {
+					toggleSidebar();
+				}),
 				Match.tag("CloseCommitModal", () => {
 					closeCommitModal();
 				}),
@@ -331,6 +341,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			diffScrollRef,
 			selectFilePath,
 			syncRemote,
+			toggleSidebar,
 			toggleSelectedFileStage,
 		],
 	);
@@ -341,5 +352,6 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		onKeyboardIntent,
 		onToggleDirectory: toggleCollapsedDirectory,
 		onSelectFilePath: selectFilePath,
+		onToggleSidebar: toggleSidebar,
 	};
 }

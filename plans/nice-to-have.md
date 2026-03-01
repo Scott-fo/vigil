@@ -1,4 +1,5 @@
-CTRL + B to close sidebar
+[x] CTRL + B to close sidebar
+Tab to switch from split diff to unified
 Selecting text auto copies to clipboard
 Theme switching is done via same modal as opencode
 Theme switching stored in the config file

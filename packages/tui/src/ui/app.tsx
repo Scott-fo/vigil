@@ -68,6 +68,8 @@ interface AppContentProps {
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
 	readonly onToggleDirectory: (path: string) => void;
 	readonly onSelectFilePath: (path: string) => void;
+	readonly sidebarOpen: boolean;
+	readonly onToggleSidebar: () => void;
 	readonly onCommitMessageChange: (value: string) => void;
 	readonly onCommitSubmit: (payload: unknown) => void;
 }
@@ -96,6 +98,8 @@ function AppContent(props: AppContentProps) {
 						diffScrollRef={props.diffScrollRef}
 						onToggleDirectory={props.onToggleDirectory}
 						onSelectFilePath={props.onSelectFilePath}
+						sidebarOpen={props.sidebarOpen}
+						onToggleSidebar={props.onToggleSidebar}
 					/>
 					{props.isCommitModalOpen && (
 						<CommitModal
@@ -141,7 +145,8 @@ export function App(props: AppProps) {
 		[setCommitModal],
 	);
 
-	const { files, collapsedDirectories, selectedPath, loading } = fileView;
+	const { files, sidebarOpen, collapsedDirectories, selectedPath, loading } =
+		fileView;
 	const themeBundle = useMemo(
 		() => resolveThemeBundle(props.themeCatalog, themeName, themeMode),
 		[props.themeCatalog, themeName, themeMode],
@@ -230,6 +235,7 @@ export function App(props: AppProps) {
 		onKeyboardIntent,
 		onToggleDirectory,
 		onSelectFilePath,
+		onToggleSidebar,
 	} = useRepoActions({
 		chooserFilePath: props.chooserFilePath,
 		renderer,
@@ -271,6 +277,8 @@ export function App(props: AppProps) {
 			diffScrollRef={diffScrollRef}
 			onToggleDirectory={onToggleDirectory}
 			onSelectFilePath={onSelectFilePath}
+			sidebarOpen={sidebarOpen}
+			onToggleSidebar={onToggleSidebar}
 			onCommitMessageChange={onCommitMessageChange}
 			onCommitSubmit={onCommitSubmit}
 		/>

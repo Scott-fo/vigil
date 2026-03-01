@@ -131,6 +131,32 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 	);
 });
 
+interface SidebarRailProps {
+	readonly theme: ResolvedTheme;
+	readonly onToggleSidebar: () => void;
+}
+
+const SidebarRail = memo(function SidebarRail(props: SidebarRailProps) {
+	return (
+		<box
+			width={3}
+			border
+			borderStyle="rounded"
+			borderColor={props.theme.border}
+			marginRight={1}
+			justifyContent="center"
+			alignItems="center"
+			backgroundColor={props.theme.backgroundPanel}
+			onMouseDown={(event) => {
+				event.preventDefault();
+				props.onToggleSidebar();
+			}}
+		>
+			<text fg={props.theme.textMuted}>▸</text>
+		</box>
+	);
+});
+
 interface DiffPanelProps {
 	readonly theme: ResolvedTheme;
 	readonly syntaxStyle: SyntaxStyle;
@@ -241,6 +267,8 @@ export interface ReviewerProps {
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
 	readonly onToggleDirectory: (path: string) => void;
 	readonly onSelectFilePath: (path: string) => void;
+	readonly sidebarOpen: boolean;
+	readonly onToggleSidebar: () => void;
 }
 
 export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
@@ -251,14 +279,21 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 
 	return (
 		<box flexDirection="row" flexGrow={1}>
-			<SidebarPanel
-				theme={props.theme}
-				files={props.files}
-				sidebarItems={props.sidebarItems}
-				selectedFilePath={selectedFilePath}
-				onToggleDirectory={props.onToggleDirectory}
-				onSelectFilePath={props.onSelectFilePath}
-			/>
+			{props.sidebarOpen ? (
+				<SidebarPanel
+					theme={props.theme}
+					files={props.files}
+					sidebarItems={props.sidebarItems}
+					selectedFilePath={selectedFilePath}
+					onToggleDirectory={props.onToggleDirectory}
+					onSelectFilePath={props.onSelectFilePath}
+				/>
+			) : (
+				<SidebarRail
+					theme={props.theme}
+					onToggleSidebar={props.onToggleSidebar}
+				/>
+			)}
 			<DiffPanel
 				theme={props.theme}
 				syntaxStyle={props.syntaxStyle}
