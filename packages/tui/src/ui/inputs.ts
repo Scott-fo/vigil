@@ -5,6 +5,7 @@ import type { FileEntry } from "#tui/types";
 
 interface UseAppKeyboardInputOptions {
 	isCommitModalOpen: boolean;
+	isHelpModalOpen: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
 	selectedVisibleIndex: number;
@@ -14,6 +15,7 @@ interface UseAppKeyboardInputOptions {
 
 export interface KeyboardIntentContext {
 	isCommitModalOpen: boolean;
+	isHelpModalOpen: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
 	selectedVisibleIndex: number;
@@ -26,6 +28,8 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "ToggleDiffViewMode" }
 	| { readonly _tag: "CloseCommitModal" }
 	| { readonly _tag: "OpenCommitModal" }
+	| { readonly _tag: "CloseHelpModal" }
+	| { readonly _tag: "OpenHelpModal" }
 	| { readonly _tag: "CycleTheme"; readonly direction: 1 | -1 }
 	| { readonly _tag: "SyncRemote"; readonly direction: "pull" | "push" }
 	| { readonly _tag: "ScrollDiffHalfPage"; readonly direction: "up" | "down" }
@@ -35,6 +39,13 @@ export type AppKeyboardIntent =
 
 function isUnmodifiedKey(key: KeyEvent, name: string): boolean {
 	return !key.ctrl && !key.meta && key.name === name;
+}
+
+function isQuestionMarkKey(key: KeyEvent): boolean {
+	if (key.ctrl || key.meta) {
+		return false;
+	}
+	return key.name === "?" || (key.name === "/" && key.shift);
 }
 
 export function decodeKeyboardIntent(
@@ -55,8 +66,18 @@ export function decodeKeyboardIntent(
 			: Option.none();
 	}
 
+	if (options.isHelpModalOpen) {
+		return key.name === "escape"
+			? Option.some({ _tag: "CloseHelpModal" })
+			: Option.none();
+	}
+
 	if (key.name === "escape" || key.name === "q") {
 		return Option.some({ _tag: "DestroyRenderer" });
+	}
+
+	if (isQuestionMarkKey(key)) {
+		return Option.some({ _tag: "OpenHelpModal" });
 	}
 
 	if (isUnmodifiedKey(key, "c") && options.stagedFileCount > 0) {

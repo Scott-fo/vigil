@@ -23,8 +23,10 @@ import type { FileEntry } from "#tui/types";
 import type { AppKeyboardIntent } from "#ui/inputs";
 import type {
 	CommitModalState,
+	HelpModalState,
 	UpdateCommitModal,
 	UpdateFileViewState,
+	UpdateHelpModal,
 	UpdateUiStatus,
 } from "#ui/state";
 
@@ -43,9 +45,11 @@ interface UseRepoActionsOptions {
 	readonly setThemeName: Dispatch<SetStateAction<string>>;
 	readonly stagedFileCount: number;
 	readonly commitModal: CommitModalState;
+	readonly helpModal: HelpModalState;
 	readonly updateFileView: UpdateFileViewState;
 	readonly updateUiStatus: UpdateUiStatus;
 	readonly updateCommitModal: UpdateCommitModal;
+	readonly updateHelpModal: UpdateHelpModal;
 	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
 }
@@ -69,9 +73,11 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		setThemeName,
 		stagedFileCount,
 		commitModal,
+		helpModal,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
+		updateHelpModal,
 		refreshFiles,
 		renderRepoActionError,
 	} = options;
@@ -275,6 +281,19 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		clearUiError();
 	}, [clearUiError, stagedFileCount, updateCommitModal]);
 
+	const closeHelpModal = useCallback(() => {
+		updateHelpModal((current) =>
+			current.isOpen ? { isOpen: false } : current,
+		);
+	}, [updateHelpModal]);
+
+	const openHelpModal = useCallback(() => {
+		if (helpModal.isOpen) {
+			return;
+		}
+		updateHelpModal(() => ({ isOpen: true }));
+	}, [helpModal.isOpen, updateHelpModal]);
+
 	const cycleTheme = useCallback(
 		(direction: 1 | -1) => {
 			setThemeName((current) =>
@@ -319,6 +338,12 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				Match.tag("OpenCommitModal", () => {
 					openCommitModal();
 				}),
+				Match.tag("CloseHelpModal", () => {
+					closeHelpModal();
+				}),
+				Match.tag("OpenHelpModal", () => {
+					openHelpModal();
+				}),
 				Match.tag("CycleTheme", (typedIntent) => {
 					cycleTheme(typedIntent.direction);
 				}),
@@ -345,8 +370,11 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			),
 		[
 			closeCommitModal,
+			closeHelpModal,
 			cycleTheme,
+			helpModal.isOpen,
 			openCommitModal,
+			openHelpModal,
 			openSelectedFile,
 			renderer,
 			diffScrollRef,

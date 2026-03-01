@@ -21,6 +21,7 @@ import { isFileStaged, type RepoActionError } from "#data/git";
 import { type ResolvedTheme, resolveThemeBundle, type ThemeMode } from "#theme/theme";
 import type { AppProps, FileEntry } from "#tui/types";
 import { CommitModal } from "#ui/components/commit-modal";
+import { HelpModal } from "#ui/components/help-modal";
 import { Reviewer } from "#ui/components/reviewer";
 import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar";
 import { Splash } from "#ui/components/splash";
@@ -31,8 +32,10 @@ import { buildSidebarItems, type SidebarItem } from "#ui/sidebar";
 import {
 	commitModalAtom,
 	fileViewStateAtom,
+	helpModalAtom,
 	type UpdateCommitModal,
 	type UpdateFileViewState,
+	type UpdateHelpModal,
 	type UpdateUiStatus,
 	uiStatusAtom,
 } from "#ui/state";
@@ -59,6 +62,7 @@ interface AppContentProps {
 	readonly uiShowSplash: boolean;
 	readonly uiError: Option.Option<string>;
 	readonly isCommitModalOpen: boolean;
+	readonly isHelpModalOpen: boolean;
 	readonly modalBackdropColor: RGBA;
 	readonly commitMessage: string;
 	readonly commitError: Option.Option<string>;
@@ -100,7 +104,9 @@ function AppContent(props: AppContentProps) {
 						loading={props.loading}
 						diffViewMode={props.diffViewMode}
 						error={props.uiError}
-						isCommitModalOpen={props.isCommitModalOpen}
+						isCommitModalOpen={
+							props.isCommitModalOpen || props.isHelpModalOpen
+						}
 						diffScrollRef={props.diffScrollRef}
 						onToggleDirectory={props.onToggleDirectory}
 						onSelectFilePath={props.onSelectFilePath}
@@ -118,6 +124,12 @@ function AppContent(props: AppContentProps) {
 							onCommitSubmit={props.onCommitSubmit}
 						/>
 					)}
+					{props.isHelpModalOpen && (
+						<HelpModal
+							theme={props.theme}
+							modalBackdropColor={props.modalBackdropColor}
+						/>
+					)}
 					<Snackbar theme={props.theme} notice={props.snackbarNotice} />
 				</>
 			)}
@@ -132,6 +144,7 @@ export function App(props: AppProps) {
 	const [fileView, setFileView] = useAtom(fileViewStateAtom);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
 	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
+	const [helpModal, setHelpModal] = useAtom(helpModalAtom);
 	const [snackbarNotice, setSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
 	>(Option.none());
@@ -156,6 +169,12 @@ export function App(props: AppProps) {
 		},
 		[setCommitModal],
 	);
+	const updateHelpModal = useCallback<UpdateHelpModal>(
+		(update) => {
+			setHelpModal(update);
+		},
+		[setHelpModal],
+	);
 
 	const {
 		files,
@@ -177,6 +196,7 @@ export function App(props: AppProps) {
 		0.55,
 	);
 	const isCommitModalOpen = commitModal.isOpen;
+	const isHelpModalOpen = helpModal.isOpen;
 	const commitMessage = commitModal.isOpen ? commitModal.message : "";
 	const commitError = commitModal.isOpen ? commitModal.error : Option.none();
 
@@ -343,15 +363,18 @@ export function App(props: AppProps) {
 		setThemeName,
 		stagedFileCount,
 		commitModal,
+		helpModal,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
+		updateHelpModal,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
 	});
 
 	useAppKeyboardInput({
 		isCommitModalOpen,
+		isHelpModalOpen,
 		stagedFileCount,
 		visibleFilePaths,
 		selectedVisibleIndex,
@@ -365,6 +388,7 @@ export function App(props: AppProps) {
 			uiShowSplash={uiStatus.showSplash}
 			uiError={uiStatus.error}
 			isCommitModalOpen={isCommitModalOpen}
+			isHelpModalOpen={isHelpModalOpen}
 			modalBackdropColor={modalBackdropColor}
 			commitMessage={commitMessage}
 			commitError={commitError}

@@ -30,6 +30,7 @@ function context(
 ): KeyboardIntentContext {
 	return {
 		isCommitModalOpen: false,
+		isHelpModalOpen: false,
 		stagedFileCount: 1,
 		visibleFilePaths: ["src/app.tsx", "src/other.ts"],
 		selectedVisibleIndex: 0,
@@ -81,6 +82,47 @@ describe("decodeKeyboardIntent", () => {
 		if (Option.isSome(intent)) {
 			expect(intent.value._tag).toBe("ToggleDiffViewMode");
 		}
+	});
+
+	test("maps ? to open help modal", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "?", shift: true }),
+			context(),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("OpenHelpModal");
+		}
+	});
+
+	test("maps shift+/ to open help modal", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "/", shift: true }),
+			context(),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("OpenHelpModal");
+		}
+	});
+
+	test("maps escape to close help modal when help is open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "escape" }),
+			context({ isHelpModalOpen: true }),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("CloseHelpModal");
+		}
+	});
+
+	test("ignores non-escape keys when help modal is open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "j" }),
+			context({ isHelpModalOpen: true }),
+		);
+		expect(Option.isNone(intent)).toBe(true);
 	});
 
 	test("maps ctrl+d to half-page down scroll intent", () => {

@@ -2,7 +2,7 @@
 [x] Tab to switch from split diff to unified
 [x] Selecting text auto copies to clipboard
 [x] E opens visual / editor
-? opens modal with keybinds listed
+[x] ? opens modal with keybinds listed
 No files changed in git status. show splash
 Theme switching is done via same modal as opencode
 Theme switching stored in the config file

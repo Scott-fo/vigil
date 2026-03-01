@@ -34,6 +34,18 @@ export const commitModalAtom = Atom.make<CommitModalState>({
 	isOpen: false,
 });
 
+export type HelpModalState = {
+	readonly isOpen: boolean;
+};
+
+export type UpdateHelpModal = (
+	update: (current: HelpModalState) => HelpModalState,
+) => void;
+
+export const helpModalAtom = Atom.make<HelpModalState>({
+	isOpen: false,
+});
+
 export interface FileViewState {
 	readonly files: FileEntry[];
 	readonly sidebarOpen: boolean;
