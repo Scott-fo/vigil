@@ -1,18 +1,20 @@
 import { parseArgs } from "node:util";
-import { Data, Option, pipe } from "effect";
-import { startReviewerTui } from "#tui";
-import { cmd } from "./cmd";
+import { Data, Effect, Option, pipe } from "effect";
+import {
+	startReviewerTuiProgram,
+	type StartReviewerTuiError,
+} from "#tui/bootstrap";
 
 export class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;
 }> {}
 
 interface ReviewerCliArgs {
-	chooserFilePath: Option.Option<string>;
-	help: boolean;
+	readonly chooserFilePath: Option.Option<string>;
+	readonly help: boolean;
 }
 
-function parseReviewerArgs(argv: string[]): ReviewerCliArgs {
+function parseReviewerArgs(argv: string[]): Effect.Effect<ReviewerCliArgs, CliArgumentError> {
 	let parsed: ReturnType<typeof parseArgs>;
 	try {
 		parsed = parseArgs({
@@ -30,15 +32,19 @@ function parseReviewerArgs(argv: string[]): ReviewerCliArgs {
 			},
 		});
 	} catch (error) {
-		throw new CliArgumentError({
-			message: error instanceof Error ? error.message : String(error),
-		});
+		return Effect.fail(
+			new CliArgumentError({
+				message: error instanceof Error ? error.message : String(error),
+			}),
+		);
 	}
 
 	if (parsed.positionals.length > 0) {
-		throw new CliArgumentError({
-			message: `Unexpected positional arguments: ${parsed.positionals.join(" ")}`,
-		});
+		return Effect.fail(
+			new CliArgumentError({
+				message: `Unexpected positional arguments: ${parsed.positionals.join(" ")}`,
+			}),
+		);
 	}
 
 	const chooserFilePath =
@@ -46,13 +52,13 @@ function parseReviewerArgs(argv: string[]): ReviewerCliArgs {
 			? Option.some(parsed.values["chooser-file"])
 			: Option.none<string>();
 
-	return {
+	return Effect.succeed({
 		help: parsed.values.help === true,
 		chooserFilePath,
-	};
+	});
 }
 
-function reviewerUsage(): string {
+export function reviewerUsage(): string {
 	return [
 		"reviewer",
 		"",
@@ -65,25 +71,26 @@ function reviewerUsage(): string {
 	].join("\n");
 }
 
-export const ReviewerCommand = cmd<ReviewerCliArgs>({
-	command: "$0",
-	describe: "start reviewer tui",
-	usage: reviewerUsage,
-	parse: parseReviewerArgs,
-	handler: async (args) => {
+export function runReviewerCommand(
+	argv: string[],
+): Effect.Effect<void, CliArgumentError | StartReviewerTuiError> {
+	return Effect.gen(function* () {
+		const args = yield* parseReviewerArgs(argv);
 		if (args.help) {
-			console.log(reviewerUsage());
+			yield* Effect.sync(() => {
+				console.log(reviewerUsage());
+			});
 			return;
 		}
 
-		await startReviewerTui(
+		yield* startReviewerTuiProgram(
 			pipe(
 				args.chooserFilePath,
 				Option.match({
-					onNone: () => undefined,
+					onNone: () => ({}),
 					onSome: (chooserFilePath) => ({ chooserFilePath }),
 				}),
 			),
 		);
-	},
-});
+	});
+}

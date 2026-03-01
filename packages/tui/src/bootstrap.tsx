@@ -70,7 +70,7 @@ function renderTreeSitterCause(error: TreeSitterInitializeError): string {
 	return String(cause);
 }
 
-function startReviewerTuiProgram(
+export function startReviewerTuiProgram(
 	options: StartReviewerTuiOptions,
 ): Effect.Effect<void, StartReviewerTuiError> {
 	return Effect.gen(function* () {
