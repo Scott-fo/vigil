@@ -25,6 +25,7 @@ import { HelpModal } from "#ui/components/help-modal";
 import { Reviewer } from "#ui/components/reviewer";
 import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar";
 import { Splash } from "#ui/components/splash";
+import { ThemeModal } from "#ui/components/theme-modal";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh";
 import { useRepoActions } from "#ui/hooks/use-repo-actions";
 import { useAppKeyboardInput } from "#ui/inputs";
@@ -33,9 +34,11 @@ import {
 	commitModalAtom,
 	fileViewStateAtom,
 	helpModalAtom,
+	themeModalAtom,
 	type UpdateCommitModal,
 	type UpdateFileViewState,
 	type UpdateHelpModal,
+	type UpdateThemeModal,
 	type UpdateUiStatus,
 	uiStatusAtom,
 } from "#ui/state";
@@ -63,6 +66,7 @@ interface AppContentProps {
 	readonly uiError: Option.Option<string>;
 	readonly isCommitModalOpen: boolean;
 	readonly isHelpModalOpen: boolean;
+	readonly isThemeModalOpen: boolean;
 	readonly modalBackdropColor: RGBA;
 	readonly commitMessage: string;
 	readonly commitError: Option.Option<string>;
@@ -81,6 +85,9 @@ interface AppContentProps {
 	readonly onCommitSubmit: (payload: unknown) => void;
 	readonly snackbarNotice: Option.Option<SnackbarNotice>;
 	readonly onCopySelection: () => void;
+	readonly themeNames: ReadonlyArray<string>;
+	readonly selectedThemeName: string;
+	readonly onSelectThemeInModal: (themeName: string) => void;
 }
 
 function AppContent(props: AppContentProps) {
@@ -94,45 +101,54 @@ function AppContent(props: AppContentProps) {
 			{props.uiShowSplash ? (
 				<Splash theme={props.theme} error={props.uiError} />
 			) : (
-				<>
-					<Reviewer
-						theme={props.theme}
-						syntaxStyle={props.syntaxStyle}
-						files={props.files}
-						sidebarItems={props.sidebarItems}
-						selectedFile={props.selectedFile}
-						loading={props.loading}
-						diffViewMode={props.diffViewMode}
-						error={props.uiError}
-						isCommitModalOpen={
-							props.isCommitModalOpen || props.isHelpModalOpen
-						}
-						diffScrollRef={props.diffScrollRef}
-						onToggleDirectory={props.onToggleDirectory}
-						onSelectFilePath={props.onSelectFilePath}
-						sidebarOpen={props.sidebarOpen}
-						onToggleSidebar={props.onToggleSidebar}
-						onCopySelection={props.onCopySelection}
-					/>
-					{props.isCommitModalOpen && (
-						<CommitModal
-							theme={props.theme}
-							modalBackdropColor={props.modalBackdropColor}
-							commitMessage={props.commitMessage}
-							commitError={props.commitError}
-							onCommitMessageChange={props.onCommitMessageChange}
-							onCommitSubmit={props.onCommitSubmit}
-						/>
-					)}
-					{props.isHelpModalOpen && (
-						<HelpModal
-							theme={props.theme}
-							modalBackdropColor={props.modalBackdropColor}
-						/>
-					)}
-					<Snackbar theme={props.theme} notice={props.snackbarNotice} />
-				</>
+				<Reviewer
+					theme={props.theme}
+					syntaxStyle={props.syntaxStyle}
+					files={props.files}
+					sidebarItems={props.sidebarItems}
+					selectedFile={props.selectedFile}
+					loading={props.loading}
+					diffViewMode={props.diffViewMode}
+					error={props.uiError}
+					isCommitModalOpen={
+						props.isCommitModalOpen ||
+						props.isHelpModalOpen ||
+						props.isThemeModalOpen
+					}
+					diffScrollRef={props.diffScrollRef}
+					onToggleDirectory={props.onToggleDirectory}
+					onSelectFilePath={props.onSelectFilePath}
+					sidebarOpen={props.sidebarOpen}
+					onToggleSidebar={props.onToggleSidebar}
+					onCopySelection={props.onCopySelection}
+				/>
 			)}
+			{props.isCommitModalOpen && (
+				<CommitModal
+					theme={props.theme}
+					modalBackdropColor={props.modalBackdropColor}
+					commitMessage={props.commitMessage}
+					commitError={props.commitError}
+					onCommitMessageChange={props.onCommitMessageChange}
+					onCommitSubmit={props.onCommitSubmit}
+				/>
+			)}
+			{props.isHelpModalOpen && (
+				<HelpModal
+					theme={props.theme}
+					modalBackdropColor={props.modalBackdropColor}
+				/>
+			)}
+			{props.isThemeModalOpen && (
+				<ThemeModal
+					theme={props.theme}
+					modalBackdropColor={props.modalBackdropColor}
+					themes={props.themeNames}
+					selectedThemeName={props.selectedThemeName}
+					onSelectTheme={props.onSelectThemeInModal}
+				/>
+			)}
+			<Snackbar theme={props.theme} notice={props.snackbarNotice} />
 		</box>
 	);
 }
@@ -145,6 +161,7 @@ export function App(props: AppProps) {
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
 	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
 	const [helpModal, setHelpModal] = useAtom(helpModalAtom);
+	const [themeModal, setThemeModal] = useAtom(themeModalAtom);
 	const [snackbarNotice, setSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
 	>(Option.none());
@@ -175,6 +192,12 @@ export function App(props: AppProps) {
 		},
 		[setHelpModal],
 	);
+	const updateThemeModal = useCallback<UpdateThemeModal>(
+		(update) => {
+			setThemeModal(update);
+		},
+		[setThemeModal],
+	);
 
 	const {
 		files,
@@ -197,6 +220,10 @@ export function App(props: AppProps) {
 	);
 	const isCommitModalOpen = commitModal.isOpen;
 	const isHelpModalOpen = helpModal.isOpen;
+	const isThemeModalOpen = themeModal.isOpen;
+	const selectedThemeName = themeModal.isOpen
+		? themeModal.selectedThemeName
+		: themeName;
 	const commitMessage = commitModal.isOpen ? commitModal.message : "";
 	const commitError = commitModal.isOpen ? commitModal.error : Option.none();
 	const canInitializeGitRepo = pipe(
@@ -362,21 +389,25 @@ export function App(props: AppProps) {
 		onKeyboardIntent,
 		onToggleDirectory,
 		onSelectFilePath,
+		onSelectThemeInModal,
 		onToggleSidebar,
 	} = useRepoActions({
 		chooserFilePath: props.chooserFilePath,
 		renderer,
 		diffScrollRef,
+		themeName,
 		themeCatalog: props.themeCatalog,
 		setThemeName,
 		stagedFileCount,
 		commitModal,
 		helpModal,
+		themeModal,
 		canInitializeGitRepo,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
 		updateHelpModal,
+		updateThemeModal,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
 	});
@@ -384,6 +415,7 @@ export function App(props: AppProps) {
 	useAppKeyboardInput({
 		isCommitModalOpen,
 		isHelpModalOpen,
+		isThemeModalOpen,
 		canInitializeGitRepo,
 		stagedFileCount,
 		visibleFilePaths,
@@ -396,10 +428,11 @@ export function App(props: AppProps) {
 		<AppContent
 			theme={theme}
 			uiShowSplash={uiStatus.showSplash}
-			uiError={uiStatus.error}
-			isCommitModalOpen={isCommitModalOpen}
-			isHelpModalOpen={isHelpModalOpen}
-			modalBackdropColor={modalBackdropColor}
+				uiError={uiStatus.error}
+				isCommitModalOpen={isCommitModalOpen}
+				isHelpModalOpen={isHelpModalOpen}
+				isThemeModalOpen={isThemeModalOpen}
+				modalBackdropColor={modalBackdropColor}
 			commitMessage={commitMessage}
 			commitError={commitError}
 			files={files}
@@ -414,9 +447,12 @@ export function App(props: AppProps) {
 			sidebarOpen={sidebarOpen}
 			onToggleSidebar={onToggleSidebar}
 			onCommitMessageChange={onCommitMessageChange}
-			onCommitSubmit={onCommitSubmit}
-			snackbarNotice={snackbarNotice}
-			onCopySelection={onCopySelection}
-		/>
-	);
-}
+				onCommitSubmit={onCommitSubmit}
+				snackbarNotice={snackbarNotice}
+				onCopySelection={onCopySelection}
+				themeNames={props.themeCatalog.order}
+				selectedThemeName={selectedThemeName}
+				onSelectThemeInModal={onSelectThemeInModal}
+			/>
+		);
+	}

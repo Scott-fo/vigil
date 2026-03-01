@@ -6,6 +6,7 @@ import type { FileEntry } from "#tui/types";
 interface UseAppKeyboardInputOptions {
 	isCommitModalOpen: boolean;
 	isHelpModalOpen: boolean;
+	isThemeModalOpen: boolean;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
@@ -17,6 +18,7 @@ interface UseAppKeyboardInputOptions {
 export interface KeyboardIntentContext {
 	isCommitModalOpen: boolean;
 	isHelpModalOpen: boolean;
+	isThemeModalOpen: boolean;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
@@ -33,7 +35,10 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "CloseHelpModal" }
 	| { readonly _tag: "OpenHelpModal" }
 	| { readonly _tag: "InitGitRepository" }
-	| { readonly _tag: "CycleTheme"; readonly direction: 1 | -1 }
+	| { readonly _tag: "OpenThemeModal" }
+	| { readonly _tag: "CloseThemeModal" }
+	| { readonly _tag: "ConfirmThemeModal" }
+	| { readonly _tag: "MoveThemeSelection"; readonly direction: 1 | -1 }
 	| { readonly _tag: "SyncRemote"; readonly direction: "pull" | "push" }
 	| { readonly _tag: "ScrollDiffHalfPage"; readonly direction: "up" | "down" }
 	| { readonly _tag: "OpenSelectedFile"; readonly filePath: string }
@@ -75,6 +80,22 @@ export function decodeKeyboardIntent(
 			: Option.none();
 	}
 
+	if (options.isThemeModalOpen) {
+		if (key.name === "escape") {
+			return Option.some({ _tag: "CloseThemeModal" });
+		}
+		if (key.name === "enter" || key.name === "return") {
+			return Option.some({ _tag: "ConfirmThemeModal" });
+		}
+		if (key.name === "down" || key.name === "j") {
+			return Option.some({ _tag: "MoveThemeSelection", direction: 1 });
+		}
+		if (key.name === "up" || key.name === "k") {
+			return Option.some({ _tag: "MoveThemeSelection", direction: -1 });
+		}
+		return Option.none();
+	}
+
 	if (key.name === "escape" || key.name === "q") {
 		return Option.some({ _tag: "DestroyRenderer" });
 	}
@@ -92,10 +113,7 @@ export function decodeKeyboardIntent(
 	}
 
 	if (isUnmodifiedKey(key, "t")) {
-		return Option.some({
-			_tag: "CycleTheme",
-			direction: key.shift ? -1 : 1,
-		});
+		return Option.some({ _tag: "OpenThemeModal" });
 	}
 
 	if (isUnmodifiedKey(key, "p")) {

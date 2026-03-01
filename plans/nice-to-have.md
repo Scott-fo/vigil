@@ -4,7 +4,7 @@
 [x] E opens visual / editor
 [x] ? opens modal with keybinds listed
 [x] No files changed in git status. show splash
-Theme switching is done via same modal as opencode
+[x] Theme switching is done via same modal as opencode
 Theme switching stored in the config file
 Status reporting (at top of sidebar, when pushing / pulling)
 

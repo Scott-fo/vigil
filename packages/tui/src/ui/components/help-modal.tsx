@@ -16,8 +16,9 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	{ keys: "Ctrl+b", description: "Toggle sidebar" },
 	{ keys: "c", description: "Open commit dialog (if files staged)" },
 	{ keys: "p / P", description: "Pull / push" },
-	{ keys: "t / T", description: "Next / previous theme" },
-	{ keys: "i", description: "Init git repo (splash when not in repo)" },
+	{ keys: "t", description: "Open theme picker" },
+	{ keys: "↑ / ↓", description: "Preview theme (theme picker)" },
+	{ keys: "enter / esc", description: "Confirm / cancel theme picker" },
 	{ keys: "q or esc", description: "Quit reviewer" },
 ];
 

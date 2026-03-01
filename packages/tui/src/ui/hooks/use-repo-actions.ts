@@ -25,9 +25,11 @@ import type { AppKeyboardIntent } from "#ui/inputs";
 import type {
 	CommitModalState,
 	HelpModalState,
+	ThemeModalState,
 	UpdateCommitModal,
 	UpdateFileViewState,
 	UpdateHelpModal,
+	UpdateThemeModal,
 	UpdateUiStatus,
 } from "#ui/state";
 
@@ -42,16 +44,19 @@ interface UseRepoActionsOptions {
 	readonly chooserFilePath: Option.Option<string>;
 	readonly renderer: RendererControls;
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
+	readonly themeName: string;
 	readonly themeCatalog: ThemeCatalog;
 	readonly setThemeName: Dispatch<SetStateAction<string>>;
 	readonly stagedFileCount: number;
 	readonly commitModal: CommitModalState;
 	readonly helpModal: HelpModalState;
+	readonly themeModal: ThemeModalState;
 	readonly canInitializeGitRepo: boolean;
 	readonly updateFileView: UpdateFileViewState;
 	readonly updateUiStatus: UpdateUiStatus;
 	readonly updateCommitModal: UpdateCommitModal;
 	readonly updateHelpModal: UpdateHelpModal;
+	readonly updateThemeModal: UpdateThemeModal;
 	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
 }
@@ -71,16 +76,19 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		chooserFilePath,
 		renderer,
 		diffScrollRef,
+		themeName,
 		themeCatalog,
 		setThemeName,
 		stagedFileCount,
 		commitModal,
 		helpModal,
+		themeModal,
 		canInitializeGitRepo,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
 		updateHelpModal,
+		updateThemeModal,
 		refreshFiles,
 		renderRepoActionError,
 	} = options;
@@ -297,13 +305,71 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		updateHelpModal(() => ({ isOpen: true }));
 	}, [helpModal.isOpen, updateHelpModal]);
 
-	const cycleTheme = useCallback(
+	const openThemeModal = useCallback(() => {
+		if (themeModal.isOpen) {
+			return;
+		}
+		updateThemeModal(() => ({
+			isOpen: true,
+			initialThemeName: themeName,
+			selectedThemeName: themeName,
+		}));
+	}, [themeModal.isOpen, themeName, updateThemeModal]);
+
+	const closeThemeModal = useCallback(() => {
+		if (!themeModal.isOpen) {
+			return;
+		}
+		setThemeName(themeModal.initialThemeName);
+		updateThemeModal(() => ({ isOpen: false }));
+	}, [setThemeName, themeModal, updateThemeModal]);
+
+	const confirmThemeModal = useCallback(() => {
+		if (!themeModal.isOpen) {
+			return;
+		}
+		updateThemeModal(() => ({ isOpen: false }));
+	}, [themeModal.isOpen, updateThemeModal]);
+
+	const moveThemeSelection = useCallback(
 		(direction: 1 | -1) => {
-			setThemeName((current) =>
-				cycleThemeName(themeCatalog, current, direction),
+			if (!themeModal.isOpen) {
+				return;
+			}
+			const nextThemeName = cycleThemeName(
+				themeCatalog,
+				themeModal.selectedThemeName,
+				direction,
+			);
+			if (nextThemeName === themeModal.selectedThemeName) {
+				return;
+			}
+			setThemeName(nextThemeName);
+			updateThemeModal((current) =>
+				current.isOpen
+					? { ...current, selectedThemeName: nextThemeName }
+					: current,
 			);
 		},
-		[setThemeName, themeCatalog],
+		[setThemeName, themeCatalog, themeModal, updateThemeModal],
+	);
+
+	const selectThemeInModal = useCallback(
+		(nextThemeName: string) => {
+			if (!themeModal.isOpen) {
+				return;
+			}
+			if (!themeCatalog.themes[nextThemeName]) {
+				return;
+			}
+			setThemeName(nextThemeName);
+			updateThemeModal((current) =>
+				current.isOpen
+					? { ...current, selectedThemeName: nextThemeName }
+					: current,
+			);
+		},
+		[setThemeName, themeCatalog.themes, themeModal.isOpen, updateThemeModal],
 	);
 
 	const syncRemote = useCallback(
@@ -359,8 +425,17 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				Match.tag("InitGitRepository", () => {
 					initializeGitRepository();
 				}),
-				Match.tag("CycleTheme", (typedIntent) => {
-					cycleTheme(typedIntent.direction);
+				Match.tag("OpenThemeModal", () => {
+					openThemeModal();
+				}),
+				Match.tag("CloseThemeModal", () => {
+					closeThemeModal();
+				}),
+				Match.tag("ConfirmThemeModal", () => {
+					confirmThemeModal();
+				}),
+				Match.tag("MoveThemeSelection", (typedIntent) => {
+					moveThemeSelection(typedIntent.direction);
 				}),
 				Match.tag("SyncRemote", (typedIntent) => {
 					syncRemote(typedIntent.direction);
@@ -386,11 +461,14 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		[
 			closeCommitModal,
 			closeHelpModal,
-			cycleTheme,
+			closeThemeModal,
+			confirmThemeModal,
 			helpModal.isOpen,
 			initializeGitRepository,
+			moveThemeSelection,
 			openCommitModal,
 			openHelpModal,
+			openThemeModal,
 			openSelectedFile,
 			renderer,
 			diffScrollRef,
@@ -408,6 +486,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		onKeyboardIntent,
 		onToggleDirectory: toggleCollapsedDirectory,
 		onSelectFilePath: selectFilePath,
+		onSelectThemeInModal: selectThemeInModal,
 		onToggleSidebar: toggleSidebar,
 	};
 }

@@ -31,6 +31,7 @@ function context(
 	return {
 		isCommitModalOpen: false,
 		isHelpModalOpen: false,
+		isThemeModalOpen: false,
 		canInitializeGitRepo: false,
 		stagedFileCount: 1,
 		visibleFilePaths: ["src/app.tsx", "src/other.ts"],
@@ -104,6 +105,61 @@ describe("decodeKeyboardIntent", () => {
 		expect(Option.isSome(intent)).toBe(true);
 		if (Option.isSome(intent)) {
 			expect(intent.value._tag).toBe("OpenHelpModal");
+		}
+	});
+
+	test("maps t to open theme modal", () => {
+		const intent = decodeKeyboardIntent(keyEvent({ name: "t" }), context());
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("OpenThemeModal");
+		}
+	});
+
+	test("maps escape to close theme modal when open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "escape" }),
+			context({ isThemeModalOpen: true }),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("CloseThemeModal");
+		}
+	});
+
+	test("maps return to confirm theme modal when open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "return" }),
+			context({ isThemeModalOpen: true }),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("ConfirmThemeModal");
+		}
+	});
+
+	test("maps j/k to theme preview movement when theme modal is open", () => {
+		const downIntent = decodeKeyboardIntent(
+			keyEvent({ name: "j" }),
+			context({ isThemeModalOpen: true }),
+		);
+		const upIntent = decodeKeyboardIntent(
+			keyEvent({ name: "k" }),
+			context({ isThemeModalOpen: true }),
+		);
+		expect(Option.isSome(downIntent)).toBe(true);
+		expect(Option.isSome(upIntent)).toBe(true);
+		if (Option.isSome(downIntent)) {
+			expect(downIntent.value).toEqual({
+				_tag: "MoveThemeSelection",
+				direction: 1,
+			});
+		}
+		if (Option.isSome(upIntent)) {
+			expect(upIntent.value).toEqual({
+				_tag: "MoveThemeSelection",
+				direction: -1,
+			});
 		}
 	});
 

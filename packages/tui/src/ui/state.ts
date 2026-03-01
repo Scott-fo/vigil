@@ -46,6 +46,24 @@ export const helpModalAtom = Atom.make<HelpModalState>({
 	isOpen: false,
 });
 
+export type ThemeModalState =
+	| {
+			readonly isOpen: false;
+	  }
+	| {
+			readonly isOpen: true;
+			readonly initialThemeName: string;
+			readonly selectedThemeName: string;
+	  };
+
+export type UpdateThemeModal = (
+	update: (current: ThemeModalState) => ThemeModalState,
+) => void;
+
+export const themeModalAtom = Atom.make<ThemeModalState>({
+	isOpen: false,
+});
+
 export interface FileViewState {
 	readonly files: FileEntry[];
 	readonly sidebarOpen: boolean;

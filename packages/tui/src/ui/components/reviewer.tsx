@@ -1,10 +1,11 @@
 import type { ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
 import { Option, pipe } from "effect";
-import { memo, type RefObject, useMemo } from "react";
+import { memo, type RefObject, useMemo, useRef } from "react";
 import { isFileStaged } from "#data/git";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import type { ResolvedTheme } from "#theme/theme";
 import type { FileEntry } from "#tui/types";
+import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection";
 import { getStatusColor, type SidebarItem } from "#ui/sidebar";
 
 type SidebarHeaderItem = Extract<SidebarItem, { kind: "header" }>;
@@ -41,6 +42,7 @@ const SidebarHeaderRow = memo(function SidebarHeaderRow(
 
 interface SidebarFileRowProps {
 	readonly item: SidebarFileItem;
+	readonly rowId: string;
 	readonly theme: ResolvedTheme;
 	readonly selectedFilePath: Option.Option<string>;
 	readonly onSelectFilePath: (path: string) => void;
@@ -63,6 +65,7 @@ const SidebarFileRow = memo(function SidebarFileRow(props: SidebarFileRowProps) 
 
 	return (
 		<box
+			id={props.rowId}
 			paddingX={1}
 			backgroundColor={rowBackground}
 			onMouseDown={(event) => {
@@ -91,6 +94,18 @@ interface SidebarPanelProps {
 }
 
 const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
+	const sidebarScrollRef = useRef<ScrollBoxRenderable | null>(null);
+	const selectedRowId = pipe(
+		props.selectedFilePath,
+		Option.map((selectedPath) => `sidebar-row:${selectedPath}`),
+		Option.getOrElse(() => null),
+	);
+
+	useScrollFollowSelection({
+		scrollRef: sidebarScrollRef,
+		selectedRowId,
+	});
+
 	return (
 		<box
 			width={38}
@@ -107,7 +122,7 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 				</text>
 			</box>
 
-			<scrollbox flexGrow={1}>
+			<scrollbox ref={sidebarScrollRef} flexGrow={1}>
 				{props.sidebarItems.map((item) =>
 					item.kind === "header" ? (
 						<SidebarHeaderRow
@@ -120,6 +135,7 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 						<SidebarFileRow
 							key={item.key}
 							item={item}
+							rowId={`sidebar-row:${item.file.path}`}
 							theme={props.theme}
 							selectedFilePath={props.selectedFilePath}
 							onSelectFilePath={props.onSelectFilePath}
