@@ -28,10 +28,10 @@ Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Ef
 
 ### 2) TUI Entrypoints + Core Wiring
 
-- [ ] `packages/tui/package.json`
-- [ ] `packages/tui/src/index.ts`
-- [ ] `packages/tui/src/bootstrap.tsx`
-- [ ] `packages/tui/src/types.ts`
+- [x] `packages/tui/package.json`
+- [x] `packages/tui/src/index.ts`
+- [x] `packages/tui/src/bootstrap.tsx`
+- [x] `packages/tui/src/types.ts`
 
 ### 3) Domain/Data
 
@@ -58,4 +58,4 @@ Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Ef
 
 ## Current Tranche
 
-- In progress: TUI Entrypoints + Core Wiring (`packages/tui/src/{index,bootstrap,types}.ts*`)
+- In progress: Domain/Data (`packages/tui/src/data/{editor,git}.ts`)
