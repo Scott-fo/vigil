@@ -1,6 +1,6 @@
 import { Data, Effect, Option, pipe } from "effect";
 import { resolveDiffFiletype } from "#syntax/tree-sitter";
-import type { FileEntry, GitCommandResult, StatusEntry } from "#tui/types";
+import type { FileEntry, StatusEntry } from "#tui/types";
 
 const TEXT_DECODER = new TextDecoder();
 
@@ -26,38 +26,35 @@ function decodeOutput(output?: Uint8Array | null): string {
 	return TEXT_DECODER.decode(output);
 }
 
-function runGit(args: string[]): GitCommandResult {
-	const result = Bun.spawnSync({
-		cmd: ["git", ...args],
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-
-	return {
-		ok: result.exitCode === 0,
-		stdout: decodeOutput(result.stdout),
-		stderr: decodeOutput(result.stderr),
-	};
-}
-
 function runGitEffect(
 	args: string[],
 	fallbackMessage: string,
-): Effect.Effect<GitCommandResult, GitCommandError> {
+): Effect.Effect<{ readonly stdout: string; readonly stderr: string }, GitCommandError> {
 	return pipe(
-		Effect.sync(() => runGit(args)),
-		Effect.flatMap((result) =>
-			result.ok
-				? Effect.succeed(result)
+		Effect.sync(() =>
+			Bun.spawnSync({
+				cmd: ["git", ...args],
+				stdout: "pipe",
+				stderr: "pipe",
+			}),
+		),
+		Effect.flatMap((result) => {
+			const stdout = decodeOutput(result.stdout);
+			const stderr = decodeOutput(result.stderr);
+			return result.exitCode === 0
+				? Effect.succeed({
+						stdout,
+						stderr,
+					})
 				: Effect.fail(
 						new GitCommandError({
 							args,
-							stdout: result.stdout,
-							stderr: result.stderr,
+							stdout,
+							stderr,
 							fallbackMessage,
 						}),
-					),
-		),
+					);
+		}),
 	);
 }
 
@@ -159,10 +156,6 @@ function parseStatusEntries(raw: string): StatusEntry[] {
 	return entries;
 }
 
-function inferFiletype(inputPath: string): Option.Option<string> {
-	return resolveDiffFiletype(inputPath);
-}
-
 function createUntrackedFileDiff(inputPath: string, content: string): string {
 	const normalized = content.replace(/\r\n/g, "\n");
 	if (normalized.length === 0) {
@@ -196,6 +189,107 @@ function createUntrackedFileDiff(inputPath: string, content: string): string {
 	].join("\n");
 }
 
+interface FilePreview {
+	readonly diff: string;
+	readonly note: Option.Option<string>;
+}
+
+function withDefaultPreviewNote(preview: FilePreview): FilePreview {
+	return !preview.diff.trim() && Option.isNone(preview.note)
+		? {
+				diff: preview.diff,
+				note: Option.some("No textual diff available."),
+			}
+		: preview;
+}
+
+function loadUntrackedPreview(filePath: string): Effect.Effect<FilePreview, never> {
+	return pipe(
+		Effect.tryPromise(() => Bun.file(filePath).bytes()),
+		Effect.match({
+			onFailure: () =>
+				({
+					diff: "",
+					note: Option.some("Unable to read untracked file content."),
+				}) as const,
+			onSuccess: (bytes) => {
+				if (bytes.includes(0)) {
+					return {
+						diff: "",
+						note: Option.some("Binary or non-text file; no preview available."),
+					} as const;
+				}
+				const diff = createUntrackedFileDiff(filePath, TEXT_DECODER.decode(bytes));
+				return !diff.trim()
+					? ({
+							diff,
+							note: Option.some("Untracked empty file; no textual hunk to preview."),
+						}) as const
+					: ({
+							diff,
+							note: Option.none<string>(),
+						}) as const;
+			},
+		}),
+	);
+}
+
+function loadTrackedPreview(filePath: string): Effect.Effect<FilePreview, never> {
+	return pipe(
+		runGitEffect(
+			["diff", "--no-color", "--find-renames", "HEAD", "--", filePath],
+			"Unable to load diff for this file.",
+		),
+		Effect.match({
+			onFailure: (error) => ({
+				diff: "",
+				note: Option.some(renderGitCommandError(error)),
+			}),
+			onSuccess: (result) => ({
+				diff: result.stdout,
+				note: Option.none<string>(),
+			}),
+		}),
+	);
+}
+
+function toFileEntry(entry: StatusEntry, preview: FilePreview): FileEntry {
+	const label =
+		entry.originalPath === undefined
+			? entry.path
+			: `${entry.originalPath} -> ${entry.path}`;
+	const filetype = resolveDiffFiletype(entry.path);
+	const resolvedPreview = withDefaultPreviewNote(preview);
+	const fileEntryBase: FileEntry = {
+		status: entry.status,
+		path: entry.path,
+		label,
+		diff: resolvedPreview.diff,
+	};
+
+	const withFiletype = pipe(
+		filetype,
+		Option.match({
+			onNone: () => fileEntryBase,
+			onSome: (resolvedFiletype) => ({
+				...fileEntryBase,
+				filetype: resolvedFiletype,
+			}),
+		}),
+	);
+
+	return pipe(
+		resolvedPreview.note,
+		Option.match({
+			onNone: () => withFiletype,
+			onSome: (resolvedNote) => ({
+				...withFiletype,
+				note: resolvedNote,
+			}),
+		}),
+	);
+}
+
 export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError> {
 	return Effect.gen(function* () {
 		const statusResult = yield* runGitEffect(
@@ -209,90 +303,11 @@ export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError
 		const files: FileEntry[] = [];
 
 		for (const entry of statusEntries) {
-			const label = entry.originalPath
-				? `${entry.originalPath} -> ${entry.path}`
-				: entry.path;
-			let diff = "";
-			let note = Option.none<string>();
-
-			if (entry.status === "??") {
-				const untrackedRead = yield* pipe(
-					Effect.tryPromise(() => Bun.file(entry.path).bytes()),
-					Effect.match({
-						onFailure: () => ({ ok: false as const }),
-						onSuccess: (bytes) => ({ ok: true as const, bytes }),
-					}),
-				);
-
-				if (!untrackedRead.ok) {
-					note = Option.some("Unable to read untracked file content.");
-				} else {
-					const hasNullByte = untrackedRead.bytes.includes(0);
-					if (hasNullByte) {
-						note = Option.some("Binary or non-text file; no preview available.");
-					} else {
-						const content = TEXT_DECODER.decode(untrackedRead.bytes);
-						diff = createUntrackedFileDiff(entry.path, content);
-						if (!diff.trim()) {
-							note = Option.some(
-								"Untracked empty file; no textual hunk to preview.",
-							);
-						}
-					}
-				}
-			} else {
-				const trackedDiff = yield* pipe(
-					runGitEffect(
-						["diff", "--no-color", "--find-renames", "HEAD", "--", entry.path],
-						"Unable to load diff for this file.",
-					),
-					Effect.match({
-						onFailure: (error) => ({
-							diff: "",
-							note: Option.some(renderGitCommandError(error)),
-						}),
-						onSuccess: (result) => ({
-							diff: result.stdout,
-							note: Option.none<string>(),
-						}),
-					}),
-				);
-				diff = trackedDiff.diff;
-				note = trackedDiff.note;
-			}
-
-			if (!diff.trim() && Option.isNone(note)) {
-				note = Option.some("No textual diff available.");
-			}
-
-			const filetype = inferFiletype(entry.path);
-			const fileEntryBase: FileEntry = {
-				status: entry.status,
-				path: entry.path,
-				label,
-				diff,
-			};
-			const fileEntryWithFiletype = pipe(
-				filetype,
-				Option.match({
-					onNone: () => fileEntryBase,
-					onSome: (resolvedFiletype) => ({
-						...fileEntryBase,
-						filetype: resolvedFiletype,
-					}),
-				}),
-			);
-			const fileEntry = pipe(
-				note,
-				Option.match({
-					onNone: () => fileEntryWithFiletype,
-					onSome: (resolvedNote) => ({
-						...fileEntryWithFiletype,
-						note: resolvedNote,
-					}),
-				}),
-			);
-			files.push(fileEntry);
+			const preview =
+				entry.status === "??"
+					? yield* loadUntrackedPreview(entry.path)
+					: yield* loadTrackedPreview(entry.path);
+			files.push(toFileEntry(entry, preview));
 		}
 
 		return files;

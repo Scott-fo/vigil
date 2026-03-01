@@ -16,12 +16,6 @@ export interface FileEntry {
 	readonly note?: string;
 }
 
-export interface GitCommandResult {
-	readonly ok: boolean;
-	readonly stdout: string;
-	readonly stderr: string;
-}
-
 export interface AppProps {
 	readonly themeCatalog: ThemeCatalog;
 	readonly initialThemeName: string;

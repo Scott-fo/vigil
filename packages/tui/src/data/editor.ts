@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { Data, Effect, Match, pipe } from "effect";
+import { Data, Effect, Match, Option, pipe } from "effect";
 
 function quoteShellArg(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -27,16 +27,17 @@ export type OpenFileError =
 
 function resolveEditorCommand(): Effect.Effect<string, EditorEnvMissingError> {
 	return pipe(
-		Effect.sync(() => process.env.VISUAL ?? process.env.EDITOR),
-		Effect.flatMap((editorCommand) => {
-			if (!editorCommand || editorCommand.trim().length === 0) {
-				return Effect.fail(
+		Option.fromNullable(process.env.VISUAL ?? process.env.EDITOR),
+		Option.map((editorCommand) => editorCommand.trim()),
+		Option.filter((editorCommand) => editorCommand.length > 0),
+		Option.match({
+			onNone: () =>
+				Effect.fail(
 					new EditorEnvMissingError({
 						message: "Set VISUAL or EDITOR to open files from reviewer.",
 					}),
-				);
-			}
-			return Effect.succeed(editorCommand);
+				),
+			onSome: (editorCommand) => Effect.succeed(editorCommand),
 		}),
 	);
 }

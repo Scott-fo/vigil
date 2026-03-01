@@ -35,8 +35,8 @@ Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Ef
 
 ### 3) Domain/Data
 
-- [ ] `packages/tui/src/data/editor.ts`
-- [ ] `packages/tui/src/data/git.ts`
+- [x] `packages/tui/src/data/editor.ts`
+- [x] `packages/tui/src/data/git.ts`
 
 ### 4) Syntax/Theme/Config
 
@@ -58,4 +58,4 @@ Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Ef
 
 ## Current Tranche
 
-- In progress: Domain/Data (`packages/tui/src/data/{editor,git}.ts`)
+- In progress: Syntax/Theme/Config (`packages/tui/src/{config/parsers,syntax/tree-sitter,theme/theme}.ts`)
