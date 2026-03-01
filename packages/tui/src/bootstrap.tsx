@@ -1,11 +1,11 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { App } from "./app";
+import { App } from "#ui/app";
 import {
 	loadThemeCatalog,
 	readThemePreferenceFromTuiConfig,
-} from "./theme";
-import { initializeTreeSitterClient } from "./tree-sitter";
+} from "#theme/theme";
+import { initializeTreeSitterClient } from "#syntax/tree-sitter";
 
 export async function startReviewerTui() {
 	const themeCatalog = await loadThemeCatalog();

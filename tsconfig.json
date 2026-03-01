@@ -11,6 +11,17 @@
 
     // Bundler mode
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "#tui": ["packages/tui/src/index.ts"],
+      "#tui/*": ["packages/tui/src/*"],
+      "#ui/*": ["packages/tui/src/ui/*"],
+      "#data/*": ["packages/tui/src/data/*"],
+      "#diff/*": ["packages/tui/src/diff/*"],
+      "#theme/*": ["packages/tui/src/theme/*"],
+      "#syntax/*": ["packages/tui/src/syntax/*"],
+      "#config/*": ["packages/tui/src/config/*"]
+    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,

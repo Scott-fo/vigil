@@ -1,15 +1,15 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { splitDiffIntoHunkBlocks } from "./diff";
-import { loadFilesWithDiffs } from "./git";
+import { splitDiffIntoHunkBlocks } from "#diff/hunks";
+import { loadFilesWithDiffs } from "#data/git";
 import {
 	cycleThemeName,
 	resolveThemeBundle,
 	type ResolvedTheme,
 	type ThemeMode,
-} from "./theme";
-import type { AppProps, FileEntry } from "./types";
+} from "#theme/theme";
+import type { AppProps, FileEntry } from "#tui/types";
 
 function getStatusColor(status: string, theme: ResolvedTheme) {
 	if (status === "??" || status.includes("A")) {

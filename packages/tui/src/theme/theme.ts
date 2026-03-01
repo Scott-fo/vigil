@@ -381,8 +381,9 @@ function normalizeThemeOrder(names: string[]): string[] {
 
 export async function loadThemeCatalog(): Promise<ThemeCatalog> {
   const themes: Record<string, ThemeJson> = {};
+  const bundledThemesDirectory = path.join(import.meta.dir, "..", "themes");
 
-  Object.assign(themes, await loadThemesFromDirectory(path.join(process.cwd(), "src", "themes")));
+  Object.assign(themes, await loadThemesFromDirectory(bundledThemesDirectory));
 
   for (const directory of getCustomThemeDirectories()) {
     Object.assign(themes, await loadThemesFromDirectory(directory));

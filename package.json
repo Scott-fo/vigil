@@ -3,6 +3,19 @@
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "imports": {
+    "#tui": "./packages/tui/src/index.ts",
+    "#tui/*": "./packages/tui/src/*",
+    "#ui/*": "./packages/tui/src/ui/*",
+    "#data/*": "./packages/tui/src/data/*",
+    "#diff/*": "./packages/tui/src/diff/*",
+    "#theme/*": "./packages/tui/src/theme/*",
+    "#syntax/*": "./packages/tui/src/syntax/*",
+    "#config/*": "./packages/tui/src/config/*"
+  },
   "scripts": {
     "dev": "bun run --watch src/index.tsx"
   },

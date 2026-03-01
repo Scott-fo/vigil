@@ -1,5 +1,5 @@
-import { resolveDiffFiletype } from "./tree-sitter";
-import type { FileEntry, GitCommandResult, StatusEntry } from "./types";
+import { resolveDiffFiletype } from "#syntax/tree-sitter";
+import type { FileEntry, GitCommandResult, StatusEntry } from "#tui/types";
 
 const TEXT_DECODER = new TextDecoder();
 

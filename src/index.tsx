@@ -1,3 +1,3 @@
-import { startReviewerTui } from "./tui/bootstrap";
+import { startReviewerTui } from "#tui";
 
 await startReviewerTui();

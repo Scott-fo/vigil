@@ -1,4 +1,4 @@
-import type { ThemeCatalog, ThemeMode } from "./theme";
+import type { ThemeCatalog, ThemeMode } from "#theme/theme";
 
 export interface StatusEntry {
 	status: string;
