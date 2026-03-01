@@ -1,7 +1,5 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <opentui> */
 
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import { Atom, useAtom } from "@effect-atom/atom-react";
 import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
@@ -24,6 +22,11 @@ import {
 	type RepoActionError,
 	toggleFileStage,
 } from "#data/git";
+import {
+	openFileInEditor,
+	renderOpenFileError,
+	writeChooserSelection,
+} from "#data/editor";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import {
 	cycleThemeName,
@@ -39,10 +42,6 @@ import {
 	getStatusColor,
 	type SidebarItem,
 } from "#ui/sidebar";
-
-function quoteShellArg(value: string): string {
-	return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
 
 function areFileEntriesEqual(a: FileEntry[], b: FileEntry[]): boolean {
 	if (a.length !== b.length) {
@@ -423,65 +422,66 @@ export function App(props: AppProps) {
 			if (showLoading) {
 				setLoading(true);
 			}
-			try {
-				const result = await Effect.runPromise(
-					pipe(
-						loadFilesWithDiffs(),
-						Effect.match({
-							onFailure: (repoError) => ({
-								ok: false as const,
-								error: formatRepoActionError(repoError),
-							}),
-							onSuccess: (files) => ({
-								ok: true as const,
-								files,
-							}),
+			const result = await Effect.runPromise(
+				pipe(
+					loadFilesWithDiffs(),
+					Effect.match({
+						onFailure: (repoError) => ({
+							ok: false as const,
+							error: formatRepoActionError(repoError),
+						}),
+						onSuccess: (files) => ({
+							ok: true as const,
+							files,
+						}),
+					}),
+					Effect.ensuring(
+						Effect.sync(() => {
+							if (showLoading) {
+								setLoading(false);
+							}
+							isRefreshingRef.current = false;
 						}),
 					),
-				);
-				if (!result.ok) {
-					setFiles((current) => (current.length === 0 ? current : []));
-					setUiStatus((current) => {
-						if (current.showSplash && current.error === result.error) {
-							return current;
-						}
-						return {
-							showSplash: true,
-							error: result.error,
-						};
-					});
-					setSelectedPath(null);
-					return;
-				}
-
-				setFiles((current) =>
-					areFileEntriesEqual(current, result.files) ? current : result.files,
-				);
+				),
+			);
+			if (!result.ok) {
+				setFiles((current) => (current.length === 0 ? current : []));
 				setUiStatus((current) => {
-					if (!current.showSplash && current.error === null) {
+					if (current.showSplash && current.error === result.error) {
 						return current;
 					}
 					return {
-						showSplash: false,
-						error: null,
+						showSplash: true,
+						error: result.error,
 					};
 				});
-
-				setSelectedPath((current) => {
-					if (result.files.length === 0) {
-						return null;
-					}
-					if (current && result.files.some((file) => file.path === current)) {
-						return current;
-					}
-					return result.files[0]?.path ?? null;
-				});
-			} finally {
-				if (showLoading) {
-					setLoading(false);
-				}
-				isRefreshingRef.current = false;
+				setSelectedPath(null);
+				return;
 			}
+
+			setFiles((current) =>
+				areFileEntriesEqual(current, result.files) ? current : result.files,
+			);
+			setUiStatus((current) => {
+				if (!current.showSplash && current.error === null) {
+					return current;
+				}
+				return {
+					showSplash: false,
+					error: null,
+				};
+			});
+
+			setSelectedPath((current) => {
+				if (result.files.length === 0) {
+					return null;
+				}
+				if (current && result.files.some((file) => file.path === current)) {
+					return current;
+				}
+				return result.files[0]?.path ?? null;
+			});
 		},
 		[setUiStatus],
 	);
@@ -582,75 +582,59 @@ export function App(props: AppProps) {
 	);
 
 	const openSelectedFile = useCallback(
-		async (filePath: string) => {
+		(filePath: string) => {
 			if (props.chooserFilePath) {
-				try {
-					fs.writeFileSync(props.chooserFilePath, `${filePath}\n`, "utf8");
-					renderer.destroy();
-				} catch {
-					setUiStatus((current) => {
-						const message = `Unable to write chooser file: ${props.chooserFilePath}`;
-						return current.error === message
+				const chooserWriteResult = Effect.runSync(
+					pipe(
+						writeChooserSelection(props.chooserFilePath, filePath),
+						Effect.match({
+							onFailure: (error) => ({
+								ok: false as const,
+								error: renderOpenFileError(error),
+							}),
+							onSuccess: () => ({ ok: true as const }),
+						}),
+					),
+				);
+				if (!chooserWriteResult.ok) {
+					setUiStatus((current) =>
+						current.error === chooserWriteResult.error
 							? current
-							: { ...current, error: message };
-					});
+							: { ...current, error: chooserWriteResult.error },
+					);
+					return;
 				}
-				return;
-			}
-
-			const editorCommand = process.env.VISUAL ?? process.env.EDITOR;
-			if (!editorCommand || editorCommand.trim().length === 0) {
-				setUiStatus((current) => {
-					const message = "Set VISUAL or EDITOR to open files from reviewer.";
-					return current.error === message
-						? current
-						: { ...current, error: message };
-				});
+				renderer.destroy();
 				return;
 			}
 
 			renderer.suspend();
-			try {
-				const result = spawnSync(
-					"sh",
-					["-lc", `${editorCommand} ${quoteShellArg(filePath)}`],
-					{ stdio: "inherit" },
-				);
-
-				if (result.error) {
-					const message = result.error.message || "Failed to launch editor.";
-					setUiStatus((current) =>
-						current.error === message
-							? current
-							: { ...current, error: message },
-					);
-					return;
-				}
-
-				if (result.status !== 0) {
-					const message = `Editor command exited with code ${result.status ?? 1}.`;
-					setUiStatus((current) =>
-						current.error === message
-							? current
-							: { ...current, error: message },
-					);
-					return;
-				}
-
+			const openResult = Effect.runSync(
+				pipe(
+					openFileInEditor(filePath),
+					Effect.match({
+						onFailure: (error) => ({
+							ok: false as const,
+							error: renderOpenFileError(error),
+						}),
+						onSuccess: () => ({ ok: true as const }),
+					}),
+				),
+			);
+			renderer.resume();
+			if (!openResult.ok) {
 				setUiStatus((current) =>
-					current.error === null ? current : { ...current, error: null },
-				);
-			} catch {
-				setUiStatus((current) => {
-					const message = "Failed to launch editor from VISUAL/EDITOR.";
-					return current.error === message
+					current.error === openResult.error
 						? current
-						: { ...current, error: message };
-				});
-			} finally {
-				renderer.resume();
+						: { ...current, error: openResult.error },
+				);
 				void refreshFiles(false);
+				return;
 			}
+			setUiStatus((current) =>
+				current.error === null ? current : { ...current, error: null },
+			);
+			void refreshFiles(false);
 		},
 		[props.chooserFilePath, refreshFiles, renderer, setUiStatus],
 	);

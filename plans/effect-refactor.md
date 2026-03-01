@@ -86,3 +86,6 @@
   - CLI now normalizes to a tagged union and uses exhaustive `Match.tag(...).exhaustive`.
   - UI/domain error projection now uses `Effect.catchTags(...)` pattern.
   - W2 service APIs now return `Effect<Success, Error, never>` at boundaries instead of `Either`.
+  - Added `packages/tui/src/data/editor.ts` with tagged errors (`EditorEnvMissingError`, `EditorLaunchError`, `ChooserWriteError`) and Effect-based workflows for chooser writes/editor launch.
+  - Replaced `openSelectedFile` imperative `try/catch` in `packages/tui/src/ui/app.tsx` with `Effect.match` + tagged error rendering.
+  - Replaced polling cleanup `try/finally` in `refreshFiles` with `Effect.ensuring(...)`.
