@@ -365,8 +365,22 @@ type UiStatus = {
 };
 
 const uiStatusAtom = Atom.make<UiStatus>({
-	showSplash: false,
+	showSplash: true,
 	error: null,
+});
+
+type CommitModalState =
+	| {
+			isOpen: false;
+	  }
+	| {
+			isOpen: true;
+			message: string;
+			error: string | null;
+	  };
+
+const commitModalAtom = Atom.make<CommitModalState>({
+	isOpen: false,
 });
 
 export function App(props: AppProps) {
@@ -378,11 +392,9 @@ export function App(props: AppProps) {
 		() => new Set(),
 	);
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
-	const [isCommitModalOpen, setIsCommitModalOpen] = useState(false);
-	const [commitMessage, setCommitMessage] = useState("");
-	const [commitError, setCommitError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
+	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
 	const isRefreshingRef = useRef(false);
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
 
@@ -397,6 +409,9 @@ export function App(props: AppProps) {
 		theme.background.b,
 		0.55,
 	);
+	const isCommitModalOpen = commitModal.isOpen;
+	const commitMessage = commitModal.isOpen ? commitModal.message : "";
+	const commitError = commitModal.isOpen ? commitModal.error : null;
 
 	const refreshFiles = useCallback(
 		async (showLoading: boolean) => {
@@ -549,19 +564,21 @@ export function App(props: AppProps) {
 				),
 			);
 			if (!result.ok) {
-				setCommitError(result.error);
+				setCommitModal((current) =>
+					current.isOpen ? { ...current, error: result.error } : current,
+				);
 				return;
 			}
 
-			setCommitMessage("");
-			setCommitError(null);
-			setIsCommitModalOpen(false);
+			setCommitModal((current) =>
+				current.isOpen ? { isOpen: false } : current,
+			);
 			setUiStatus((current) =>
 				current.error === null ? current : { ...current, error: null },
 			);
 			void refreshFiles(false);
 		},
-		[refreshFiles, setUiStatus],
+		[refreshFiles, setCommitModal, setUiStatus],
 	);
 
 	const openSelectedFile = useCallback(
@@ -656,12 +673,18 @@ export function App(props: AppProps) {
 
 	const onCommitMessageChange = useCallback(
 		(value: string) => {
-			setCommitMessage(value);
-			if (commitError) {
-				setCommitError(null);
-			}
+			setCommitModal((current) => {
+				if (!current.isOpen) {
+					return current;
+				}
+				return {
+					...current,
+					message: value,
+					error: null,
+				};
+			});
 		},
-		[commitError],
+		[setCommitModal],
 	);
 
 	const onCommitSubmit = useCallback(
@@ -670,28 +693,31 @@ export function App(props: AppProps) {
 				submitCommit(payload);
 				return;
 			}
-			submitCommit(commitMessage);
+			if (!commitModal.isOpen) {
+				return;
+			}
+			submitCommit(commitModal.message);
 		},
-		[commitMessage, submitCommit],
+		[commitModal, submitCommit],
 	);
 
 	const closeCommitModal = useCallback(() => {
-		setIsCommitModalOpen(false);
-		setCommitMessage("");
-		setCommitError(null);
-	}, []);
+		setCommitModal((current) => (current.isOpen ? { isOpen: false } : current));
+	}, [setCommitModal]);
 
 	const openCommitModal = useCallback(() => {
 		if (stagedFileCount === 0) {
 			return;
 		}
-		setCommitMessage("");
-		setCommitError(null);
-		setIsCommitModalOpen(true);
+		setCommitModal({
+			isOpen: true,
+			message: "",
+			error: null,
+		});
 		setUiStatus((current) =>
 			current.error === null ? current : { ...current, error: null },
 		);
-	}, [stagedFileCount, setUiStatus]);
+	}, [setCommitModal, stagedFileCount, setUiStatus]);
 
 	const cycleTheme = useCallback(
 		(direction: 1 | -1) => {
