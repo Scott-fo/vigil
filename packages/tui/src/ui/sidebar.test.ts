@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { buildSidebarItems } from "#ui/sidebar";
-import type { FileEntry } from "#tui/types";
+import { FileEntry } from "#tui/types";
 
 function file(path: string, label = path): FileEntry {
-	return {
+	return FileEntry.make({
 		status: "M ",
 		path,
 		label,
 		diff: "",
-	};
+	});
 }
 
 describe("buildSidebarItems", () => {

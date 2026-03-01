@@ -46,9 +46,13 @@ Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Ef
 
 ### 5) UI
 
-- [ ] `packages/tui/src/ui/inputs.ts`
-- [ ] `packages/tui/src/ui/sidebar.ts`
-- [ ] `packages/tui/src/ui/app.tsx`
+- [x] `packages/tui/src/ui/inputs.ts` (reviewed; structure already clean)
+- [x] `packages/tui/src/ui/sidebar.ts` (reviewed; pure transform kept)
+- [x] `packages/tui/src/ui/app.tsx` (rewritten around extracted components + atom state module)
+- [x] `packages/tui/src/ui/components/splash.tsx` (new)
+- [x] `packages/tui/src/ui/components/reviewer.tsx` (new)
+- [x] `packages/tui/src/ui/components/commit-modal.tsx` (new)
+- [x] `packages/tui/src/ui/state.ts` (new)
 
 ### 6) Pure Transform + Tests
 
@@ -58,4 +62,4 @@ Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Ef
 
 ## Current Tranche
 
-- In progress: UI (`packages/tui/src/ui/{inputs,sidebar,app}.ts*`)
+- In progress: Pure Transform + Tests (`packages/tui/src/{diff/hunks,ui/sidebar}.test.ts`)

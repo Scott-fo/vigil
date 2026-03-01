@@ -1,6 +1,6 @@
 import { Data, Effect, Option, pipe } from "effect";
 import { resolveDiffFiletype } from "#syntax/tree-sitter";
-import type { FileEntry, StatusEntry } from "#tui/types";
+import { FileEntry, type StatusEntry } from "#tui/types";
 
 const TEXT_DECODER = new TextDecoder();
 
@@ -260,34 +260,16 @@ function toFileEntry(entry: StatusEntry, preview: FilePreview): FileEntry {
 			: `${entry.originalPath} -> ${entry.path}`;
 	const filetype = resolveDiffFiletype(entry.path);
 	const resolvedPreview = withDefaultPreviewNote(preview);
-	const fileEntryBase: FileEntry = {
+	return FileEntry.make({
 		status: entry.status,
 		path: entry.path,
 		label,
 		diff: resolvedPreview.diff,
-	};
-
-	const withFiletype = pipe(
-		filetype,
-		Option.match({
-			onNone: () => fileEntryBase,
-			onSome: (resolvedFiletype) => ({
-				...fileEntryBase,
-				filetype: resolvedFiletype,
-			}),
-		}),
-	);
-
-	return pipe(
-		resolvedPreview.note,
-		Option.match({
-			onNone: () => withFiletype,
-			onSome: (resolvedNote) => ({
-				...withFiletype,
-				note: resolvedNote,
-			}),
-		}),
-	);
+		...(Option.isSome(filetype) ? { filetype: filetype.value } : {}),
+		...(Option.isSome(resolvedPreview.note)
+			? { note: resolvedPreview.note.value }
+			: {}),
+	});
 }
 
 export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError> {
