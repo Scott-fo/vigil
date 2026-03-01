@@ -1,6 +1,6 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot, useKeyboard, useRenderer } from "@opentui/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cycleThemeName,
   loadThemeCatalog,
@@ -10,6 +10,7 @@ import {
   type ThemeCatalog,
   type ThemeMode,
 } from "./theme";
+import { initializeTreeSitterClient, resolveDiffFiletype } from "./tree-sitter";
 
 interface StatusEntry {
   status: string;
@@ -105,50 +106,7 @@ function parseStatusEntries(raw: string): StatusEntry[] {
 }
 
 function inferFiletype(inputPath: string): string | undefined {
-  const lowerPath = inputPath.toLowerCase();
-  const fileName = lowerPath.split("/").pop() ?? "";
-  const extension = fileName.includes(".") ? fileName.split(".").pop() : "";
-
-  switch (extension) {
-    case "ts":
-    case "tsx":
-      return "typescript";
-    case "js":
-    case "jsx":
-    case "mjs":
-    case "cjs":
-      return "javascript";
-    case "json":
-      return "json";
-    case "rs":
-      return "rust";
-    case "go":
-      return "go";
-    case "py":
-      return "python";
-    case "md":
-      return "markdown";
-    case "css":
-      return "css";
-    case "html":
-    case "htm":
-      return "html";
-    case "sh":
-      return "bash";
-    case "yml":
-    case "yaml":
-      return "yaml";
-    case "toml":
-      return "toml";
-    case "diff":
-    case "patch":
-      return "diff";
-    default:
-      if (fileName === "dockerfile") {
-        return "dockerfile";
-      }
-      return undefined;
-  }
+  return resolveDiffFiletype(inputPath);
 }
 
 function getStatusColor(status: string, theme: ResolvedTheme) {
@@ -268,7 +226,7 @@ function App(props: AppProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<string>("");
+  const isRefreshingRef = useRef(false);
 
   const themeBundle = useMemo(
     () => resolveThemeBundle(props.themeCatalog, themeName, themeMode),
@@ -276,29 +234,48 @@ function App(props: AppProps) {
   );
   const theme = themeBundle.theme;
 
-  const refreshFiles = useCallback(async () => {
-    setLoading(true);
-    const result = await loadFilesWithDiffs();
+  const refreshFiles = useCallback(async (showLoading: boolean) => {
+    if (isRefreshingRef.current) {
+      return;
+    }
 
-    setFiles(result.files);
-    setError(result.error ?? null);
-    setLastUpdated(new Date().toLocaleTimeString());
+    isRefreshingRef.current = true;
+    if (showLoading) {
+      setLoading(true);
+    }
+    try {
+      const result = await loadFilesWithDiffs();
 
-    setSelectedPath((current) => {
-      if (result.files.length === 0) {
-        return null;
+      setFiles(result.files);
+      setError(result.error ?? null);
+
+      setSelectedPath((current) => {
+        if (result.files.length === 0) {
+          return null;
+        }
+        if (current && result.files.some((file) => file.path === current)) {
+          return current;
+        }
+        return result.files[0]?.path ?? null;
+      });
+    } finally {
+      if (showLoading) {
+        setLoading(false);
       }
-      if (current && result.files.some((file) => file.path === current)) {
-        return current;
-      }
-      return result.files[0]?.path ?? null;
-    });
-
-    setLoading(false);
+      isRefreshingRef.current = false;
+    }
   }, []);
 
   useEffect(() => {
-    void refreshFiles();
+    void refreshFiles(true);
+  }, [refreshFiles]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void refreshFiles(false);
+    }, 2000);
+
+    return () => clearInterval(interval);
   }, [refreshFiles]);
 
   const selectedFile = useMemo(() => {
@@ -327,16 +304,6 @@ function App(props: AppProps) {
       return;
     }
 
-    if (!key.ctrl && !key.meta && key.name === "m") {
-      setThemeMode((current) => (current === "dark" ? "light" : "dark"));
-      return;
-    }
-
-    if (key.name === "r") {
-      void refreshFiles();
-      return;
-    }
-
     if (files.length === 0 || selectedIndex === -1) {
       return;
     }
@@ -355,15 +322,6 @@ function App(props: AppProps) {
 
   return (
     <box flexDirection="column" flexGrow={1} padding={1} backgroundColor={theme.background}>
-      <box border borderStyle="rounded" borderColor={theme.borderActive} paddingX={1} marginBottom={1} backgroundColor={theme.backgroundPanel}>
-        <text fg={theme.text}>
-          <strong>Reviewer</strong> | <span fg={theme.accent}>theme: {themeBundle.name}</span> | <span fg={theme.textMuted}>mode: {themeMode}</span> |{" "}
-          <span fg={theme.textMuted}>up/down: move</span> | <span fg={theme.textMuted}>click: select</span> | <span fg={theme.textMuted}>r: refresh</span> |{" "}
-          <span fg={theme.textMuted}>t/T: cycle theme</span> | <span fg={theme.textMuted}>m: toggle mode</span> | <span fg={theme.textMuted}>q/esc: quit</span> |{" "}
-          <span fg={theme.textMuted}>updated {lastUpdated || "--:--:--"}</span>
-        </text>
-      </box>
-
       <box flexDirection="row" flexGrow={1}>
         <box
           width={44}
@@ -461,11 +419,19 @@ function App(props: AppProps) {
 const themeCatalog = await loadThemeCatalog();
 const themePreference = await readThemePreferenceFromTuiConfig();
 
+try {
+  await initializeTreeSitterClient();
+} catch (error) {
+  console.error("Failed to initialize Tree-sitter syntax parsers:", error);
+}
+
 const initialThemeName =
   themePreference.theme && themeCatalog.themes[themePreference.theme]
     ? themePreference.theme
-    : themeCatalog.themes.opencode
-      ? "opencode"
+    : themeCatalog.themes["catppuccin-macchiato"]
+      ? "catppuccin-macchiato"
+      : themeCatalog.themes.opencode
+        ? "opencode"
       : (themeCatalog.order[0] ?? "opencode");
 
 const renderer = await createCliRenderer({ useMouse: true });
