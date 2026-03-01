@@ -381,8 +381,9 @@ export function App(props: AppProps) {
 	const Splash = () => {
 		return (
 			<box flexGrow={1} justifyContent="center" alignItems="center">
-				<box flexDirection="column" alignItems="center">
+				<box flexDirection="column" rowGap={1} alignItems="center">
 					<ascii-font text="reviewer" font="block" color={theme.text} />
+					<text fg={theme.textMuted}>Initialise git repo to use Reviewer</text>
 				</box>
 			</box>
 		);
