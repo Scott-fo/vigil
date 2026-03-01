@@ -29,12 +29,14 @@ function parseReviewerArgs(argv: string[]): ReviewerCliArgs {
 		);
 	}
 
+	const chooserFilePath =
+		typeof parsed.values["chooser-file"] === "string"
+			? parsed.values["chooser-file"]
+			: undefined;
+
 	return {
-		chooserFilePath:
-			typeof parsed.values["chooser-file"] === "string"
-				? parsed.values["chooser-file"]
-				: undefined,
 		help: parsed.values.help === true,
+		...(chooserFilePath ? { chooserFilePath } : {}),
 	};
 }
 
@@ -62,6 +64,10 @@ export const ReviewerCommand = cmd<ReviewerCliArgs>({
 			return;
 		}
 
-		await startReviewerTui({ chooserFilePath: args.chooserFilePath });
+		await startReviewerTui(
+			args.chooserFilePath
+				? { chooserFilePath: args.chooserFilePath }
+				: undefined,
+		);
 	},
 });

@@ -1,38 +1,41 @@
 {
-  "name": "reviewer",
-  "module": "src/index.tsx",
-  "type": "module",
-  "private": true,
-  "bin": {
-    "reviewer": "./bin/reviewer"
-  },
-  "workspaces": [
-    "packages/*"
-  ],
-  "imports": {
-    "#tui": "./packages/tui/src/index.ts",
-    "#tui/*": "./packages/tui/src/*",
-    "#ui/*": "./packages/tui/src/ui/*",
-    "#data/*": "./packages/tui/src/data/*",
-    "#diff/*": "./packages/tui/src/diff/*",
-    "#theme/*": "./packages/tui/src/theme/*",
-    "#syntax/*": "./packages/tui/src/syntax/*",
-    "#config/*": "./packages/tui/src/config/*"
-  },
-  "scripts": {
-    "dev": "bun run --watch src/index.tsx"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@opentui/core": "^0.1.84",
-    "@opentui/react": "^0.1.84",
-    "effect": "^3.19.19",
-    "react": "^19.2.4",
-    "web-tree-sitter": "0.25.10"
-  }
+	"name": "reviewer",
+	"module": "src/index.tsx",
+	"type": "module",
+	"private": true,
+	"bin": {
+		"reviewer": "./bin/reviewer"
+	},
+	"workspaces": [
+		"packages/*"
+	],
+	"imports": {
+		"#tui": "./packages/tui/src/index.ts",
+		"#tui/*": "./packages/tui/src/*",
+		"#ui/*": "./packages/tui/src/ui/*",
+		"#data/*": "./packages/tui/src/data/*",
+		"#diff/*": "./packages/tui/src/diff/*",
+		"#theme/*": "./packages/tui/src/theme/*",
+		"#syntax/*": "./packages/tui/src/syntax/*",
+		"#config/*": "./packages/tui/src/config/*"
+	},
+	"scripts": {
+		"dev": "bun run --watch src/index.tsx",
+		"typecheck": "tsgo --noEmit",
+		"prepare": "effect-language-service patch"
+	},
+	"devDependencies": {
+		"@effect/language-service": "^0.77.0",
+		"@types/bun": "latest"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"@opentui/core": "^0.1.84",
+		"@opentui/react": "^0.1.84",
+		"effect": "^3.19.19",
+		"react": "^19.2.4",
+		"web-tree-sitter": "0.25.10"
+	}
 }

@@ -439,7 +439,9 @@ export function App(props: AppProps) {
 										>
 											<diff
 												diff={hunkDiff}
-												filetype={selectedFile.filetype}
+												{...(selectedFile.filetype
+													? { filetype: selectedFile.filetype }
+													: {})}
 												syntaxStyle={themeBundle.syntaxStyle}
 												view="split"
 												showLineNumbers

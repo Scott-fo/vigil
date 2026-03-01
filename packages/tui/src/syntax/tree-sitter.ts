@@ -55,6 +55,7 @@ function normalizeParser(raw: RawParser): FiletypeParserOptions | null {
   }
 
   const injections = toStringArray(raw.queries?.injections);
+  const injectionMapping = asInjectionMapping(raw.injectionMapping);
 
   return {
     filetype: raw.filetype,
@@ -63,7 +64,7 @@ function normalizeParser(raw: RawParser): FiletypeParserOptions | null {
       highlights,
       ...(injections.length > 0 ? { injections } : {}),
     },
-    ...(asInjectionMapping(raw.injectionMapping) ? { injectionMapping: asInjectionMapping(raw.injectionMapping) } : {}),
+    ...(injectionMapping ? { injectionMapping } : {}),
   };
 }
 

@@ -249,14 +249,16 @@ export async function loadFilesWithDiffs(): Promise<{
 			note = "No textual diff available.";
 		}
 
-		files.push({
+		const filetype = inferFiletype(entry.path);
+		const fileEntry: FileEntry = {
 			status: entry.status,
 			path: entry.path,
 			label,
 			diff,
-			filetype: inferFiletype(entry.path),
-			note,
-		});
+			...(filetype ? { filetype } : {}),
+			...(note ? { note } : {}),
+		};
+		files.push(fileEntry);
 	}
 
 	return { files };

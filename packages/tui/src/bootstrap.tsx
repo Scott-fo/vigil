@@ -36,7 +36,9 @@ export async function startReviewerTui(options: StartReviewerTuiOptions = {}) {
 			themeCatalog={themeCatalog}
 			initialThemeName={initialThemeName}
 			initialThemeMode={themePreference.mode ?? "dark"}
-			chooserFilePath={options.chooserFilePath}
+			{...(options.chooserFilePath
+				? { chooserFilePath: options.chooserFilePath }
+				: {})}
 		/>,
 	);
 }
