@@ -199,6 +199,14 @@ export function App(props: AppProps) {
 	const isHelpModalOpen = helpModal.isOpen;
 	const commitMessage = commitModal.isOpen ? commitModal.message : "";
 	const commitError = commitModal.isOpen ? commitModal.error : Option.none();
+	const canInitializeGitRepo = pipe(
+		uiStatus.error,
+		Option.match({
+			onNone: () => false,
+			onSome: (error) =>
+				uiStatus.showSplash && /not a git repository/i.test(error),
+		}),
+	);
 
 	const { refreshFiles } = useFileRefresh({
 		updateFileView,
@@ -364,6 +372,7 @@ export function App(props: AppProps) {
 		stagedFileCount,
 		commitModal,
 		helpModal,
+		canInitializeGitRepo,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
@@ -375,6 +384,7 @@ export function App(props: AppProps) {
 	useAppKeyboardInput({
 		isCommitModalOpen,
 		isHelpModalOpen,
+		canInitializeGitRepo,
 		stagedFileCount,
 		visibleFilePaths,
 		selectedVisibleIndex,

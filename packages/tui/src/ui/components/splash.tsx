@@ -8,6 +8,11 @@ export interface SplashProps {
 }
 
 export const Splash = memo(function Splash(props: SplashProps) {
+	const isNotGitRepositoryError = Option.match(props.error, {
+		onNone: () => false,
+		onSome: (error) => /not a git repository/i.test(error),
+	});
+
 	const subtitle = Option.match(props.error, {
 		onNone: () => "No changed files in working tree",
 		onSome: (error) =>
@@ -25,6 +30,9 @@ export const Splash = memo(function Splash(props: SplashProps) {
 			<box flexDirection="column" rowGap={1} alignItems="center">
 				<ascii-font text="reviewer" font="block" color={props.theme.text} />
 				<text fg={props.theme.textMuted}>{subtitle}</text>
+				{isNotGitRepositoryError ? (
+					<text fg={props.theme.textMuted}>Press i to git init.</text>
+				) : null}
 			</box>
 		</box>
 	);

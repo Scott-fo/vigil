@@ -6,6 +6,7 @@ import type { FileEntry } from "#tui/types";
 interface UseAppKeyboardInputOptions {
 	isCommitModalOpen: boolean;
 	isHelpModalOpen: boolean;
+	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
 	selectedVisibleIndex: number;
@@ -16,6 +17,7 @@ interface UseAppKeyboardInputOptions {
 export interface KeyboardIntentContext {
 	isCommitModalOpen: boolean;
 	isHelpModalOpen: boolean;
+	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
 	selectedVisibleIndex: number;
@@ -30,6 +32,7 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "OpenCommitModal" }
 	| { readonly _tag: "CloseHelpModal" }
 	| { readonly _tag: "OpenHelpModal" }
+	| { readonly _tag: "InitGitRepository" }
 	| { readonly _tag: "CycleTheme"; readonly direction: 1 | -1 }
 	| { readonly _tag: "SyncRemote"; readonly direction: "pull" | "push" }
 	| { readonly _tag: "ScrollDiffHalfPage"; readonly direction: "up" | "down" }
@@ -78,6 +81,10 @@ export function decodeKeyboardIntent(
 
 	if (isQuestionMarkKey(key)) {
 		return Option.some({ _tag: "OpenHelpModal" });
+	}
+
+	if (isUnmodifiedKey(key, "i") && options.canInitializeGitRepo) {
+		return Option.some({ _tag: "InitGitRepository" });
 	}
 
 	if (isUnmodifiedKey(key, "c") && options.stagedFileCount > 0) {

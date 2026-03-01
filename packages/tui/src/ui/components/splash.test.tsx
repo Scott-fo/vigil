@@ -44,6 +44,7 @@ describe("Splash", () => {
 			expect(setup.captureCharFrame()).toContain(
 				"Not a git repo, init to use reviewer.",
 			);
+			expect(setup.captureCharFrame()).toContain("Press i to git init.");
 		} finally {
 			await act(async () => {
 				setup.renderer.destroy();

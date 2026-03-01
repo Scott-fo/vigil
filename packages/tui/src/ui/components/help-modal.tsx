@@ -17,6 +17,7 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	{ keys: "c", description: "Open commit dialog (if files staged)" },
 	{ keys: "p / P", description: "Pull / push" },
 	{ keys: "t / T", description: "Next / previous theme" },
+	{ keys: "i", description: "Init git repo (splash when not in repo)" },
 	{ keys: "q or esc", description: "Quit reviewer" },
 ];
 

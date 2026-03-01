@@ -13,6 +13,7 @@ import {
 } from "#data/editor";
 import {
 	commitStagedChanges,
+	initGitRepository,
 	pullFromRemote,
 	pushToRemote,
 	type RepoActionError,
@@ -46,6 +47,7 @@ interface UseRepoActionsOptions {
 	readonly stagedFileCount: number;
 	readonly commitModal: CommitModalState;
 	readonly helpModal: HelpModalState;
+	readonly canInitializeGitRepo: boolean;
 	readonly updateFileView: UpdateFileViewState;
 	readonly updateUiStatus: UpdateUiStatus;
 	readonly updateCommitModal: UpdateCommitModal;
@@ -74,6 +76,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		stagedFileCount,
 		commitModal,
 		helpModal,
+		canInitializeGitRepo,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
@@ -320,6 +323,15 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		[renderRepoActionError, runAction],
 	);
 
+	const initializeGitRepository = useCallback(() => {
+		if (!canInitializeGitRepo) {
+			return;
+		}
+		runAction(initGitRepository(), renderRepoActionError, {
+			refreshOnFailure: true,
+		});
+	}, [canInitializeGitRepo, renderRepoActionError, runAction]);
+
 	const onKeyboardIntent = useCallback(
 		(intent: AppKeyboardIntent) =>
 			Match.value(intent).pipe(
@@ -343,6 +355,9 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				}),
 				Match.tag("OpenHelpModal", () => {
 					openHelpModal();
+				}),
+				Match.tag("InitGitRepository", () => {
+					initializeGitRepository();
 				}),
 				Match.tag("CycleTheme", (typedIntent) => {
 					cycleTheme(typedIntent.direction);
@@ -373,6 +388,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			closeHelpModal,
 			cycleTheme,
 			helpModal.isOpen,
+			initializeGitRepository,
 			openCommitModal,
 			openHelpModal,
 			openSelectedFile,

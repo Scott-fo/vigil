@@ -117,6 +117,13 @@ export function pushToRemote(): Effect.Effect<void, GitCommandError> {
 	);
 }
 
+export function initGitRepository(): Effect.Effect<void, GitCommandError> {
+	return pipe(
+		runGitEffect(["init"], "Unable to initialize git repository."),
+		Effect.asVoid,
+	);
+}
+
 function parseStatusEntries(raw: string): StatusEntry[] {
 	const entries: StatusEntry[] = [];
 	const fields = raw.split("\0");

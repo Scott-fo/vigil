@@ -31,6 +31,7 @@ function context(
 	return {
 		isCommitModalOpen: false,
 		isHelpModalOpen: false,
+		canInitializeGitRepo: false,
 		stagedFileCount: 1,
 		visibleFilePaths: ["src/app.tsx", "src/other.ts"],
 		selectedVisibleIndex: 0,
@@ -104,6 +105,35 @@ describe("decodeKeyboardIntent", () => {
 		if (Option.isSome(intent)) {
 			expect(intent.value._tag).toBe("OpenHelpModal");
 		}
+	});
+
+	test("maps i to init git repository when allowed", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "i" }),
+			context({
+				canInitializeGitRepo: true,
+				visibleFilePaths: [],
+				selectedVisibleIndex: -1,
+				selectedFile: null,
+			}),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("InitGitRepository");
+		}
+	});
+
+	test("does not map i when init is not allowed", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "i" }),
+			context({
+				canInitializeGitRepo: false,
+				visibleFilePaths: [],
+				selectedVisibleIndex: -1,
+				selectedFile: null,
+			}),
+		);
+		expect(Option.isNone(intent)).toBe(true);
 	});
 
 	test("maps escape to close help modal when help is open", () => {
