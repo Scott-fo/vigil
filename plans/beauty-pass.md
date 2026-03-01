@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make every file in `packages/*` and `src/cli/*` beautiful, idiomatic TypeScript + Effect:
+Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Effect:
 
 - minimize accidental complexity
 - remove unnecessary indirection
@@ -22,8 +22,9 @@ Make every file in `packages/*` and `src/cli/*` beautiful, idiomatic TypeScript 
 ### 1) CLI
 
 - [x] `src/cli/cmd/cmd.ts` (removed: unnecessary abstraction)
-- [x] `src/cli/cmd/reviewer.ts`
-- [x] `src/cli/index.ts`
+- [x] `src/cli/cmd/reviewer.ts` (removed: folded into entrypoint)
+- [x] `src/cli/index.ts` (removed: folded into entrypoint)
+- [x] `src/index.tsx`
 
 ### 2) TUI Entrypoints + Core Wiring
 
