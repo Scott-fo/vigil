@@ -1,7 +1,23 @@
+import { Data, Effect, pipe } from "effect";
 import { resolveDiffFiletype } from "#syntax/tree-sitter";
 import type { FileEntry, GitCommandResult, StatusEntry } from "#tui/types";
 
 const TEXT_DECODER = new TextDecoder();
+
+export class GitCommandError extends Data.TaggedError("GitCommandError")<{
+	readonly args: ReadonlyArray<string>;
+	readonly stdout: string;
+	readonly stderr: string;
+	readonly fallbackMessage: string;
+}> {}
+
+export class CommitMessageRequiredError extends Data.TaggedError(
+	"CommitMessageRequiredError",
+)<{
+	readonly message: string;
+}> {}
+
+export type RepoActionError = GitCommandError | CommitMessageRequiredError;
 
 function decodeOutput(output?: Uint8Array | null): string {
 	if (!output) {
@@ -24,19 +40,31 @@ function runGit(args: string[]): GitCommandResult {
 	};
 }
 
-function runRepoAction(args: string[], fallbackError: string): {
-	ok: boolean;
-	error?: string;
-} {
-	const result = runGit(args);
-	if (!result.ok) {
-		return {
-			ok: false,
-			error: result.stderr.trim() || result.stdout.trim() || fallbackError,
-		};
-	}
+function runGitEffect(
+	args: string[],
+	fallbackMessage: string,
+): Effect.Effect<GitCommandResult, GitCommandError> {
+	return pipe(
+		Effect.sync(() => runGit(args)),
+		Effect.flatMap((result) =>
+			result.ok
+				? Effect.succeed(result)
+				: Effect.fail(
+						new GitCommandError({
+							args,
+							stdout: result.stdout,
+							stderr: result.stderr,
+							fallbackMessage,
+						}),
+					),
+		),
+	);
+}
 
-	return { ok: true };
+function renderGitCommandError(error: GitCommandError): string {
+	return (
+		error.stderr.trim() || error.stdout.trim() || error.fallbackMessage
+	);
 }
 
 export function isFileStaged(status: string): boolean {
@@ -48,63 +76,48 @@ export function isFileStaged(status: string): boolean {
 	return indexStatus !== " " && indexStatus !== "?";
 }
 
-export function toggleFileStage(file: Pick<FileEntry, "path" | "status">): {
-	ok: boolean;
-	error?: string;
-} {
+export function toggleFileStage(
+	file: Pick<FileEntry, "path" | "status">,
+): Effect.Effect<void, GitCommandError> {
 	const args = isFileStaged(file.status)
 		? ["restore", "--staged", "--", file.path]
 		: ["add", "--", file.path];
-	const result = runGit(args);
-
-	if (!result.ok) {
-		return {
-			ok: false,
-			error: result.stderr.trim() || `Unable to update staged state for ${file.path}.`,
-		};
-	}
-
-	return { ok: true };
+	return pipe(
+		runGitEffect(args, `Unable to update staged state for ${file.path}.`),
+		Effect.asVoid,
+	);
 }
 
-export function commitStagedChanges(message: string): {
-	ok: boolean;
-	error?: string;
-} {
+export function commitStagedChanges(
+	message: string,
+): Effect.Effect<void, RepoActionError> {
 	const trimmedMessage = message.trim();
 	if (!trimmedMessage) {
-		return {
-			ok: false,
-			error: "Commit message is required.",
-		};
+		return Effect.fail(
+			new CommitMessageRequiredError({
+				message: "Commit message is required.",
+			}),
+		);
 	}
 
-	const result = runGit(["commit", "-m", trimmedMessage]);
-	if (!result.ok) {
-		return {
-			ok: false,
-			error:
-				result.stderr.trim() ||
-				result.stdout.trim() ||
-				"Unable to create commit.",
-		};
-	}
-
-	return { ok: true };
+	return pipe(
+		runGitEffect(["commit", "-m", trimmedMessage], "Unable to create commit."),
+		Effect.asVoid,
+	);
 }
 
-export function pullFromRemote(): {
-	ok: boolean;
-	error?: string;
-} {
-	return runRepoAction(["pull"], "Unable to pull from remote.");
+export function pullFromRemote(): Effect.Effect<void, GitCommandError> {
+	return pipe(
+		runGitEffect(["pull"], "Unable to pull from remote."),
+		Effect.asVoid,
+	);
 }
 
-export function pushToRemote(): {
-	ok: boolean;
-	error?: string;
-} {
-	return runRepoAction(["push"], "Unable to push to remote.");
+export function pushToRemote(): Effect.Effect<void, GitCommandError> {
+	return pipe(
+		runGitEffect(["push"], "Unable to push to remote."),
+		Effect.asVoid,
+	);
 }
 
 function parseStatusEntries(raw: string): StatusEntry[] {
@@ -183,83 +196,85 @@ function createUntrackedFileDiff(inputPath: string, content: string): string {
 	].join("\n");
 }
 
-export async function loadFilesWithDiffs(): Promise<{
-	files: FileEntry[];
-	error?: string;
-}> {
-	const statusResult = runGit([
-		"status",
-		"--porcelain=v1",
-		"-z",
-		"--untracked-files=all",
-	]);
-	if (!statusResult.ok) {
-		return {
-			files: [],
-			error: statusResult.stderr.trim() || "Unable to run git status.",
-		};
-	}
+export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError> {
+	return Effect.gen(function* () {
+		const statusResult = yield* runGitEffect(
+			["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+			"Unable to run git status.",
+		);
 
-	const statusEntries = parseStatusEntries(statusResult.stdout).filter(
-		(entry) => entry.status !== "!!",
-	);
-	const files: FileEntry[] = [];
+		const statusEntries = parseStatusEntries(statusResult.stdout).filter(
+			(entry) => entry.status !== "!!",
+		);
+		const files: FileEntry[] = [];
 
-	for (const entry of statusEntries) {
-		const label = entry.originalPath
-			? `${entry.originalPath} -> ${entry.path}`
-			: entry.path;
-		let diff = "";
-		let note: string | undefined;
+		for (const entry of statusEntries) {
+			const label = entry.originalPath
+				? `${entry.originalPath} -> ${entry.path}`
+				: entry.path;
+			let diff = "";
+			let note: string | undefined;
 
-		if (entry.status === "??") {
-			try {
-				const bytes = await Bun.file(entry.path).bytes();
-				const hasNullByte = bytes.includes(0);
+			if (entry.status === "??") {
+				const untrackedRead = yield* pipe(
+					Effect.tryPromise(() => Bun.file(entry.path).bytes()),
+					Effect.match({
+						onFailure: () => ({ ok: false as const }),
+						onSuccess: (bytes) => ({ ok: true as const, bytes }),
+					}),
+				);
 
-				if (hasNullByte) {
-					note = "Binary or non-text file; no preview available.";
+				if (!untrackedRead.ok) {
+					note = "Unable to read untracked file content.";
 				} else {
-					const content = TEXT_DECODER.decode(bytes);
-					diff = createUntrackedFileDiff(entry.path, content);
-					if (!diff.trim()) {
-						note = "Untracked empty file; no textual hunk to preview.";
+					const hasNullByte = untrackedRead.bytes.includes(0);
+					if (hasNullByte) {
+						note = "Binary or non-text file; no preview available.";
+					} else {
+						const content = TEXT_DECODER.decode(untrackedRead.bytes);
+						diff = createUntrackedFileDiff(entry.path, content);
+						if (!diff.trim()) {
+							note = "Untracked empty file; no textual hunk to preview.";
+						}
 					}
 				}
-			} catch {
-				note = "Unable to read untracked file content.";
-			}
-		} else {
-			const diffResult = runGit([
-				"diff",
-				"--no-color",
-				"--find-renames",
-				"HEAD",
-				"--",
-				entry.path,
-			]);
-			if (diffResult.ok) {
-				diff = diffResult.stdout;
 			} else {
-				note = diffResult.stderr.trim() || "Unable to load diff for this file.";
+				const trackedDiff = yield* pipe(
+					runGitEffect(
+						["diff", "--no-color", "--find-renames", "HEAD", "--", entry.path],
+						"Unable to load diff for this file.",
+					),
+					Effect.match({
+						onFailure: (error) => ({
+							diff: "",
+							note: renderGitCommandError(error),
+						}),
+						onSuccess: (result) => ({
+							diff: result.stdout,
+							note: undefined as string | undefined,
+						}),
+					}),
+				);
+				diff = trackedDiff.diff;
+				note = trackedDiff.note;
 			}
+
+			if (!diff.trim() && !note) {
+				note = "No textual diff available.";
+			}
+
+			const filetype = inferFiletype(entry.path);
+			const fileEntry: FileEntry = {
+				status: entry.status,
+				path: entry.path,
+				label,
+				diff,
+				...(filetype ? { filetype } : {}),
+				...(note ? { note } : {}),
+			};
+			files.push(fileEntry);
 		}
 
-		if (!diff.trim() && !note) {
-			note = "No textual diff available.";
-		}
-
-		const filetype = inferFiletype(entry.path);
-		const fileEntry: FileEntry = {
-			status: entry.status,
-			path: entry.path,
-			label,
-			diff,
-			...(filetype ? { filetype } : {}),
-			...(note ? { note } : {}),
-		};
-		files.push(fileEntry);
-	}
-
-	return { files };
+		return files;
+	});
 }

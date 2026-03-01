@@ -1,4 +1,5 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <opentui> */
+import { Effect, pipe } from "effect";
 import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { spawnSync } from "node:child_process";
@@ -7,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import {
 	commitStagedChanges,
+	type RepoActionError,
 	isFileStaged,
 	loadFilesWithDiffs,
 	pullFromRemote,
@@ -28,6 +30,23 @@ import {
 
 function quoteShellArg(value: string): string {
 	return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function formatRepoActionError(error: RepoActionError): string {
+	return pipe(
+		Effect.fail(error),
+		Effect.catchTags({
+			CommitMessageRequiredError: (typedError) =>
+				Effect.succeed(typedError.message),
+			GitCommandError: (typedError) =>
+				Effect.succeed(
+					typedError.stderr.trim() ||
+						typedError.stdout.trim() ||
+						typedError.fallbackMessage,
+				),
+		}),
+		Effect.runSync,
+	);
 }
 
 export function App(props: AppProps) {
@@ -69,10 +88,30 @@ export function App(props: AppProps) {
 			setLoading(true);
 		}
 		try {
-			const result = await loadFilesWithDiffs();
+			const result = await Effect.runPromise(
+				pipe(
+					loadFilesWithDiffs(),
+					Effect.match({
+						onFailure: (repoError) => ({
+							ok: false as const,
+							error: formatRepoActionError(repoError),
+						}),
+						onSuccess: (nextFiles) => ({
+							ok: true as const,
+							files: nextFiles,
+						}),
+					}),
+				),
+			);
+			if (!result.ok) {
+				setFiles([]);
+				setError(result.error);
+				setSelectedPath(null);
+				return;
+			}
 
 			setFiles(result.files);
-			setError(result.error ?? null);
+			setError(null);
 
 			setSelectedPath((current) => {
 				if (result.files.length === 0) {
@@ -163,9 +202,20 @@ export function App(props: AppProps) {
 
 	const submitCommit = useCallback(
 		(rawMessage: string) => {
-			const result = commitStagedChanges(rawMessage);
+			const result = Effect.runSync(
+				pipe(
+					commitStagedChanges(rawMessage),
+					Effect.match({
+						onFailure: (repoError) => ({
+							ok: false as const,
+							error: formatRepoActionError(repoError),
+						}),
+						onSuccess: () => ({ ok: true as const }),
+					}),
+				),
+			);
 			if (!result.ok) {
-				setCommitError(result.error ?? "Unable to create commit.");
+				setCommitError(result.error);
 				return;
 			}
 
@@ -252,9 +302,20 @@ export function App(props: AppProps) {
 
 	const syncRemote = useCallback(
 		(direction: "pull" | "push") => {
-			const result = direction === "push" ? pushToRemote() : pullFromRemote();
+			const result = Effect.runSync(
+				pipe(
+					direction === "push" ? pushToRemote() : pullFromRemote(),
+					Effect.match({
+						onFailure: (repoError) => ({
+							ok: false as const,
+							error: formatRepoActionError(repoError),
+						}),
+						onSuccess: () => ({ ok: true as const }),
+					}),
+				),
+			);
 			if (!result.ok) {
-				setError(result.error ?? "Unable to sync with remote.");
+				setError(result.error);
 				return;
 			}
 
@@ -266,9 +327,20 @@ export function App(props: AppProps) {
 
 	const toggleSelectedFileStage = useCallback(
 		(file: FileEntry) => {
-			const result = toggleFileStage(file);
+			const result = Effect.runSync(
+				pipe(
+					toggleFileStage(file),
+					Effect.match({
+						onFailure: (repoError) => ({
+							ok: false as const,
+							error: formatRepoActionError(repoError),
+						}),
+						onSuccess: () => ({ ok: true as const }),
+					}),
+				),
+			);
 			if (!result.ok) {
-				setError(result.error ?? "Unable to update staged state.");
+				setError(result.error);
 				return;
 			}
 
