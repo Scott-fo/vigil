@@ -2,7 +2,12 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
-import { loadFilesWithDiffs } from "#data/git";
+import {
+	commitStagedChanges,
+	isFileStaged,
+	loadFilesWithDiffs,
+	toggleFileStage,
+} from "#data/git";
 import {
 	cycleThemeName,
 	resolveThemeBundle,
@@ -33,6 +38,8 @@ export function App(props: AppProps) {
 	const [themeMode] = useState<ThemeMode>(props.initialThemeMode);
 	const [files, setFiles] = useState<FileEntry[]>([]);
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
+	const [isCommitModalOpen, setIsCommitModalOpen] = useState(false);
+	const [commitMessage, setCommitMessage] = useState("");
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const isRefreshingRef = useRef(false);
@@ -112,13 +119,56 @@ export function App(props: AppProps) {
 		? files.findIndex((file) => file.path === selectedFile.path)
 		: -1;
 
+	const submitCommit = useCallback(
+		(rawMessage: string) => {
+			const result = commitStagedChanges(rawMessage);
+			if (!result.ok) {
+				setError(result.error ?? "Unable to create commit.");
+				return;
+			}
+
+			setCommitMessage("");
+			setIsCommitModalOpen(false);
+			setError(null);
+			void refreshFiles(false);
+		},
+		[refreshFiles],
+	);
+
 	useKeyboard((key) => {
+		if (key.ctrl && key.name === "c") {
+			renderer.destroy();
+			return;
+		}
+
+		if (isCommitModalOpen) {
+			if (key.name === "escape") {
+				setIsCommitModalOpen(false);
+				setCommitMessage("");
+				setError(null);
+				return;
+			}
+
+			if (key.name === "enter" || key.name === "return") {
+				submitCommit(commitMessage);
+				return;
+			}
+
+			return;
+		}
+
 		if (
-			(key.ctrl && key.name === "c") ||
 			key.name === "escape" ||
 			key.name === "q"
 		) {
 			renderer.destroy();
+			return;
+		}
+
+		if (!key.ctrl && !key.meta && key.name === "c") {
+			setCommitMessage("");
+			setIsCommitModalOpen(true);
+			setError(null);
 			return;
 		}
 
@@ -139,6 +189,27 @@ export function App(props: AppProps) {
 		}
 
 		if (files.length === 0 || selectedIndex === -1) {
+			return;
+		}
+
+		if (
+			!key.ctrl &&
+			!key.meta &&
+			(key.name === "space" || key.name === " ")
+		) {
+			const file = files[selectedIndex];
+			if (!file) {
+				return;
+			}
+
+			const result = toggleFileStage(file);
+			if (!result.ok) {
+				setError(result.error ?? "Unable to update staged state.");
+				return;
+			}
+
+			setError(null);
+			void refreshFiles(false);
 			return;
 		}
 
@@ -180,13 +251,19 @@ export function App(props: AppProps) {
 					<scrollbox flexGrow={1}>
 						{files.map((file) => {
 							const selected = selectedFile?.path === file.path;
+							const isStaged = isFileStaged(file.status);
+							const rowBackground = selected
+								? isStaged
+									? theme.diffAddedLineNumberBg
+									: theme.backgroundElement
+								: isStaged
+									? theme.diffAddedBg
+									: "transparent";
 							return (
 								<box
 									key={file.path}
 									paddingX={1}
-									backgroundColor={
-										selected ? theme.backgroundElement : "transparent"
-									}
+									backgroundColor={rowBackground}
 									onMouseDown={(event) => {
 										event.preventDefault();
 										setSelectedPath(file.path);
@@ -196,7 +273,9 @@ export function App(props: AppProps) {
 										<span fg={getStatusColor(file.status, theme)}>
 											{file.status}
 										</span>{" "}
-										<span fg={selected ? theme.text : theme.textMuted}>
+										<span
+											fg={selected || isStaged ? theme.text : theme.textMuted}
+										>
 											{file.label}
 										</span>
 									</text>
@@ -233,7 +312,7 @@ export function App(props: AppProps) {
 							<scrollbox
 								ref={diffScrollRef}
 								flexGrow={1}
-								focused
+								focused={!isCommitModalOpen}
 								verticalScrollbarOptions={{
 									trackOptions: {
 										backgroundColor: theme.backgroundElement,
@@ -284,6 +363,53 @@ export function App(props: AppProps) {
 					</box>
 				</box>
 			</box>
+
+			{isCommitModalOpen ? (
+				<box
+					position="absolute"
+					left={0}
+					top={0}
+					width="100%"
+					height="100%"
+					justifyContent="center"
+					alignItems="center"
+					backgroundColor={theme.background}
+					zIndex={100}
+				>
+					<box
+						width={72}
+						border
+						borderStyle="rounded"
+						borderColor={theme.borderActive}
+						backgroundColor={theme.backgroundPanel}
+						padding={1}
+						flexDirection="column"
+					>
+						<text fg={theme.text}>
+							<strong>Commit Staged Changes</strong>
+						</text>
+						<box marginTop={1}>
+							<input
+								value={commitMessage}
+								onChange={setCommitMessage}
+								placeholder="Enter commit message..."
+								focused
+								width="100%"
+								backgroundColor={theme.backgroundElement}
+								focusedBackgroundColor={theme.backgroundElement}
+								textColor={theme.text}
+								focusedTextColor={theme.text}
+								placeholderColor={theme.textMuted}
+							/>
+						</box>
+						<box marginTop={1}>
+							<text fg={theme.textMuted}>
+								Enter commits. Esc closes without committing.
+							</text>
+						</box>
+					</box>
+				</box>
+			) : null}
 		</box>
 	);
 }
