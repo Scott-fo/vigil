@@ -24,6 +24,60 @@ function runGit(args: string[]): GitCommandResult {
 	};
 }
 
+export function isFileStaged(status: string): boolean {
+	if (status === "??") {
+		return false;
+	}
+
+	const indexStatus = status[0] ?? " ";
+	return indexStatus !== " " && indexStatus !== "?";
+}
+
+export function toggleFileStage(file: Pick<FileEntry, "path" | "status">): {
+	ok: boolean;
+	error?: string;
+} {
+	const args = isFileStaged(file.status)
+		? ["restore", "--staged", "--", file.path]
+		: ["add", "--", file.path];
+	const result = runGit(args);
+
+	if (!result.ok) {
+		return {
+			ok: false,
+			error: result.stderr.trim() || `Unable to update staged state for ${file.path}.`,
+		};
+	}
+
+	return { ok: true };
+}
+
+export function commitStagedChanges(message: string): {
+	ok: boolean;
+	error?: string;
+} {
+	const trimmedMessage = message.trim();
+	if (!trimmedMessage) {
+		return {
+			ok: false,
+			error: "Commit message is required.",
+		};
+	}
+
+	const result = runGit(["commit", "-m", trimmedMessage]);
+	if (!result.ok) {
+		return {
+			ok: false,
+			error:
+				result.stderr.trim() ||
+				result.stdout.trim() ||
+				"Unable to create commit.",
+		};
+	}
+
+	return { ok: true };
+}
+
 function parseStatusEntries(raw: string): StatusEntry[] {
 	const entries: StatusEntry[] = [];
 	const fields = raw.split("\0");
