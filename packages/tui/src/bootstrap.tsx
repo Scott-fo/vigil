@@ -1,19 +1,16 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { Data, Effect, pipe } from "effect";
-import { App } from "#ui/app";
+import { Data, Effect, type Option, pipe } from "effect";
+import { initializeTreeSitterClient } from "#syntax/tree-sitter";
 import {
 	loadThemeCatalog,
 	readThemePreferenceFromTuiConfig,
 	type ThemeCatalog,
 } from "#theme/theme";
-import {
-	initializeTreeSitterClient,
-	type TreeSitterInitializeError,
-} from "#syntax/tree-sitter";
+import { App } from "#ui/app";
 
 export interface StartReviewerTuiOptions {
-	chooserFilePath?: string;
+	readonly chooserFilePath: Option.Option<string>;
 }
 
 export class ThemeCatalogLoadError extends Data.TaggedError(
@@ -30,7 +27,9 @@ export class ThemePreferenceLoadError extends Data.TaggedError(
 	readonly cause: unknown;
 }> {}
 
-export class RendererCreateError extends Data.TaggedError("RendererCreateError")<{
+export class RendererCreateError extends Data.TaggedError(
+	"RendererCreateError",
+)<{
 	readonly message: string;
 	readonly cause: unknown;
 }> {}
@@ -62,14 +61,6 @@ function selectInitialThemeName(
 	return themeCatalog.order[0] ?? "opencode";
 }
 
-function renderTreeSitterCause(error: TreeSitterInitializeError): string {
-	const cause = error.cause;
-	if (cause instanceof Error) {
-		return cause.message;
-	}
-	return String(cause);
-}
-
 export function startReviewerTuiProgram(
 	options: StartReviewerTuiOptions,
 ): Effect.Effect<void, StartReviewerTuiError> {
@@ -90,18 +81,23 @@ export function startReviewerTuiProgram(
 					cause,
 				}),
 		});
+
 		yield* pipe(
 			initializeTreeSitterClient(),
 			Effect.catchTag("TreeSitterInitializeError", (typedError) =>
 				Effect.sync(() => {
 					console.error(
-						`Failed to initialize Tree-sitter syntax parsers: ${renderTreeSitterCause(typedError)}`,
+						`Failed to initialize Tree-sitter syntax parsers: ${typedError.cause ? String(typedError.cause) : typedError.message}`,
 					);
 				}),
 			),
 			Effect.asVoid,
 		);
-		const initialThemeName = selectInitialThemeName(themeCatalog, themePreference);
+
+		const initialThemeName = selectInitialThemeName(
+			themeCatalog,
+			themePreference,
+		);
 
 		const renderer = yield* Effect.tryPromise({
 			try: () => createCliRenderer({ useMouse: true }),
@@ -111,6 +107,7 @@ export function startReviewerTuiProgram(
 					cause,
 				}),
 		});
+
 		yield* Effect.try({
 			try: () =>
 				createRoot(renderer).render(
@@ -118,9 +115,7 @@ export function startReviewerTuiProgram(
 						themeCatalog={themeCatalog}
 						initialThemeName={initialThemeName}
 						initialThemeMode={themePreference.mode ?? "dark"}
-						{...(options.chooserFilePath
-							? { chooserFilePath: options.chooserFilePath }
-							: {})}
+						chooserFilePath={options.chooserFilePath}
 					/>,
 				),
 			catch: (cause) =>
@@ -130,8 +125,4 @@ export function startReviewerTuiProgram(
 				}),
 		});
 	});
-}
-
-export async function startReviewerTui(options: StartReviewerTuiOptions = {}) {
-	await Effect.runPromise(startReviewerTuiProgram(options));
 }

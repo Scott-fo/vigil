@@ -1,9 +1,6 @@
 import { parseArgs } from "node:util";
 import { Data, Effect, Option, pipe } from "effect";
-import {
-	startReviewerTuiProgram,
-	type StartReviewerTuiError,
-} from "#tui/bootstrap";
+import { type StartReviewerTuiError, startReviewerTuiProgram } from "#tui";
 
 class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;
@@ -74,7 +71,9 @@ function parseReviewerArgs(
 	);
 }
 
-function runCli(argv: string[]): Effect.Effect<void, CliArgumentError | StartReviewerTuiError> {
+function runCli(
+	argv: string[],
+): Effect.Effect<void, CliArgumentError | StartReviewerTuiError> {
 	return Effect.gen(function* () {
 		const args = yield* parseReviewerArgs(argv);
 		if (args.help) {
@@ -83,15 +82,9 @@ function runCli(argv: string[]): Effect.Effect<void, CliArgumentError | StartRev
 			});
 		}
 
-		yield* startReviewerTuiProgram(
-			pipe(
-				args.chooserFilePath,
-				Option.match({
-					onNone: () => ({}),
-					onSome: (chooserFilePath) => ({ chooserFilePath }),
-				}),
-			),
-		);
+		yield* startReviewerTuiProgram({
+			chooserFilePath: args.chooserFilePath,
+		});
 	});
 }
 

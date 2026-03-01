@@ -1,3 +1,4 @@
+import type { Option } from "effect";
 import type { ThemeCatalog, ThemeMode } from "#theme/theme";
 
 export interface StatusEntry {
@@ -25,5 +26,5 @@ export interface AppProps {
 	readonly themeCatalog: ThemeCatalog;
 	readonly initialThemeName: string;
 	readonly initialThemeMode: ThemeMode;
-	readonly chooserFilePath?: string;
+	readonly chooserFilePath: Option.Option<string>;
 }

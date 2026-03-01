@@ -14,6 +14,11 @@ import {
 	useState,
 } from "react";
 import {
+	openFileInEditor,
+	renderOpenFileError,
+	writeChooserSelection,
+} from "#data/editor";
+import {
 	commitStagedChanges,
 	isFileStaged,
 	loadFilesWithDiffs,
@@ -22,11 +27,6 @@ import {
 	type RepoActionError,
 	toggleFileStage,
 } from "#data/git";
-import {
-	openFileInEditor,
-	renderOpenFileError,
-	writeChooserSelection,
-} from "#data/editor";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import {
 	cycleThemeName,
@@ -516,7 +516,9 @@ export function App(props: AppProps) {
 		}
 		const selectedFileMatch = pipe(
 			selectedPath,
-			Option.flatMap((path) => Option.fromNullable(files.find((file) => file.path === path))),
+			Option.flatMap((path) =>
+				Option.fromNullable(files.find((file) => file.path === path)),
+			),
 		);
 		return pipe(
 			selectedFileMatch,
@@ -581,7 +583,9 @@ export function App(props: AppProps) {
 			);
 			if (!result.ok) {
 				setCommitModal((current) =>
-					current.isOpen ? { ...current, error: Option.some(result.error) } : current,
+					current.isOpen
+						? { ...current, error: Option.some(result.error) }
+						: current,
 				);
 				return;
 			}
@@ -590,7 +594,9 @@ export function App(props: AppProps) {
 				current.isOpen ? { isOpen: false } : current,
 			);
 			setUiStatus((current) =>
-				Option.isNone(current.error) ? current : { ...current, error: Option.none() },
+				Option.isNone(current.error)
+					? current
+					: { ...current, error: Option.none() },
 			);
 			void refreshFiles(false);
 		},
@@ -599,10 +605,10 @@ export function App(props: AppProps) {
 
 	const openSelectedFile = useCallback(
 		(filePath: string) => {
-			if (props.chooserFilePath) {
+			if (Option.isSome(props.chooserFilePath)) {
 				const chooserWriteResult = Effect.runSync(
 					pipe(
-						writeChooserSelection(props.chooserFilePath, filePath),
+						writeChooserSelection(props.chooserFilePath.value, filePath),
 						Effect.match({
 							onFailure: (error) => ({
 								ok: false as const,
@@ -641,7 +647,8 @@ export function App(props: AppProps) {
 			renderer.resume();
 			if (!openResult.ok) {
 				setUiStatus((current) =>
-					Option.isSome(current.error) && current.error.value === openResult.error
+					Option.isSome(current.error) &&
+					current.error.value === openResult.error
 						? current
 						: { ...current, error: Option.some(openResult.error) },
 				);
@@ -649,7 +656,9 @@ export function App(props: AppProps) {
 				return;
 			}
 			setUiStatus((current) =>
-				Option.isNone(current.error) ? current : { ...current, error: Option.none() },
+				Option.isNone(current.error)
+					? current
+					: { ...current, error: Option.none() },
 			);
 			void refreshFiles(false);
 		},
@@ -716,7 +725,9 @@ export function App(props: AppProps) {
 			error: Option.none(),
 		});
 		setUiStatus((current) =>
-			Option.isNone(current.error) ? current : { ...current, error: Option.none() },
+			Option.isNone(current.error)
+				? current
+				: { ...current, error: Option.none() },
 		);
 	}, [setCommitModal, stagedFileCount, setUiStatus]);
 
@@ -753,7 +764,9 @@ export function App(props: AppProps) {
 			}
 
 			setUiStatus((current) =>
-				Option.isNone(current.error) ? current : { ...current, error: Option.none() },
+				Option.isNone(current.error)
+					? current
+					: { ...current, error: Option.none() },
 			);
 			void refreshFiles(false);
 		},
@@ -784,7 +797,9 @@ export function App(props: AppProps) {
 			}
 
 			setUiStatus((current) =>
-				Option.isNone(current.error) ? current : { ...current, error: Option.none() },
+				Option.isNone(current.error)
+					? current
+					: { ...current, error: Option.none() },
 			);
 			void refreshFiles(false);
 		},
