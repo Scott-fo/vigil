@@ -12,6 +12,14 @@ interface UseAppKeyboardInputOptions {
 	onIntent: (intent: AppKeyboardIntent) => void;
 }
 
+export interface KeyboardIntentContext {
+	isCommitModalOpen: boolean;
+	stagedFileCount: number;
+	visibleFilePaths: string[];
+	selectedVisibleIndex: number;
+	selectedFile: FileEntry | null;
+}
+
 export type AppKeyboardIntent =
 	| { readonly _tag: "DestroyRenderer" }
 	| { readonly _tag: "CloseCommitModal" }
@@ -27,9 +35,9 @@ function isUnmodifiedKey(key: KeyEvent, name: string): boolean {
 	return !key.ctrl && !key.meta && key.name === name;
 }
 
-function decodeKeyboardIntent(
+export function decodeKeyboardIntent(
 	key: KeyEvent,
-	options: UseAppKeyboardInputOptions,
+	options: KeyboardIntentContext,
 ): Option.Option<AppKeyboardIntent> {
 	if (key.ctrl && key.name === "c") {
 		return Option.some({ _tag: "DestroyRenderer" });
