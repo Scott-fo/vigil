@@ -64,6 +64,7 @@ interface AppContentProps {
 	readonly sidebarItems: SidebarItem[];
 	readonly selectedFile: FileEntry | null;
 	readonly loading: boolean;
+	readonly diffViewMode: "split" | "unified";
 	readonly syntaxStyle: SyntaxStyle;
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
 	readonly onToggleDirectory: (path: string) => void;
@@ -93,6 +94,7 @@ function AppContent(props: AppContentProps) {
 						sidebarItems={props.sidebarItems}
 						selectedFile={props.selectedFile}
 						loading={props.loading}
+						diffViewMode={props.diffViewMode}
 						error={props.uiError}
 						isCommitModalOpen={props.isCommitModalOpen}
 						diffScrollRef={props.diffScrollRef}
@@ -145,8 +147,14 @@ export function App(props: AppProps) {
 		[setCommitModal],
 	);
 
-	const { files, sidebarOpen, collapsedDirectories, selectedPath, loading } =
-		fileView;
+	const {
+		files,
+		sidebarOpen,
+		diffViewMode,
+		collapsedDirectories,
+		selectedPath,
+		loading,
+	} = fileView;
 	const themeBundle = useMemo(
 		() => resolveThemeBundle(props.themeCatalog, themeName, themeMode),
 		[props.themeCatalog, themeName, themeMode],
@@ -273,6 +281,7 @@ export function App(props: AppProps) {
 			sidebarItems={sidebarItems}
 			selectedFile={selectedFile}
 			loading={loading}
+			diffViewMode={diffViewMode}
 			syntaxStyle={themeBundle.syntaxStyle}
 			diffScrollRef={diffScrollRef}
 			onToggleDirectory={onToggleDirectory}

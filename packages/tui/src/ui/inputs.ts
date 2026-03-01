@@ -23,6 +23,7 @@ export interface KeyboardIntentContext {
 export type AppKeyboardIntent =
 	| { readonly _tag: "DestroyRenderer" }
 	| { readonly _tag: "ToggleSidebar" }
+	| { readonly _tag: "ToggleDiffViewMode" }
 	| { readonly _tag: "CloseCommitModal" }
 	| { readonly _tag: "OpenCommitModal" }
 	| { readonly _tag: "CycleTheme"; readonly direction: 1 | -1 }
@@ -74,6 +75,10 @@ export function decodeKeyboardIntent(
 			_tag: "SyncRemote",
 			direction: key.shift ? "push" : "pull",
 		});
+	}
+
+	if (key.name === "tab" && !key.ctrl && !key.meta) {
+		return Option.some({ _tag: "ToggleDiffViewMode" });
 	}
 
 	if (key.ctrl && (key.name === "u" || key.name === "d")) {

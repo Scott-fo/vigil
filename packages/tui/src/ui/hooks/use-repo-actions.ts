@@ -187,7 +187,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		[chooserFilePath, renderer, runAction],
 	);
 
-const toggleCollapsedDirectory = useCallback(
+	const toggleCollapsedDirectory = useCallback(
 		(path: string) => {
 			updateFileView((current) => {
 				const next = new Set(current.collapsedDirectories);
@@ -206,6 +206,14 @@ const toggleCollapsedDirectory = useCallback(
 		updateFileView((current) => ({
 			...current,
 			sidebarOpen: !current.sidebarOpen,
+		}));
+	}, [updateFileView]);
+
+	const toggleDiffViewMode = useCallback(() => {
+		updateFileView((current) => ({
+			...current,
+			diffViewMode:
+				current.diffViewMode === "split" ? "unified" : "split",
 		}));
 	}, [updateFileView]);
 
@@ -302,6 +310,9 @@ const toggleCollapsedDirectory = useCallback(
 				Match.tag("ToggleSidebar", () => {
 					toggleSidebar();
 				}),
+				Match.tag("ToggleDiffViewMode", () => {
+					toggleDiffViewMode();
+				}),
 				Match.tag("CloseCommitModal", () => {
 					closeCommitModal();
 				}),
@@ -341,6 +352,7 @@ const toggleCollapsedDirectory = useCallback(
 			diffScrollRef,
 			selectFilePath,
 			syncRemote,
+			toggleDiffViewMode,
 			toggleSidebar,
 			toggleSelectedFileStage,
 		],

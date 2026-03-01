@@ -160,6 +160,7 @@ const SidebarRail = memo(function SidebarRail(props: SidebarRailProps) {
 interface DiffPanelProps {
 	readonly theme: ResolvedTheme;
 	readonly syntaxStyle: SyntaxStyle;
+	readonly diffViewMode: "split" | "unified";
 	readonly selectedFile: FileEntry | null;
 	readonly loading: boolean;
 	readonly error: Option.Option<string>;
@@ -223,7 +224,7 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 											? { filetype: props.selectedFile.filetype }
 											: {})}
 										syntaxStyle={props.syntaxStyle}
-										view="split"
+										view={props.diffViewMode}
 										showLineNumbers
 										width="100%"
 										wrapMode="word"
@@ -262,6 +263,7 @@ export interface ReviewerProps {
 	readonly sidebarItems: SidebarItem[];
 	readonly selectedFile: FileEntry | null;
 	readonly loading: boolean;
+	readonly diffViewMode: "split" | "unified";
 	readonly error: Option.Option<string>;
 	readonly isCommitModalOpen: boolean;
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
@@ -297,6 +299,7 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 			<DiffPanel
 				theme={props.theme}
 				syntaxStyle={props.syntaxStyle}
+				diffViewMode={props.diffViewMode}
 				selectedFile={props.selectedFile}
 				loading={props.loading}
 				error={props.error}

@@ -75,6 +75,14 @@ describe("decodeKeyboardIntent", () => {
 		}
 	});
 
+	test("maps tab to diff view toggle", () => {
+		const intent = decodeKeyboardIntent(keyEvent({ name: "tab" }), context());
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("ToggleDiffViewMode");
+		}
+	});
+
 	test("maps ctrl+d to half-page down scroll intent", () => {
 		const intent = decodeKeyboardIntent(
 			keyEvent({ name: "d", ctrl: true }),
