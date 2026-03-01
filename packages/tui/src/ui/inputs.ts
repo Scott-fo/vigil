@@ -94,7 +94,12 @@ export function decodeKeyboardIntent(
 		return Option.none();
 	}
 
-	if (key.name === "enter" || key.name === "return") {
+	if (
+		key.name === "enter" ||
+		key.name === "return" ||
+		isUnmodifiedKey(key, "e") ||
+		isUnmodifiedKey(key, "o")
+	) {
 		return pipe(
 			Option.fromNullable(options.selectedFile),
 			Option.map((selectedFile) => ({

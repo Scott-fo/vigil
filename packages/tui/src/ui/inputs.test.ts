@@ -97,6 +97,28 @@ describe("decodeKeyboardIntent", () => {
 		}
 	});
 
+	test("maps e to open selected file in editor", () => {
+		const intent = decodeKeyboardIntent(keyEvent({ name: "e" }), context());
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value).toEqual({
+				_tag: "OpenSelectedFile",
+				filePath: "src/app.tsx",
+			});
+		}
+	});
+
+	test("maps o to open selected file in editor", () => {
+		const intent = decodeKeyboardIntent(keyEvent({ name: "o" }), context());
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value).toEqual({
+				_tag: "OpenSelectedFile",
+				filePath: "src/app.tsx",
+			});
+		}
+	});
+
 	test("returns none when no visible selection exists", () => {
 		const intent = decodeKeyboardIntent(
 			keyEvent({ name: "return" }),
