@@ -1,10 +1,7 @@
 import { Effect, Option, pipe } from "effect";
 import { useCallback, useEffect, useRef } from "react";
 import { loadFilesWithDiffs, type RepoActionError } from "#data/git";
-import type {
-	UpdateFileViewState,
-	UpdateUiStatus,
-} from "#ui/state";
+import type { UpdateFileViewState, UpdateUiStatus } from "#ui/state";
 
 interface UseFileRefreshOptions {
 	readonly updateFileView: UpdateFileViewState;
@@ -86,9 +83,7 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 						const other = result.files[index];
 						return other !== undefined && file.equals(other);
 					});
-				const nextFiles = filesAreEqual
-					? current.files
-					: result.files;
+				const nextFiles = filesAreEqual ? current.files : result.files;
 				const hasCurrentSelection = pipe(
 					current.selectedPath,
 					Option.match({
