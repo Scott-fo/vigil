@@ -30,7 +30,7 @@
     - Centralize git command execution and decoding.
     - Keep UI-friendly projection layer at boundary.
 
-- [ ] `W3` App state domain modeling
+- [x] `W3` App state domain modeling
   - Files:
     - `packages/tui/src/ui/app.tsx`
     - `packages/tui/src/ui/inputs.ts`
@@ -48,7 +48,7 @@
     - Typed parse/validation for config inputs.
     - Explicit recoverable/unrecoverable initialization errors.
 
-- [ ] `W5` Pure diff/sidebar transforms
+- [x] `W5` Pure diff/sidebar transforms
   - Files:
     - `packages/tui/src/diff/hunks.ts`
     - `packages/tui/src/ui/sidebar.ts`
@@ -56,7 +56,7 @@
     - Lift data transforms into pure, testable functions.
     - Add algebraic return types for edge cases.
 
-- [ ] `W6` TUI command/intention layer
+- [x] `W6` TUI command/intention layer
   - Files:
     - `packages/tui/src/ui/inputs.ts`
     - `packages/tui/src/ui/app.tsx`
@@ -75,7 +75,7 @@
 
 ## Current Focus
 
-- In progress: `W3` App state domain modeling.
+- Completed: initial Effect refactor workflow (`W1`–`W6`).
 
 ## File-by-File Queue
 
@@ -117,3 +117,8 @@
   - `packages/tui/src/syntax/tree-sitter.ts` now schema-validates parser config entries and initializes client via Effect with tagged `TreeSitterInitializeError`.
   - `packages/tui/src/bootstrap.tsx` now composes startup as a single typed Effect workflow with explicit bootstrap errors and best-effort Tree-sitter initialization.
   - `packages/tui/src/data/git.ts` now carries `Option` for filetype and diff note through file-entry assembly (no `getOrUndefined`/`undefined` sentinels in that flow).
+  - `packages/tui/src/ui/inputs.ts` now cleanly decodes keypresses into typed intents, and `packages/tui/src/ui/app.tsx` executes them with exhaustive `Match.tag(...).exhaustive`.
+  - `packages/tui/src/ui/app.tsx` now uses `Option` for selected path and UI/modal error state transitions.
+  - Added focused tests:
+    - `packages/tui/src/diff/hunks.test.ts`
+    - `packages/tui/src/ui/sidebar.test.ts`

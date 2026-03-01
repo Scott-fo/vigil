@@ -111,7 +111,7 @@ interface ReviewerProps {
 	sidebarItems: SidebarItem[];
 	selectedFile: FileEntry | null;
 	loading: boolean;
-	error: string | null;
+	error: Option.Option<string>;
 	isCommitModalOpen: boolean;
 	diffScrollRef: RefObject<ScrollBoxRenderable | null>;
 	onToggleDirectory: (path: string) => void;
@@ -231,8 +231,8 @@ const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 				<box flexGrow={1} padding={1}>
 					{props.loading ? (
 						<text fg={props.theme.textMuted}>Loading git status...</text>
-					) : props.error ? (
-						<text fg={props.theme.error}>{props.error}</text>
+					) : Option.isSome(props.error) ? (
+						<text fg={props.theme.error}>{props.error.value}</text>
 					) : !props.selectedFile ? (
 						<text fg={props.theme.textMuted}>No changed files found.</text>
 					) : props.selectedFile.diff.trim() ? (
@@ -299,7 +299,7 @@ interface CommitModalProps {
 	theme: ResolvedTheme;
 	modalBackdropColor: RGBA;
 	commitMessage: string;
-	commitError: string | null;
+	commitError: Option.Option<string>;
 	onCommitMessageChange: (value: string) => void;
 	onCommitSubmit: (payload: unknown) => void;
 }
@@ -345,8 +345,8 @@ const CommitModal = memo(function CommitModal(props: CommitModalProps) {
 					/>
 				</box>
 				<box marginTop={1}>
-					{props.commitError ? (
-						<text fg={props.theme.error}>{props.commitError}</text>
+					{Option.isSome(props.commitError) ? (
+						<text fg={props.theme.error}>{props.commitError.value}</text>
 					) : (
 						<text fg={props.theme.textMuted}>
 							Enter commits. Esc closes without committing.
@@ -360,12 +360,12 @@ const CommitModal = memo(function CommitModal(props: CommitModalProps) {
 
 type UiStatus = {
 	showSplash: boolean;
-	error: string | null;
+	error: Option.Option<string>;
 };
 
 const uiStatusAtom = Atom.make<UiStatus>({
 	showSplash: true,
-	error: null,
+	error: Option.none(),
 });
 
 type CommitModalState =
@@ -375,7 +375,7 @@ type CommitModalState =
 	| {
 			isOpen: true;
 			message: string;
-			error: string | null;
+			error: Option.Option<string>;
 	  };
 
 const commitModalAtom = Atom.make<CommitModalState>({
@@ -412,7 +412,7 @@ export function App(props: AppProps) {
 	);
 	const isCommitModalOpen = commitModal.isOpen;
 	const commitMessage = commitModal.isOpen ? commitModal.message : "";
-	const commitError = commitModal.isOpen ? commitModal.error : null;
+	const commitError = commitModal.isOpen ? commitModal.error : Option.none();
 
 	const refreshFiles = useCallback(
 		async (showLoading: boolean) => {
@@ -450,12 +450,16 @@ export function App(props: AppProps) {
 			if (!result.ok) {
 				setFiles((current) => (current.length === 0 ? current : []));
 				setUiStatus((current) => {
-					if (current.showSplash && current.error === result.error) {
+					if (
+						current.showSplash &&
+						Option.isSome(current.error) &&
+						current.error.value === result.error
+					) {
 						return current;
 					}
 					return {
 						showSplash: true,
-						error: result.error,
+						error: Option.some(result.error),
 					};
 				});
 				setSelectedPath(Option.none());
@@ -466,12 +470,12 @@ export function App(props: AppProps) {
 				areFileEntriesEqual(current, result.files) ? current : result.files,
 			);
 			setUiStatus((current) => {
-				if (!current.showSplash && current.error === null) {
+				if (!current.showSplash && Option.isNone(current.error)) {
 					return current;
 				}
 				return {
 					showSplash: false,
-					error: null,
+					error: Option.none(),
 				};
 			});
 
@@ -577,7 +581,7 @@ export function App(props: AppProps) {
 			);
 			if (!result.ok) {
 				setCommitModal((current) =>
-					current.isOpen ? { ...current, error: result.error } : current,
+					current.isOpen ? { ...current, error: Option.some(result.error) } : current,
 				);
 				return;
 			}
@@ -586,7 +590,7 @@ export function App(props: AppProps) {
 				current.isOpen ? { isOpen: false } : current,
 			);
 			setUiStatus((current) =>
-				current.error === null ? current : { ...current, error: null },
+				Option.isNone(current.error) ? current : { ...current, error: Option.none() },
 			);
 			void refreshFiles(false);
 		},
@@ -610,9 +614,10 @@ export function App(props: AppProps) {
 				);
 				if (!chooserWriteResult.ok) {
 					setUiStatus((current) =>
-						current.error === chooserWriteResult.error
+						Option.isSome(current.error) &&
+						current.error.value === chooserWriteResult.error
 							? current
-							: { ...current, error: chooserWriteResult.error },
+							: { ...current, error: Option.some(chooserWriteResult.error) },
 					);
 					return;
 				}
@@ -636,15 +641,15 @@ export function App(props: AppProps) {
 			renderer.resume();
 			if (!openResult.ok) {
 				setUiStatus((current) =>
-					current.error === openResult.error
+					Option.isSome(current.error) && current.error.value === openResult.error
 						? current
-						: { ...current, error: openResult.error },
+						: { ...current, error: Option.some(openResult.error) },
 				);
 				void refreshFiles(false);
 				return;
 			}
 			setUiStatus((current) =>
-				current.error === null ? current : { ...current, error: null },
+				Option.isNone(current.error) ? current : { ...current, error: Option.none() },
 			);
 			void refreshFiles(false);
 		},
@@ -676,7 +681,7 @@ export function App(props: AppProps) {
 				return {
 					...current,
 					message: value,
-					error: null,
+					error: Option.none(),
 				};
 			});
 		},
@@ -708,10 +713,10 @@ export function App(props: AppProps) {
 		setCommitModal({
 			isOpen: true,
 			message: "",
-			error: null,
+			error: Option.none(),
 		});
 		setUiStatus((current) =>
-			current.error === null ? current : { ...current, error: null },
+			Option.isNone(current.error) ? current : { ...current, error: Option.none() },
 		);
 	}, [setCommitModal, stagedFileCount, setUiStatus]);
 
@@ -740,15 +745,15 @@ export function App(props: AppProps) {
 			);
 			if (!result.ok) {
 				setUiStatus((current) =>
-					current.error === result.error
+					Option.isSome(current.error) && current.error.value === result.error
 						? current
-						: { ...current, error: result.error },
+						: { ...current, error: Option.some(result.error) },
 				);
 				return;
 			}
 
 			setUiStatus((current) =>
-				current.error === null ? current : { ...current, error: null },
+				Option.isNone(current.error) ? current : { ...current, error: Option.none() },
 			);
 			void refreshFiles(false);
 		},
@@ -771,15 +776,15 @@ export function App(props: AppProps) {
 			);
 			if (!result.ok) {
 				setUiStatus((current) =>
-					current.error === result.error
+					Option.isSome(current.error) && current.error.value === result.error
 						? current
-						: { ...current, error: result.error },
+						: { ...current, error: Option.some(result.error) },
 				);
 				return;
 			}
 
 			setUiStatus((current) =>
-				current.error === null ? current : { ...current, error: null },
+				Option.isNone(current.error) ? current : { ...current, error: Option.none() },
 			);
 			void refreshFiles(false);
 		},
