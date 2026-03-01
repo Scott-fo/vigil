@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Data, Effect, pipe, Schema } from "effect";
 
 export type ThemeMode = "dark" | "light";
 
@@ -11,11 +12,30 @@ type RefName = string;
 type Variant = { dark: HexColor | RefName | number; light: HexColor | RefName | number };
 type ColorValue = HexColor | RefName | Variant | number | RGBA;
 
-type ThemeJson = {
-  $schema?: string;
-  defs?: Record<string, HexColor | RefName | number>;
-  theme: Record<string, ColorValue | number | undefined>;
-};
+const ThemeScalarValueSchema = Schema.Union(Schema.String, Schema.Number);
+const ThemeVariantSchema = Schema.Struct({
+  dark: ThemeScalarValueSchema,
+  light: ThemeScalarValueSchema,
+});
+const ThemeColorValueSchema = Schema.Union(
+  ThemeScalarValueSchema,
+  ThemeVariantSchema,
+  Schema.instanceOf(RGBA),
+);
+const ThemeJsonSchema = Schema.Struct({
+  $schema: Schema.optional(Schema.String),
+  defs: Schema.optional(
+    Schema.Record({
+      key: Schema.String,
+      value: ThemeScalarValueSchema,
+    }),
+  ),
+  theme: Schema.Record({
+    key: Schema.String,
+    value: ThemeColorValueSchema,
+  }),
+});
+type ThemeJson = Schema.Schema.Type<typeof ThemeJsonSchema>;
 
 export type ThemeColors = {
   primary: RGBA;
@@ -88,6 +108,29 @@ export type ThemeBundle = {
   theme: ResolvedTheme;
   syntaxStyle: SyntaxStyle;
 };
+
+class ThemeResolutionError extends Data.TaggedError("ThemeResolutionError")<{
+  readonly message: string;
+}> {}
+
+class ThemeFileReadError extends Data.TaggedError("ThemeFileReadError")<{
+  readonly filePath: string;
+  readonly message: string;
+}> {}
+
+class ThemeFileParseError extends Data.TaggedError("ThemeFileParseError")<{
+  readonly filePath: string;
+  readonly message: string;
+}> {}
+
+class ThemeFileInvalidError extends Data.TaggedError("ThemeFileInvalidError")<{
+  readonly filePath: string;
+}> {}
+
+type ThemeFileError =
+  | ThemeFileReadError
+  | ThemeFileParseError
+  | ThemeFileInvalidError;
 
 const REQUIRED_THEME_KEYS = [
   "primary",
@@ -237,25 +280,28 @@ function ansiToRgba(code: number): RGBA {
   return RGBA.fromInts(0, 0, 0);
 }
 
-function resolveTheme(themeJson: ThemeJson, mode: ThemeMode): ResolvedTheme {
+function resolveTheme(themeJson: ThemeJson, mode: ThemeMode): Effect.Effect<ResolvedTheme, ThemeResolutionError> {
   const defs = themeJson.defs ?? {};
 
-  function resolveColor(value: ColorValue | number | undefined): RGBA {
+  function resolveColor(value: ColorValue | number | undefined): Effect.Effect<RGBA, ThemeResolutionError> {
     if (value instanceof RGBA) {
-      return value;
+      return Effect.succeed(value);
     }
 
     if (typeof value === "number") {
-      return ansiToRgba(value);
+      return Effect.succeed(ansiToRgba(value));
     }
 
     if (typeof value === "string") {
       if (value === "transparent" || value === "none") {
-        return RGBA.fromInts(0, 0, 0, 0);
+        return Effect.succeed(RGBA.fromInts(0, 0, 0, 0));
       }
 
       if (value.startsWith("#")) {
-        return RGBA.fromHex(value);
+        return Effect.try({
+          try: () => RGBA.fromHex(value),
+          catch: () => new ThemeResolutionError({ message: `Invalid hex color "${value}".` }),
+        });
       }
 
       if (defs[value] !== undefined) {
@@ -266,51 +312,87 @@ function resolveTheme(themeJson: ThemeJson, mode: ThemeMode): ResolvedTheme {
         return resolveColor(themeJson.theme[value]);
       }
 
-      throw new Error(`Color reference \"${value}\" not found.`);
+      return Effect.fail(new ThemeResolutionError({ message: `Color reference "${value}" not found.` }));
     }
 
     if (value && typeof value === "object" && "dark" in value && "light" in value) {
       return resolveColor(mode === "dark" ? value.dark : value.light);
     }
 
-    throw new Error(`Invalid color value: ${String(value)}`);
+    return Effect.fail(new ThemeResolutionError({ message: `Invalid color value: ${String(value)}` }));
   }
 
-  const resolved = {} as ThemeColors;
+  return Effect.gen(function* () {
+    const resolved = {} as ThemeColors;
 
-  for (const key of REQUIRED_THEME_KEYS) {
-    const candidate = themeJson.theme[key];
-    if (candidate === undefined) {
-      throw new Error(`Theme is missing required color \"${key}\".`);
+    for (const key of REQUIRED_THEME_KEYS) {
+      const candidate = themeJson.theme[key];
+      if (candidate === undefined) {
+        yield* Effect.fail(
+          new ThemeResolutionError({ message: `Theme is missing required color "${key}".` }),
+        );
+      }
+      resolved[key] = yield* resolveColor(candidate);
     }
-    resolved[key] = resolveColor(candidate);
-  }
 
-  const selectedListItemText = themeJson.theme.selectedListItemText;
-  resolved.selectedListItemText = selectedListItemText
-    ? resolveColor(selectedListItemText)
-    : resolved.background;
+    const selectedListItemText = themeJson.theme.selectedListItemText;
+    resolved.selectedListItemText = selectedListItemText
+      ? yield* resolveColor(selectedListItemText)
+      : resolved.background;
 
-  const backgroundMenu = themeJson.theme.backgroundMenu;
-  resolved.backgroundMenu = backgroundMenu ? resolveColor(backgroundMenu) : resolved.backgroundElement;
+    const backgroundMenu = themeJson.theme.backgroundMenu;
+    resolved.backgroundMenu = backgroundMenu
+      ? yield* resolveColor(backgroundMenu)
+      : resolved.backgroundElement;
 
-  return {
-    ...resolved,
-    _hasSelectedListItemText: selectedListItemText !== undefined,
-    thinkingOpacity:
-      typeof themeJson.theme.thinkingOpacity === "number" ? Math.max(0, Math.min(1, themeJson.theme.thinkingOpacity)) : 0.6,
-  };
+    return {
+      ...resolved,
+      _hasSelectedListItemText: selectedListItemText !== undefined,
+      thinkingOpacity:
+        typeof themeJson.theme.thinkingOpacity === "number" ? Math.max(0, Math.min(1, themeJson.theme.thinkingOpacity)) : 0.6,
+    };
+  });
+}
+
+function loadThemeFile(filePath: string): Effect.Effect<ThemeJson, ThemeFileError> {
+  return pipe(
+    Effect.tryPromise({
+      try: () => Bun.file(filePath).text(),
+      catch: (error) =>
+        new ThemeFileReadError({
+          filePath,
+          message: error instanceof Error ? error.message : "Unable to read theme file.",
+        }),
+    }),
+    Effect.flatMap((raw) =>
+      Effect.try({
+        try: () => JSON.parse(raw) as unknown,
+        catch: (error) =>
+          new ThemeFileParseError({
+            filePath,
+            message: error instanceof Error ? error.message : "Invalid JSON in theme file.",
+          }),
+      }),
+    ),
+    Effect.flatMap((parsed) =>
+      pipe(
+        Schema.decodeUnknown(ThemeJsonSchema)(parsed),
+        Effect.mapError(() => new ThemeFileInvalidError({ filePath })),
+      ),
+    ),
+  );
 }
 
 async function loadThemesFromDirectory(directory: string): Promise<Record<string, ThemeJson>> {
   const themes: Record<string, ThemeJson> = {};
-  let entries: Dirent[];
-
-  try {
-    entries = await readdir(directory, { withFileTypes: true, encoding: "utf8" });
-  } catch {
-    return themes;
-  }
+  const entries = await Effect.runPromise(
+    pipe(
+      Effect.tryPromise(() =>
+        readdir(directory, { withFileTypes: true, encoding: "utf8" }),
+      ),
+      Effect.catchAll(() => Effect.succeed([] as Dirent[])),
+    ),
+  );
 
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) {
@@ -318,17 +400,21 @@ async function loadThemesFromDirectory(directory: string): Promise<Record<string
     }
 
     const filePath = path.join(directory, entry.name);
-    try {
-      const parsed = JSON.parse(await Bun.file(filePath).text()) as ThemeJson;
-      if (!parsed || typeof parsed !== "object" || !parsed.theme || typeof parsed.theme !== "object") {
-        continue;
-      }
-
-      const name = path.basename(entry.name, ".json");
-      themes[name] = parsed;
-    } catch {
+    const parsed = await Effect.runPromise(
+      pipe(
+        loadThemeFile(filePath),
+        Effect.match({
+          onFailure: () => null,
+          onSuccess: (theme) => theme,
+        }),
+      ),
+    );
+    if (!parsed) {
       continue;
     }
+
+    const name = path.basename(entry.name, ".json");
+    themes[name] = parsed;
   }
 
   return themes;
@@ -405,12 +491,13 @@ export function resolveThemeBundle(catalog: ThemeCatalog, requestedName: string,
 
   const selectedThemeJson = catalog.themes[selectedName] ?? FALLBACK_THEME_JSON;
 
-  let theme: ResolvedTheme;
-  try {
-    theme = resolveTheme(selectedThemeJson, mode);
-  } catch {
-    theme = resolveTheme(FALLBACK_THEME_JSON, mode);
-  }
+  const theme = Effect.runSync(
+    pipe(
+      resolveTheme(selectedThemeJson, mode),
+      Effect.catchAll(() => resolveTheme(FALLBACK_THEME_JSON, mode)),
+      Effect.orDie,
+    ),
+  );
 
   return {
     name: selectedName,
@@ -435,23 +522,38 @@ export async function readThemePreferenceFromTuiConfig(): Promise<{
   theme?: string;
   mode?: ThemeMode;
 }> {
-  const result: { theme?: string; mode?: ThemeMode } = {};
+  const result: { theme?: string; mode?: ThemeMode } = await Effect.runPromise(
+    pipe(
+      Effect.tryPromise(() => Bun.file(path.join(process.cwd(), "tui.json")).text()),
+      Effect.flatMap((raw) =>
+        Effect.try({
+          try: () => JSON.parse(raw) as Record<string, unknown>,
+          catch: (error) =>
+            new ThemeFileParseError({
+              filePath: "tui.json",
+              message: error instanceof Error ? error.message : "Invalid tui.json.",
+            }),
+        }),
+      ),
+      Effect.map((parsed) => {
+        const parsedResult: { theme?: string; mode?: ThemeMode } = {};
+        if (typeof parsed.theme === "string") {
+          parsedResult.theme = parsed.theme;
+        }
 
-  try {
-    const raw = await Bun.file(path.join(process.cwd(), "tui.json")).text();
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const mode = parsed.theme_mode ?? parsed.mode;
+        if (mode === "dark" || mode === "light") {
+          parsedResult.mode = mode;
+        }
 
-    if (typeof parsed.theme === "string") {
-      result.theme = parsed.theme;
-    }
-
-    const mode = parsed.theme_mode ?? parsed.mode;
-    if (mode === "dark" || mode === "light") {
-      result.mode = mode;
-    }
-  } catch {
-    // Optional file.
-  }
+        return parsedResult;
+      }),
+      Effect.match({
+        onFailure: () => ({} as { theme?: string; mode?: ThemeMode }),
+        onSuccess: (parsedResult) => parsedResult,
+      }),
+    ),
+  );
 
   if (process.env.REVIEWER_THEME) {
     result.theme = process.env.REVIEWER_THEME;

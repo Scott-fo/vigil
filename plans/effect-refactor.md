@@ -75,7 +75,7 @@
 
 ## Current Focus
 
-- In progress: `W2` Git domain service and typed failures.
+- In progress: `W4` Theme and parser loading pipeline.
 
 ## Notes
 
@@ -89,3 +89,5 @@
   - Added `packages/tui/src/data/editor.ts` with tagged errors (`EditorEnvMissingError`, `EditorLaunchError`, `ChooserWriteError`) and Effect-based workflows for chooser writes/editor launch.
   - Replaced `openSelectedFile` imperative `try/catch` in `packages/tui/src/ui/app.tsx` with `Effect.match` + tagged error rendering.
   - Replaced polling cleanup `try/finally` in `refreshFiles` with `Effect.ensuring(...)`.
+  - `packages/tui/src/theme/theme.ts` now uses Effect for theme JSON loading/parsing and resolution fallback paths with tagged errors (`ThemeResolutionError`, `ThemeFile*Error`) instead of imperative `try/catch`.
+  - Replaced manual `isThemeJson` guard with `Schema.decodeUnknown(ThemeJsonSchema)`; schema includes `Schema.instanceOf(RGBA)` for runtime theme objects.
