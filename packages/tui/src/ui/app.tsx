@@ -129,7 +129,7 @@ const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 	return (
 		<box flexDirection="row" flexGrow={1}>
 			<box
-				width={44}
+				width={38}
 				border
 				borderStyle="rounded"
 				borderColor={props.theme.border}
