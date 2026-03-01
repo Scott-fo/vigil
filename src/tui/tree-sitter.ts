@@ -6,7 +6,7 @@ import {
   type InjectionMapping,
   type TreeSitterClient,
 } from "@opentui/core";
-import parserConfig from "../parsers-config.ts";
+import parserConfig from "../../parsers-config.ts";
 
 type RawParserConfig = {
   parsers?: unknown;
