@@ -96,9 +96,9 @@ export function App(props: AppProps) {
 							ok: false as const,
 							error: formatRepoActionError(repoError),
 						}),
-						onSuccess: (nextFiles) => ({
+						onSuccess: (files) => ({
 							ok: true as const,
-							files: nextFiles,
+							files,
 						}),
 					}),
 				),
