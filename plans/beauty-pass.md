@@ -40,9 +40,9 @@ Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Ef
 
 ### 4) Syntax/Theme/Config
 
-- [ ] `packages/tui/src/config/parsers.ts`
-- [ ] `packages/tui/src/syntax/tree-sitter.ts`
-- [ ] `packages/tui/src/theme/theme.ts`
+- [x] `packages/tui/src/config/parsers.ts` (reviewed; no rewrite needed)
+- [x] `packages/tui/src/syntax/tree-sitter.ts`
+- [x] `packages/tui/src/theme/theme.ts`
 
 ### 5) UI
 
@@ -58,4 +58,4 @@ Make every file in `packages/*` and `src/*` beautiful, idiomatic TypeScript + Ef
 
 ## Current Tranche
 
-- In progress: Syntax/Theme/Config (`packages/tui/src/{config/parsers,syntax/tree-sitter,theme/theme}.ts`)
+- In progress: UI (`packages/tui/src/ui/{inputs,sidebar,app}.ts*`)

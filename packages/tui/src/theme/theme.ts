@@ -3,7 +3,7 @@ import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Data, Effect, pipe, Schema } from "effect";
+import { Data, Effect, Option, pipe, Schema } from "effect";
 
 export type ThemeMode = "dark" | "light";
 
@@ -384,52 +384,44 @@ function loadThemeFile(filePath: string): Effect.Effect<ThemeJson, ThemeFileErro
 }
 
 async function loadThemesFromDirectory(directory: string): Promise<Record<string, ThemeJson>> {
-  const themes: Record<string, ThemeJson> = {};
-  const entries = await Effect.runPromise(
-    pipe(
-      Effect.tryPromise(() =>
-        readdir(directory, { withFileTypes: true, encoding: "utf8" }),
-      ),
-      Effect.catchAll(() => Effect.succeed([] as Dirent[])),
-    ),
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const entries = yield* pipe(
+        Effect.tryPromise(() =>
+          readdir(directory, { withFileTypes: true, encoding: "utf8" }),
+        ),
+        Effect.orElseSucceed(() => [] as Dirent[]),
+      );
+
+      const themes: Record<string, ThemeJson> = {};
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) {
+          continue;
+        }
+
+        const filePath = path.join(directory, entry.name);
+        const parsedTheme = yield* pipe(loadThemeFile(filePath), Effect.option);
+        pipe(
+          parsedTheme,
+          Option.match({
+            onNone: () => undefined,
+            onSome: (theme) => {
+              const themeName = path.basename(entry.name, ".json");
+              themes[themeName] = theme;
+            },
+          }),
+        );
+      }
+
+      return themes;
+    }),
   );
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) {
-      continue;
-    }
-
-    const filePath = path.join(directory, entry.name);
-    const parsed = await Effect.runPromise(
-      pipe(
-        loadThemeFile(filePath),
-        Effect.match({
-          onFailure: () => null,
-          onSuccess: (theme) => theme,
-        }),
-      ),
-    );
-    if (!parsed) {
-      continue;
-    }
-
-    const name = path.basename(entry.name, ".json");
-    themes[name] = parsed;
-  }
-
-  return themes;
 }
 
 function getCustomThemeDirectories(): string[] {
-  const directories: string[] = [];
-
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-  if (xdgConfigHome) {
-    directories.push(path.join(xdgConfigHome, "opencode", "themes"));
-  } else {
-    directories.push(path.join(os.homedir(), ".config", "opencode", "themes"));
-  }
-
+  const globalThemesDirectory = process.env.XDG_CONFIG_HOME
+    ? path.join(process.env.XDG_CONFIG_HOME, "opencode", "themes")
+    : path.join(os.homedir(), ".config", "opencode", "themes");
   const upward: string[] = [];
   let current = process.cwd();
 
@@ -442,19 +434,7 @@ function getCustomThemeDirectories(): string[] {
     current = parent;
   }
 
-  upward.reverse();
-
-  const ordered = [...directories, ...upward];
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-  for (const directory of ordered) {
-    if (!seen.has(directory)) {
-      seen.add(directory);
-      deduped.push(directory);
-    }
-  }
-
-  return deduped;
+  return Array.from(new Set([globalThemesDirectory, ...upward.reverse()]));
 }
 
 function normalizeThemeOrder(names: string[]): string[] {
@@ -466,22 +446,19 @@ function normalizeThemeOrder(names: string[]): string[] {
 }
 
 export async function loadThemeCatalog(): Promise<ThemeCatalog> {
-  const themes: Record<string, ThemeJson> = {};
   const bundledThemesDirectory = path.join(import.meta.dir, "..", "themes");
+  const directories = [bundledThemesDirectory, ...getCustomThemeDirectories()];
+  const layers = await Promise.all(directories.map(loadThemesFromDirectory));
+  const themes = Object.assign({}, ...layers) as Record<string, ThemeJson>;
 
-  Object.assign(themes, await loadThemesFromDirectory(bundledThemesDirectory));
-
-  for (const directory of getCustomThemeDirectories()) {
-    Object.assign(themes, await loadThemesFromDirectory(directory));
-  }
-
-  if (Object.keys(themes).length === 0) {
-    themes.opencode = FALLBACK_THEME_JSON;
-  }
+  const resolvedThemes =
+    Object.keys(themes).length === 0
+      ? { opencode: FALLBACK_THEME_JSON }
+      : themes;
 
   return {
-    themes,
-    order: normalizeThemeOrder(Object.keys(themes)),
+    themes: resolvedThemes,
+    order: normalizeThemeOrder(Object.keys(resolvedThemes)),
   };
 }
 
@@ -518,11 +495,47 @@ export function cycleThemeName(catalog: ThemeCatalog, currentName: string, direc
   return catalog.order[nextIndex] ?? currentName;
 }
 
+type ThemePreference = {
+  theme?: string;
+  mode?: ThemeMode;
+};
+
+function parseThemePreference(raw: Record<string, unknown>): ThemePreference {
+  const parsed: ThemePreference = {};
+  if (typeof raw.theme === "string") {
+    parsed.theme = raw.theme;
+  }
+
+  const mode = raw.theme_mode ?? raw.mode;
+  if (mode === "dark" || mode === "light") {
+    parsed.mode = mode;
+  }
+
+  return parsed;
+}
+
+function applyEnvThemePreference(preference: ThemePreference): ThemePreference {
+  const envTheme = process.env.REVIEWER_THEME;
+  const envMode = process.env.REVIEWER_THEME_MODE;
+  return {
+    ...(envTheme
+      ? { theme: envTheme }
+      : preference.theme !== undefined
+        ? { theme: preference.theme }
+        : {}),
+    ...(envMode === "dark" || envMode === "light"
+      ? { mode: envMode }
+      : preference.mode !== undefined
+        ? { mode: preference.mode }
+        : {}),
+  };
+}
+
 export async function readThemePreferenceFromTuiConfig(): Promise<{
   theme?: string;
   mode?: ThemeMode;
 }> {
-  const result: { theme?: string; mode?: ThemeMode } = await Effect.runPromise(
+  const filePreference = await Effect.runPromise(
     pipe(
       Effect.tryPromise(() => Bun.file(path.join(process.cwd(), "tui.json")).text()),
       Effect.flatMap((raw) =>
@@ -535,35 +548,12 @@ export async function readThemePreferenceFromTuiConfig(): Promise<{
             }),
         }),
       ),
-      Effect.map((parsed) => {
-        const parsedResult: { theme?: string; mode?: ThemeMode } = {};
-        if (typeof parsed.theme === "string") {
-          parsedResult.theme = parsed.theme;
-        }
-
-        const mode = parsed.theme_mode ?? parsed.mode;
-        if (mode === "dark" || mode === "light") {
-          parsedResult.mode = mode;
-        }
-
-        return parsedResult;
-      }),
-      Effect.match({
-        onFailure: () => ({} as { theme?: string; mode?: ThemeMode }),
-        onSuccess: (parsedResult) => parsedResult,
-      }),
+      Effect.map(parseThemePreference),
+      Effect.orElseSucceed(() => ({} as ThemePreference)),
     ),
   );
 
-  if (process.env.REVIEWER_THEME) {
-    result.theme = process.env.REVIEWER_THEME;
-  }
-
-  if (process.env.REVIEWER_THEME_MODE === "dark" || process.env.REVIEWER_THEME_MODE === "light") {
-    result.mode = process.env.REVIEWER_THEME_MODE;
-  }
-
-  return result;
+  return applyEnvThemePreference(filePreference);
 }
 
 function generateSyntax(theme: ResolvedTheme): SyntaxStyle {

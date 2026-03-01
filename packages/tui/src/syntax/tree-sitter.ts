@@ -1,8 +1,8 @@
 import {
 	addDefaultParsers,
+	type FiletypeParserOptions,
 	getTreeSitterClient,
 	pathToFiletype,
-	type FiletypeParserOptions,
 	type TreeSitterClient,
 } from "@opentui/core";
 import { Data, Effect, Match, Option, pipe, Schema } from "effect";
@@ -53,120 +53,95 @@ let parserOptionsCache: Option.Option<ReadonlyArray<FiletypeParserOptions>> =
 let treeSitterInitPromise: Option.Option<Promise<TreeSitterClient>> =
 	Option.none();
 
-function normalizeInjectionMapping(
-	mapping: ParserEntry["injectionMapping"],
-): Option.Option<NonNullable<FiletypeParserOptions["injectionMapping"]>> {
-	return pipe(
-		Option.fromNullable(mapping),
-		Option.flatMap((resolvedMapping) => {
-			const normalized: NonNullable<FiletypeParserOptions["injectionMapping"]> =
-				{};
-			pipe(
-				Option.fromNullable(resolvedMapping.nodeTypes),
-				Option.match({
-					onNone: () => {},
-					onSome: (nodeTypes) => {
-						normalized.nodeTypes = { ...nodeTypes };
-					},
-				}),
-			);
-			pipe(
-				Option.fromNullable(resolvedMapping.infoStringMap),
-				Option.match({
-					onNone: () => {},
-					onSome: (infoStringMap) => {
-						normalized.infoStringMap = { ...infoStringMap };
-					},
-				}),
-			);
-			return Match.value(Object.keys(normalized).length).pipe(
-				Match.when(0, () => Option.none()),
-				Match.orElse(() => Option.some(normalized)),
-			);
-		}),
+function decodeParserConfigEntries(): ReadonlyArray<unknown> {
+	return Effect.runSync(
+		pipe(
+			Schema.decodeUnknown(ParserConfigSchema)(parserConfig),
+			Effect.map((config) => config.parsers ?? []),
+			Effect.orElseSucceed(() => [] as ReadonlyArray<unknown>),
+		),
 	);
 }
 
+function decodeParserEntry(entry: unknown): Option.Option<ParserEntry> {
+	return Effect.runSync(
+		pipe(Schema.decodeUnknown(ParserEntrySchema)(entry), Effect.option),
+	);
+}
+
+function normalizeInjectionMapping(
+	mapping: ParserEntry["injectionMapping"],
+): Option.Option<NonNullable<FiletypeParserOptions["injectionMapping"]>> {
+	const nodeTypes = pipe(
+		Option.fromNullable(mapping),
+		Option.flatMap((resolved) => Option.fromNullable(resolved.nodeTypes)),
+	);
+	const infoStringMap = pipe(
+		Option.fromNullable(mapping),
+		Option.flatMap((resolved) => Option.fromNullable(resolved.infoStringMap)),
+	);
+	if (Option.isNone(nodeTypes) && Option.isNone(infoStringMap)) {
+		return Option.none();
+	}
+
+	return Option.some({
+		...(Option.isSome(nodeTypes) ? { nodeTypes: { ...nodeTypes.value } } : {}),
+		...(Option.isSome(infoStringMap)
+			? { infoStringMap: { ...infoStringMap.value } }
+			: {}),
+	});
+}
+
 function toFiletypeParserOptions(parser: ParserEntry): FiletypeParserOptions {
-	const queries: FiletypeParserOptions["queries"] = {
+	const baseQueries: FiletypeParserOptions["queries"] = {
 		highlights: [...parser.queries.highlights],
 	};
-	pipe(
+
+	const queries = pipe(
 		Option.fromNullable(parser.queries.injections),
 		Option.filter((injections) => injections.length > 0),
 		Option.match({
-			onNone: () => {},
-			onSome: (injections) => {
-				queries.injections = [...injections];
-			},
+			onNone: () => baseQueries,
+			onSome: (injections) => ({
+				...baseQueries,
+				injections: [...injections],
+			}),
 		}),
 	);
 
-	const parserOptions: FiletypeParserOptions = {
+	const baseParserOptions: FiletypeParserOptions = {
 		filetype: parser.filetype,
 		wasm: parser.wasm,
 		queries,
 	};
-	pipe(
+
+	return pipe(
 		normalizeInjectionMapping(parser.injectionMapping),
 		Option.match({
-			onNone: () => {},
-			onSome: (injectionMapping) => {
-				parserOptions.injectionMapping = injectionMapping;
-			},
+			onNone: () => baseParserOptions,
+			onSome: (injectionMapping) => ({
+				...baseParserOptions,
+				injectionMapping,
+			}),
 		}),
 	);
-	return parserOptions;
 }
 
 function getParserOptions(): FiletypeParserOptions[] {
-	return pipe(
-		parserOptionsCache,
-		Option.match({
-			onSome: (cached) => [...cached],
-			onNone: () => {
-				const config = Effect.runSync(
-					pipe(
-						Schema.decodeUnknown(ParserConfigSchema)(parserConfig),
-						Effect.match({
-							onFailure: () =>
-								({
-									parsers: [],
-								}) as Schema.Schema.Type<typeof ParserConfigSchema>,
-							onSuccess: (decoded) => decoded,
-						}),
-					),
-				);
-				const list = pipe(
-					Option.fromNullable(config.parsers),
-					Option.getOrElse(() => [] as Array<unknown>),
-				);
+	if (Option.isSome(parserOptionsCache)) {
+		return [...parserOptionsCache.value];
+	}
 
-				const parserOptions = list.flatMap((entry) => {
-					const parsedOption = Effect.runSync(
-						pipe(
-							Schema.decodeUnknown(ParserEntrySchema)(entry),
-							Effect.match({
-								onFailure: () => Option.none<FiletypeParserOptions>(),
-								onSuccess: (decoded) =>
-									Option.some(toFiletypeParserOptions(decoded)),
-							}),
-						),
-					);
-					return pipe(
-						parsedOption,
-						Option.match({
-							onNone: () => [] as Array<FiletypeParserOptions>,
-							onSome: (resolved) => [resolved],
-						}),
-					);
-				});
+	const parserOptions: FiletypeParserOptions[] = [];
+	for (const entry of decodeParserConfigEntries()) {
+		const decoded = decodeParserEntry(entry);
+		if (Option.isSome(decoded)) {
+			parserOptions.push(toFiletypeParserOptions(decoded.value));
+		}
+	}
 
-				parserOptionsCache = Option.some(parserOptions);
-				return parserOptions;
-			},
-		}),
-	);
+	parserOptionsCache = Option.some(parserOptions);
+	return [...parserOptions];
 }
 
 export function initializeTreeSitterClient(): Effect.Effect<
@@ -204,22 +179,21 @@ export function initializeTreeSitterClient(): Effect.Effect<
 
 function extractFileName(filePath: string): string {
 	const loweredPath = filePath.toLowerCase();
-	const segments = loweredPath.split("/");
-	return pipe(
-		Option.fromNullable(segments[segments.length - 1]),
-		Option.getOrElse(() => ""),
+	const separatorIndex = Math.max(
+		loweredPath.lastIndexOf("/"),
+		loweredPath.lastIndexOf("\\"),
 	);
+	return separatorIndex === -1
+		? loweredPath
+		: loweredPath.slice(separatorIndex + 1);
 }
 
 function extractFileExtension(fileName: string): Option.Option<string> {
-	const segments = fileName.split(".");
-	if (segments.length <= 1) {
+	const dotIndex = fileName.lastIndexOf(".");
+	if (dotIndex <= 0 || dotIndex === fileName.length - 1) {
 		return Option.none();
 	}
-	return pipe(
-		Option.fromNullable(segments[segments.length - 1]),
-		Option.filter((extension) => extension.length > 0),
-	);
+	return Option.some(fileName.slice(dotIndex + 1));
 }
 
 function resolveBuiltinFiletype(
@@ -246,22 +220,20 @@ function resolvePatchExtensionFiletype(
 
 export function resolveDiffFiletype(filePath: string): Option.Option<string> {
 	const fileName = extractFileName(filePath);
-	return Match.value(fileName).pipe(
-		Match.when("dockerfile", () => Option.some("dockerfile")),
-		Match.orElse(() =>
-			pipe(
+	return fileName === "dockerfile"
+		? Option.some("dockerfile")
+		: pipe(
 				Option.fromNullable(pathToFiletype(filePath)),
-				Option.match({
-					onSome: (openTuiFiletype) => resolveBuiltinFiletype(openTuiFiletype),
-					onNone: () =>
-						pipe(
-							extractFileExtension(fileName),
-							Option.flatMap((extension) =>
-								resolvePatchExtensionFiletype(extension),
-							),
+				Option.flatMap((openTuiFiletype) =>
+					resolveBuiltinFiletype(openTuiFiletype),
+				),
+				Option.orElse(() =>
+					pipe(
+						extractFileExtension(fileName),
+						Option.flatMap((extension) =>
+							resolvePatchExtensionFiletype(extension),
 						),
-				}),
-			),
-		),
-	);
+					),
+				),
+			);
 }
