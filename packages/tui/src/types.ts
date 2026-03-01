@@ -25,4 +25,5 @@ export interface AppProps {
 	themeCatalog: ThemeCatalog;
 	initialThemeName: string;
 	initialThemeMode: ThemeMode;
+	chooserFilePath?: string;
 }

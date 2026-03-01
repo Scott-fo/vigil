@@ -3,6 +3,9 @@
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
+  "bin": {
+    "reviewer": "./bin/reviewer"
+  },
   "workspaces": [
     "packages/*"
   ],

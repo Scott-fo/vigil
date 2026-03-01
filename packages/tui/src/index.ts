@@ -1,1 +1,4 @@
-export { startReviewerTui } from "./bootstrap";
+export {
+	startReviewerTui,
+	type StartReviewerTuiOptions,
+} from "./bootstrap";

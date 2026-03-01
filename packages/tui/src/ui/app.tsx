@@ -1,5 +1,7 @@
 import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import {
@@ -32,6 +34,10 @@ function getStatusColor(status: string, theme: ResolvedTheme) {
 		return theme.warning;
 	}
 	return theme.textMuted;
+}
+
+function quoteShellArg(value: string): string {
+	return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
 export function App(props: AppProps) {
@@ -149,6 +155,53 @@ export function App(props: AppProps) {
 		[refreshFiles],
 	);
 
+	const openSelectedFile = useCallback(
+		async (filePath: string) => {
+			if (props.chooserFilePath) {
+				try {
+					fs.writeFileSync(props.chooserFilePath, `${filePath}\n`, "utf8");
+					renderer.destroy();
+				} catch {
+					setError(`Unable to write chooser file: ${props.chooserFilePath}`);
+				}
+				return;
+			}
+
+			const editorCommand = process.env.VISUAL ?? process.env.EDITOR;
+			if (!editorCommand || editorCommand.trim().length === 0) {
+				setError("Set VISUAL or EDITOR to open files from reviewer.");
+				return;
+			}
+
+			renderer.suspend();
+			try {
+				const result = spawnSync(
+					"sh",
+					["-lc", `${editorCommand} ${quoteShellArg(filePath)}`],
+					{ stdio: "inherit" },
+				);
+
+				if (result.error) {
+					setError(result.error.message || "Failed to launch editor.");
+					return;
+				}
+
+				if (result.status !== 0) {
+					setError(`Editor command exited with code ${result.status ?? 1}.`);
+					return;
+				}
+
+				setError(null);
+			} catch {
+				setError("Failed to launch editor from VISUAL/EDITOR.");
+			} finally {
+				renderer.resume();
+				void refreshFiles(false);
+			}
+		},
+		[props.chooserFilePath, refreshFiles, renderer],
+	);
+
 	useKeyboard((key) => {
 		if (key.ctrl && key.name === "c") {
 			renderer.destroy();
@@ -214,6 +267,16 @@ export function App(props: AppProps) {
 		}
 
 		if (files.length === 0 || selectedIndex === -1) {
+			return;
+		}
+
+		if (key.name === "enter" || key.name === "return") {
+			const file = files[selectedIndex];
+			if (!file) {
+				return;
+			}
+
+			void openSelectedFile(file.path);
 			return;
 		}
 

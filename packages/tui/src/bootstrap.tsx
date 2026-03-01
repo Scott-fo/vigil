@@ -7,7 +7,11 @@ import {
 } from "#theme/theme";
 import { initializeTreeSitterClient } from "#syntax/tree-sitter";
 
-export async function startReviewerTui() {
+export interface StartReviewerTuiOptions {
+	chooserFilePath?: string;
+}
+
+export async function startReviewerTui(options: StartReviewerTuiOptions = {}) {
 	const themeCatalog = await loadThemeCatalog();
 	const themePreference = await readThemePreferenceFromTuiConfig();
 
@@ -32,6 +36,7 @@ export async function startReviewerTui() {
 			themeCatalog={themeCatalog}
 			initialThemeName={initialThemeName}
 			initialThemeMode={themePreference.mode ?? "dark"}
+			chooserFilePath={options.chooserFilePath}
 		/>,
 	);
 }
