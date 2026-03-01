@@ -1,3 +1,5 @@
+import { Option, pipe } from "effect";
+
 export function splitDiffIntoHunkBlocks(diff: string): string[] {
 	const normalized = diff.replace(/\r\n/g, "\n");
 	const lines = normalized.split("\n");
@@ -9,27 +11,50 @@ export function splitDiffIntoHunkBlocks(diff: string): string[] {
 
 	const header = lines.slice(0, firstHunkIndex);
 	const hunks: string[][] = [];
-	let currentHunk: string[] | null = null;
+	let currentHunk = Option.none<Array<string>>();
 
 	for (let index = firstHunkIndex; index < lines.length; index += 1) {
-		const line = lines[index] ?? "";
+		const line = pipe(
+			Option.fromNullable(lines[index]),
+			Option.getOrElse(() => ""),
+		);
 
 		if (line.startsWith("@@ ")) {
-			if (currentHunk && currentHunk.length > 0) {
-				hunks.push(currentHunk);
-			}
-			currentHunk = [line];
+			pipe(
+				currentHunk,
+				Option.filter((hunk) => hunk.length > 0),
+				Option.match({
+					onNone: () => {},
+					onSome: (hunk) => {
+						hunks.push(hunk);
+					},
+				}),
+			);
+			currentHunk = Option.some([line]);
 			continue;
 		}
 
-		if (currentHunk) {
-			currentHunk.push(line);
-		}
+		pipe(
+			currentHunk,
+			Option.match({
+				onNone: () => {},
+				onSome: (hunk) => {
+					hunk.push(line);
+				},
+			}),
+		);
 	}
 
-	if (currentHunk && currentHunk.length > 0) {
-		hunks.push(currentHunk);
-	}
+	pipe(
+		currentHunk,
+		Option.filter((hunk) => hunk.length > 0),
+		Option.match({
+			onNone: () => {},
+			onSome: (hunk) => {
+				hunks.push(hunk);
+			},
+		}),
+	);
 
 	if (hunks.length === 0) {
 		return [diff];

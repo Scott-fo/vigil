@@ -3,7 +3,7 @@
 import { Atom, useAtom } from "@effect-atom/atom-react";
 import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import { Effect, pipe } from "effect";
+import { Effect, Match, Option, pipe } from "effect";
 import {
 	memo,
 	type RefObject,
@@ -36,7 +36,7 @@ import {
 	type ThemeMode,
 } from "#theme/theme";
 import type { AppProps, FileEntry } from "#tui/types";
-import { useAppKeyboardInput } from "#ui/inputs";
+import { type AppKeyboardIntent, useAppKeyboardInput } from "#ui/inputs";
 import {
 	buildSidebarItems,
 	getStatusColor,
@@ -390,7 +390,9 @@ export function App(props: AppProps) {
 	const [collapsedDirectories, setCollapsedDirectories] = useState<Set<string>>(
 		() => new Set(),
 	);
-	const [selectedPath, setSelectedPath] = useState<string | null>(null);
+	const [selectedPath, setSelectedPath] = useState<Option.Option<string>>(
+		Option.none(),
+	);
 	const [loading, setLoading] = useState(true);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
 	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
@@ -456,7 +458,7 @@ export function App(props: AppProps) {
 						error: result.error,
 					};
 				});
-				setSelectedPath(null);
+				setSelectedPath(Option.none());
 				return;
 			}
 
@@ -475,12 +477,18 @@ export function App(props: AppProps) {
 
 			setSelectedPath((current) => {
 				if (result.files.length === 0) {
-					return null;
+					return Option.none();
 				}
-				if (current && result.files.some((file) => file.path === current)) {
+				if (
+					Option.isSome(current) &&
+					result.files.some((file) => file.path === current.value)
+				) {
 					return current;
 				}
-				return result.files[0]?.path ?? null;
+				return pipe(
+					Option.fromNullable(result.files[0]),
+					Option.map((file) => file.path),
+				);
 			});
 		},
 		[setUiStatus],
@@ -502,13 +510,14 @@ export function App(props: AppProps) {
 		if (files.length === 0) {
 			return null;
 		}
-		if (selectedPath) {
-			const match = files.find((file) => file.path === selectedPath);
-			if (match) {
-				return match;
-			}
-		}
-		return files[0] ?? null;
+		const selectedFileMatch = pipe(
+			selectedPath,
+			Option.flatMap((path) => Option.fromNullable(files.find((file) => file.path === path))),
+		);
+		return pipe(
+			selectedFileMatch,
+			Option.getOrElse(() => files[0] ?? null),
+		);
 	}, [files, selectedPath]);
 
 	const sidebarItems = useMemo(
@@ -538,15 +547,18 @@ export function App(props: AppProps) {
 
 	useEffect(() => {
 		if (visibleFilePaths.length === 0) {
-			setSelectedPath(null);
+			setSelectedPath(Option.none());
 			return;
 		}
 
-		if (selectedPath && visibleFilePaths.includes(selectedPath)) {
+		if (
+			Option.isSome(selectedPath) &&
+			visibleFilePaths.includes(selectedPath.value)
+		) {
 			return;
 		}
 
-		setSelectedPath(visibleFilePaths[0] ?? null);
+		setSelectedPath(Option.fromNullable(visibleFilePaths[0]));
 	}, [selectedPath, visibleFilePaths]);
 
 	const submitCommit = useCallback(
@@ -652,7 +664,7 @@ export function App(props: AppProps) {
 	}, []);
 
 	const selectFilePath = useCallback((path: string) => {
-		setSelectedPath(path);
+		setSelectedPath(Option.some(path));
 	}, []);
 
 	const onCommitMessageChange = useCallback(
@@ -774,28 +786,70 @@ export function App(props: AppProps) {
 		[refreshFiles, setUiStatus],
 	);
 
-	const openSelectedFileFromKeyboard = useCallback(
-		(filePath: string) => {
-			void openSelectedFile(filePath);
+	const onKeyboardIntent = useCallback(
+		(intent: AppKeyboardIntent) => {
+			return Match.value(intent).pipe(
+				Match.tag("DestroyRenderer", () => {
+					renderer.destroy();
+					return;
+				}),
+				Match.tag("CloseCommitModal", () => {
+					closeCommitModal();
+					return;
+				}),
+				Match.tag("OpenCommitModal", () => {
+					openCommitModal();
+					return;
+				}),
+				Match.tag("CycleTheme", (typedIntent) => {
+					cycleTheme(typedIntent.direction);
+					return;
+				}),
+				Match.tag("SyncRemote", (typedIntent) => {
+					syncRemote(typedIntent.direction);
+					return;
+				}),
+				Match.tag("ScrollDiffHalfPage", (typedIntent) => {
+					const step = Math.max(6, Math.floor(renderer.height * 0.45));
+					diffScrollRef.current?.scrollBy({
+						x: 0,
+						y: typedIntent.direction === "up" ? -step : step,
+					});
+					return;
+				}),
+				Match.tag("OpenSelectedFile", (typedIntent) => {
+					openSelectedFile(typedIntent.filePath);
+					return;
+				}),
+				Match.tag("ToggleSelectedFileStage", (typedIntent) => {
+					toggleSelectedFileStage(typedIntent.file);
+					return;
+				}),
+				Match.tag("SelectVisiblePath", (typedIntent) => {
+					setSelectedPath(Option.some(typedIntent.path));
+					return;
+				}),
+				Match.exhaustive,
+			);
 		},
-		[openSelectedFile],
+		[
+			closeCommitModal,
+			cycleTheme,
+			openCommitModal,
+			openSelectedFile,
+			renderer,
+			syncRemote,
+			toggleSelectedFileStage,
+		],
 	);
 
 	useAppKeyboardInput({
-		renderer,
 		isCommitModalOpen,
 		stagedFileCount,
 		visibleFilePaths,
 		selectedVisibleIndex,
 		selectedFile,
-		diffScrollRef,
-		closeCommitModal,
-		openCommitModal,
-		cycleTheme,
-		syncRemote,
-		setSelectedPath,
-		openSelectedFile: openSelectedFileFromKeyboard,
-		toggleSelectedFileStage,
+		onIntent: onKeyboardIntent,
 	});
 
 	return (

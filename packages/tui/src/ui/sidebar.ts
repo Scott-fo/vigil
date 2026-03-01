@@ -1,3 +1,4 @@
+import { Option, pipe } from "effect";
 import type { FileEntry } from "#tui/types";
 import type { ResolvedTheme } from "#theme/theme";
 
@@ -56,7 +57,10 @@ function compareFileEntries(a: FileEntry, b: FileEntry): number {
 
 function displayNameFromPath(pathValue: string): string {
 	const parts = pathValue.split("/").filter((part) => part.length > 0);
-	return parts[parts.length - 1] ?? pathValue;
+	return pipe(
+		Option.fromNullable(parts[parts.length - 1]),
+		Option.getOrElse(() => pathValue),
+	);
 }
 
 function getSidebarFileLabel(file: FileEntry, leafName: string): string {
@@ -65,8 +69,18 @@ function getSidebarFileLabel(file: FileEntry, leafName: string): string {
 	}
 
 	const [fromRaw, toRaw] = file.label.split(" -> ");
-	const fromName = displayNameFromPath(fromRaw ?? "");
-	const toName = displayNameFromPath(toRaw ?? "");
+	const fromName = displayNameFromPath(
+		pipe(
+			Option.fromNullable(fromRaw),
+			Option.getOrElse(() => ""),
+		),
+	);
+	const toName = displayNameFromPath(
+		pipe(
+			Option.fromNullable(toRaw),
+			Option.getOrElse(() => ""),
+		),
+	);
 	if (fromName && toName) {
 		return `${fromName} -> ${toName}`;
 	}
@@ -108,6 +122,13 @@ export function buildSidebarItems(
 
 	const items: SidebarItem[] = [];
 
+	function getSingleChildDirectory(node: FileTreeNode): Option.Option<FileTreeNode> {
+		if (node.directories.size !== 1) {
+			return Option.none();
+		}
+		return Option.fromNullable([...node.directories.values()][0]);
+	}
+
 	function compressDirectoryChain(start: FileTreeNode): {
 		node: FileTreeNode;
 		label: string;
@@ -115,14 +136,13 @@ export function buildSidebarItems(
 		let node = start;
 		const labelParts = [node.name];
 
-		while (node.files.length === 0 && node.directories.size === 1) {
-			const next = [...node.directories.values()][0];
-			if (!next) {
+		while (node.files.length === 0) {
+			const nextDirectory = getSingleChildDirectory(node);
+			if (Option.isNone(nextDirectory)) {
 				break;
 			}
-
-			node = next;
-			labelParts.push(node.name);
+			node = nextDirectory.value;
+			labelParts.push(nextDirectory.value.name);
 		}
 
 		return {

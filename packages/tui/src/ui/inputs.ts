@@ -1,103 +1,133 @@
-import type { CliRenderer, ScrollBoxRenderable } from "@opentui/core";
+import type { KeyEvent } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
-import type { RefObject } from "react";
+import { Option, pipe } from "effect";
 import type { FileEntry } from "#tui/types";
 
 interface UseAppKeyboardInputOptions {
-	renderer: CliRenderer;
 	isCommitModalOpen: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
 	selectedVisibleIndex: number;
 	selectedFile: FileEntry | null;
-	diffScrollRef: RefObject<ScrollBoxRenderable | null>;
-	closeCommitModal: () => void;
-	openCommitModal: () => void;
-	cycleTheme: (direction: 1 | -1) => void;
-	syncRemote: (direction: "pull" | "push") => void;
-	setSelectedPath: (path: string | null) => void;
-	openSelectedFile: (filePath: string) => void;
-	toggleSelectedFileStage: (file: FileEntry) => void;
+	onIntent: (intent: AppKeyboardIntent) => void;
+}
+
+export type AppKeyboardIntent =
+	| { readonly _tag: "DestroyRenderer" }
+	| { readonly _tag: "CloseCommitModal" }
+	| { readonly _tag: "OpenCommitModal" }
+	| { readonly _tag: "CycleTheme"; readonly direction: 1 | -1 }
+	| { readonly _tag: "SyncRemote"; readonly direction: "pull" | "push" }
+	| { readonly _tag: "ScrollDiffHalfPage"; readonly direction: "up" | "down" }
+	| { readonly _tag: "OpenSelectedFile"; readonly filePath: string }
+	| { readonly _tag: "ToggleSelectedFileStage"; readonly file: FileEntry }
+	| { readonly _tag: "SelectVisiblePath"; readonly path: string };
+
+function isUnmodifiedKey(key: KeyEvent, name: string): boolean {
+	return !key.ctrl && !key.meta && key.name === name;
+}
+
+function decodeKeyboardIntent(
+	key: KeyEvent,
+	options: UseAppKeyboardInputOptions,
+): Option.Option<AppKeyboardIntent> {
+	if (key.ctrl && key.name === "c") {
+		return Option.some({ _tag: "DestroyRenderer" });
+	}
+
+	if (options.isCommitModalOpen) {
+		return key.name === "escape"
+			? Option.some({ _tag: "CloseCommitModal" })
+			: Option.none();
+	}
+
+	if (key.name === "escape" || key.name === "q") {
+		return Option.some({ _tag: "DestroyRenderer" });
+	}
+
+	if (isUnmodifiedKey(key, "c") && options.stagedFileCount > 0) {
+		return Option.some({ _tag: "OpenCommitModal" });
+	}
+
+	if (isUnmodifiedKey(key, "t")) {
+		return Option.some({
+			_tag: "CycleTheme",
+			direction: key.shift ? -1 : 1,
+		});
+	}
+
+	if (isUnmodifiedKey(key, "p")) {
+		return Option.some({
+			_tag: "SyncRemote",
+			direction: key.shift ? "push" : "pull",
+		});
+	}
+
+	if (key.ctrl && (key.name === "u" || key.name === "d")) {
+		return Option.some({
+			_tag: "ScrollDiffHalfPage",
+			direction: key.name === "u" ? "up" : "down",
+		});
+	}
+
+	const hasVisibleSelection =
+		options.visibleFilePaths.length > 0 && options.selectedVisibleIndex !== -1;
+	if (!hasVisibleSelection) {
+		return Option.none();
+	}
+
+	if (key.name === "enter" || key.name === "return") {
+		return pipe(
+			Option.fromNullable(options.selectedFile),
+			Option.map((selectedFile) => ({
+				_tag: "OpenSelectedFile" as const,
+				filePath: selectedFile.path,
+			})),
+		);
+	}
+
+	if (!key.ctrl && !key.meta && (key.name === "space" || key.name === " ")) {
+		return pipe(
+			Option.fromNullable(options.selectedFile),
+			Option.map((selectedFile) => ({
+				_tag: "ToggleSelectedFileStage" as const,
+				file: selectedFile,
+			})),
+		);
+	}
+
+	if (key.name === "down" || key.name === "j") {
+		const nextIndex = Math.min(
+			options.selectedVisibleIndex + 1,
+			options.visibleFilePaths.length - 1,
+		);
+		return pipe(
+			Option.fromNullable(options.visibleFilePaths[nextIndex]),
+			Option.map((path) => ({ _tag: "SelectVisiblePath" as const, path })),
+		);
+	}
+
+	if (key.name === "up" || key.name === "k") {
+		const nextIndex = Math.max(options.selectedVisibleIndex - 1, 0);
+		return pipe(
+			Option.fromNullable(options.visibleFilePaths[nextIndex]),
+			Option.map((path) => ({ _tag: "SelectVisiblePath" as const, path })),
+		);
+	}
+
+	return Option.none();
 }
 
 export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
 	useKeyboard((key) => {
-		if (key.ctrl && key.name === "c") {
-			options.renderer.destroy();
-			return;
-		}
-
-		if (options.isCommitModalOpen) {
-			if (key.name === "escape") {
-				options.closeCommitModal();
-			}
-			return;
-		}
-
-		if (key.name === "escape" || key.name === "q") {
-			options.renderer.destroy();
-			return;
-		}
-
-		if (!key.ctrl && !key.meta && key.name === "c") {
-			if (options.stagedFileCount > 0) {
-				options.openCommitModal();
-			}
-			return;
-		}
-
-		if (!key.ctrl && !key.meta && key.name === "t") {
-			options.cycleTheme(key.shift ? -1 : 1);
-			return;
-		}
-
-		if (!key.ctrl && !key.meta && key.name === "p") {
-			options.syncRemote(key.shift ? "push" : "pull");
-			return;
-		}
-
-		if (key.ctrl && (key.name === "u" || key.name === "d")) {
-			const step = Math.max(6, Math.floor(options.renderer.height * 0.45));
-			options.diffScrollRef.current?.scrollBy({
-				x: 0,
-				y: key.name === "u" ? -step : step,
-			});
-			return;
-		}
-
-		if (
-			options.visibleFilePaths.length === 0 ||
-			options.selectedVisibleIndex === -1
-		) {
-			return;
-		}
-
-		if (key.name === "enter" || key.name === "return") {
-			if (options.selectedFile) {
-				options.openSelectedFile(options.selectedFile.path);
-			}
-			return;
-		}
-
-		if (!key.ctrl && !key.meta && (key.name === "space" || key.name === " ")) {
-			if (options.selectedFile) {
-				options.toggleSelectedFileStage(options.selectedFile);
-			}
-			return;
-		}
-
-		if (key.name === "down" || key.name === "j") {
-			const nextIndex = Math.min(
-				options.selectedVisibleIndex + 1,
-				options.visibleFilePaths.length - 1,
-			);
-			options.setSelectedPath(options.visibleFilePaths[nextIndex] ?? null);
-			return;
-		}
-
-		if (key.name === "up" || key.name === "k") {
-			const nextIndex = Math.max(options.selectedVisibleIndex - 1, 0);
-			options.setSelectedPath(options.visibleFilePaths[nextIndex] ?? null);
-		}
+		pipe(
+			decodeKeyboardIntent(key, options),
+			Option.match({
+				onNone: () => {},
+				onSome: (intent) => {
+					options.onIntent(intent);
+				},
+			}),
+		);
 	});
 }

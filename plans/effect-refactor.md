@@ -20,7 +20,7 @@
     - Explicit tagged errors for parse/validation failures.
     - Clear boundary between parse -> validate -> execute.
 
-- [ ] `W2` Git domain service and typed failures
+- [x] `W2` Git domain service and typed failures
   - Files:
     - `packages/tui/src/data/git.ts`
     - `packages/tui/src/types.ts`
@@ -38,7 +38,7 @@
     - Introduce `Option` for selected file/path and modal/error state where practical.
     - Reduce state transition ambiguity.
 
-- [ ] `W4` Theme and parser loading pipeline
+- [x] `W4` Theme and parser loading pipeline
   - Files:
     - `packages/tui/src/theme/theme.ts`
     - `packages/tui/src/syntax/tree-sitter.ts`
@@ -75,7 +75,30 @@
 
 ## Current Focus
 
-- In progress: `W4` Theme and parser loading pipeline.
+- In progress: `W3` App state domain modeling.
+
+## File-by-File Queue
+
+- [x] `F1` `packages/tui/src/ui/inputs.ts`
+  - Introduce typed intent ADT for key commands (quit, navigate, stage, commit, sync, open file, scroll).
+  - Decode keypress -> intent separately from executing side effects.
+
+- [x] `F2` `packages/tui/src/ui/app.tsx`
+  - Consume typed intents from `inputs.ts`.
+  - Continue replacing ad-hoc nullable state with `Option` where signal is domain-meaningful.
+  - Keep render behavior stable while reducing state transition ambiguity.
+
+- [x] `F3` `packages/tui/src/types.ts`
+  - Align `FileEntry` / app-facing types with Option-first domain boundaries where appropriate.
+  - Keep transport/serialization types pragmatic.
+
+- [x] `F4` `packages/tui/src/ui/sidebar.ts`
+  - Keep transforms pure and deterministic.
+  - Add algebraic return types for edge paths if they improve readability.
+
+- [x] `F5` `packages/tui/src/diff/hunks.ts`
+  - Keep splitting logic pure with explicit edge handling.
+  - Add tests or contract comments if needed for non-obvious behavior.
 
 ## Notes
 

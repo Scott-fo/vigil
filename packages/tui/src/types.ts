@@ -1,29 +1,29 @@
 import type { ThemeCatalog, ThemeMode } from "#theme/theme";
 
 export interface StatusEntry {
-	status: string;
-	path: string;
-	originalPath?: string;
+	readonly status: string;
+	readonly path: string;
+	readonly originalPath?: string;
 }
 
 export interface FileEntry {
-	status: string;
-	path: string;
-	label: string;
-	diff: string;
-	filetype?: string;
-	note?: string;
+	readonly status: string;
+	readonly path: string;
+	readonly label: string;
+	readonly diff: string;
+	readonly filetype?: string;
+	readonly note?: string;
 }
 
 export interface GitCommandResult {
-	ok: boolean;
-	stdout: string;
-	stderr: string;
+	readonly ok: boolean;
+	readonly stdout: string;
+	readonly stderr: string;
 }
 
 export interface AppProps {
-	themeCatalog: ThemeCatalog;
-	initialThemeName: string;
-	initialThemeMode: ThemeMode;
-	chooserFilePath?: string;
+	readonly themeCatalog: ThemeCatalog;
+	readonly initialThemeName: string;
+	readonly initialThemeMode: ThemeMode;
+	readonly chooserFilePath?: string;
 }
