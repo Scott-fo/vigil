@@ -24,6 +24,21 @@ function runGit(args: string[]): GitCommandResult {
 	};
 }
 
+function runRepoAction(args: string[], fallbackError: string): {
+	ok: boolean;
+	error?: string;
+} {
+	const result = runGit(args);
+	if (!result.ok) {
+		return {
+			ok: false,
+			error: result.stderr.trim() || result.stdout.trim() || fallbackError,
+		};
+	}
+
+	return { ok: true };
+}
+
 export function isFileStaged(status: string): boolean {
 	if (status === "??") {
 		return false;
@@ -76,6 +91,20 @@ export function commitStagedChanges(message: string): {
 	}
 
 	return { ok: true };
+}
+
+export function pullFromRemote(): {
+	ok: boolean;
+	error?: string;
+} {
+	return runRepoAction(["pull"], "Unable to pull from remote.");
+}
+
+export function pushToRemote(): {
+	ok: boolean;
+	error?: string;
+} {
+	return runRepoAction(["push"], "Unable to push to remote.");
 }
 
 function parseStatusEntries(raw: string): StatusEntry[] {
