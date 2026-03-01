@@ -93,3 +93,4 @@
   - Replaced manual `isThemeJson` guard with `Schema.decodeUnknown(ThemeJsonSchema)`; schema includes `Schema.instanceOf(RGBA)` for runtime theme objects.
   - `packages/tui/src/syntax/tree-sitter.ts` now schema-validates parser config entries and initializes client via Effect with tagged `TreeSitterInitializeError`.
   - `packages/tui/src/bootstrap.tsx` now composes startup as a single typed Effect workflow with explicit bootstrap errors and best-effort Tree-sitter initialization.
+  - `packages/tui/src/data/git.ts` now carries `Option` for filetype and diff note through file-entry assembly (no `getOrUndefined`/`undefined` sentinels in that flow).

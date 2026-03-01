@@ -5,7 +5,7 @@ import {
 	type FiletypeParserOptions,
 	type TreeSitterClient,
 } from "@opentui/core";
-import { Data, Effect, pipe, Schema } from "effect";
+import { Data, Effect, Match, Option, pipe, Schema } from "effect";
 import parserConfig from "#config/parsers";
 
 const ParserConfigSchema = Schema.Struct({
@@ -48,82 +48,125 @@ export class TreeSitterInitializeError extends Data.TaggedError(
 	readonly cause: unknown;
 }> {}
 
-let parserOptionsCache: FiletypeParserOptions[] | null = null;
-let treeSitterInitPromise: Promise<TreeSitterClient> | null = null;
+let parserOptionsCache: Option.Option<ReadonlyArray<FiletypeParserOptions>> =
+	Option.none();
+let treeSitterInitPromise: Option.Option<Promise<TreeSitterClient>> =
+	Option.none();
 
 function normalizeInjectionMapping(
 	mapping: ParserEntry["injectionMapping"],
-): FiletypeParserOptions["injectionMapping"] | undefined {
-	if (!mapping) {
-		return undefined;
-	}
-
-	const nodeTypes = mapping.nodeTypes ? { ...mapping.nodeTypes } : undefined;
-	const infoStringMap = mapping.infoStringMap
-		? { ...mapping.infoStringMap }
-		: undefined;
-
-	if (!nodeTypes && !infoStringMap) {
-		return undefined;
-	}
-
-	return {
-		...(nodeTypes ? { nodeTypes } : {}),
-		...(infoStringMap ? { infoStringMap } : {}),
-	};
+): Option.Option<NonNullable<FiletypeParserOptions["injectionMapping"]>> {
+	return pipe(
+		Option.fromNullable(mapping),
+		Option.flatMap((resolvedMapping) => {
+			const normalized: NonNullable<FiletypeParserOptions["injectionMapping"]> =
+				{};
+			pipe(
+				Option.fromNullable(resolvedMapping.nodeTypes),
+				Option.match({
+					onNone: () => {},
+					onSome: (nodeTypes) => {
+						normalized.nodeTypes = { ...nodeTypes };
+					},
+				}),
+			);
+			pipe(
+				Option.fromNullable(resolvedMapping.infoStringMap),
+				Option.match({
+					onNone: () => {},
+					onSome: (infoStringMap) => {
+						normalized.infoStringMap = { ...infoStringMap };
+					},
+				}),
+			);
+			return Match.value(Object.keys(normalized).length).pipe(
+				Match.when(0, () => Option.none()),
+				Match.orElse(() => Option.some(normalized)),
+			);
+		}),
+	);
 }
 
 function toFiletypeParserOptions(parser: ParserEntry): FiletypeParserOptions {
-	const injections = parser.queries.injections;
-	const injectionMapping = normalizeInjectionMapping(parser.injectionMapping);
+	const queries: FiletypeParserOptions["queries"] = {
+		highlights: [...parser.queries.highlights],
+	};
+	pipe(
+		Option.fromNullable(parser.queries.injections),
+		Option.filter((injections) => injections.length > 0),
+		Option.match({
+			onNone: () => {},
+			onSome: (injections) => {
+				queries.injections = [...injections];
+			},
+		}),
+	);
 
-	return {
+	const parserOptions: FiletypeParserOptions = {
 		filetype: parser.filetype,
 		wasm: parser.wasm,
-		queries: {
-			highlights: [...parser.queries.highlights],
-			...(injections && injections.length > 0
-				? { injections: [...injections] }
-				: {}),
-		},
-		...(injectionMapping ? { injectionMapping } : {}),
+		queries,
 	};
+	pipe(
+		normalizeInjectionMapping(parser.injectionMapping),
+		Option.match({
+			onNone: () => {},
+			onSome: (injectionMapping) => {
+				parserOptions.injectionMapping = injectionMapping;
+			},
+		}),
+	);
+	return parserOptions;
 }
 
 function getParserOptions(): FiletypeParserOptions[] {
-	if (parserOptionsCache) {
-		return parserOptionsCache;
-	}
+	return pipe(
+		parserOptionsCache,
+		Option.match({
+			onSome: (cached) => [...cached],
+			onNone: () => {
+				const config = Effect.runSync(
+					pipe(
+						Schema.decodeUnknown(ParserConfigSchema)(parserConfig),
+						Effect.match({
+							onFailure: () =>
+								({
+									parsers: [],
+								}) as Schema.Schema.Type<typeof ParserConfigSchema>,
+							onSuccess: (decoded) => decoded,
+						}),
+					),
+				);
+				const list = pipe(
+					Option.fromNullable(config.parsers),
+					Option.getOrElse(() => [] as Array<unknown>),
+				);
 
-	const config = Effect.runSync(
-		pipe(
-			Schema.decodeUnknown(ParserConfigSchema)(parserConfig),
-			Effect.match({
-				onFailure: () =>
-					({
-						parsers: [],
-					}) as Schema.Schema.Type<typeof ParserConfigSchema>,
-				onSuccess: (decoded) => decoded,
-			}),
-		),
+				const parserOptions = list.flatMap((entry) => {
+					const parsedOption = Effect.runSync(
+						pipe(
+							Schema.decodeUnknown(ParserEntrySchema)(entry),
+							Effect.match({
+								onFailure: () => Option.none<FiletypeParserOptions>(),
+								onSuccess: (decoded) =>
+									Option.some(toFiletypeParserOptions(decoded)),
+							}),
+						),
+					);
+					return pipe(
+						parsedOption,
+						Option.match({
+							onNone: () => [] as Array<FiletypeParserOptions>,
+							onSome: (resolved) => [resolved],
+						}),
+					);
+				});
+
+				parserOptionsCache = Option.some(parserOptions);
+				return parserOptions;
+			},
+		}),
 	);
-	const list = config.parsers ?? [];
-
-	parserOptionsCache = list
-		.map((entry) =>
-			Effect.runSync(
-				pipe(
-					Schema.decodeUnknown(ParserEntrySchema)(entry),
-					Effect.match({
-						onFailure: () => null,
-						onSuccess: (decoded) => toFiletypeParserOptions(decoded),
-					}),
-				),
-			),
-		)
-		.filter((item): item is FiletypeParserOptions => item !== null);
-
-	return parserOptionsCache;
 }
 
 export function initializeTreeSitterClient(): Effect.Effect<
@@ -131,20 +174,26 @@ export function initializeTreeSitterClient(): Effect.Effect<
 	TreeSitterInitializeError
 > {
 	return Effect.tryPromise({
-		try: () => {
-			if (!treeSitterInitPromise) {
-				addDefaultParsers(getParserOptions());
-				const client = getTreeSitterClient();
-				treeSitterInitPromise = client.initialize().then(
-					() => client,
-					(cause) => {
-						treeSitterInitPromise = null;
-						throw cause;
+		try: () =>
+			pipe(
+				treeSitterInitPromise,
+				Option.match({
+					onSome: (initializingClient) => initializingClient,
+					onNone: () => {
+						addDefaultParsers(getParserOptions());
+						const client = getTreeSitterClient();
+						const initializingClient = client.initialize().then(
+							() => client,
+							(cause) => {
+								treeSitterInitPromise = Option.none();
+								throw cause;
+							},
+						);
+						treeSitterInitPromise = Option.some(initializingClient);
+						return initializingClient;
 					},
-				);
-			}
-			return treeSitterInitPromise;
-		},
+				}),
+			),
 		catch: (cause) =>
 			new TreeSitterInitializeError({
 				message: "Failed to initialize Tree-sitter client.",
@@ -153,32 +202,66 @@ export function initializeTreeSitterClient(): Effect.Effect<
 	});
 }
 
-export function resolveDiffFiletype(filePath: string): string | undefined {
-	const fileName = filePath.toLowerCase().split("/").pop() ?? "";
-	if (fileName === "dockerfile") {
-		return "dockerfile";
-	}
+function extractFileName(filePath: string): string {
+	const loweredPath = filePath.toLowerCase();
+	const segments = loweredPath.split("/");
+	return pipe(
+		Option.fromNullable(segments[segments.length - 1]),
+		Option.getOrElse(() => ""),
+	);
+}
 
-	const openTuiFiletype = pathToFiletype(filePath);
-	if (!openTuiFiletype) {
-		const ext = fileName.includes(".") ? fileName.split(".").pop() : "";
-		if (ext === "diff" || ext === "patch") {
-			return "diff";
-		}
-		return undefined;
+function extractFileExtension(fileName: string): Option.Option<string> {
+	const segments = fileName.split(".");
+	if (segments.length <= 1) {
+		return Option.none();
 	}
+	return pipe(
+		Option.fromNullable(segments[segments.length - 1]),
+		Option.filter((extension) => extension.length > 0),
+	);
+}
 
-	if (
-		openTuiFiletype === "typescriptreact" ||
-		openTuiFiletype === "javascriptreact" ||
-		openTuiFiletype === "javascript"
-	) {
-		return "typescript";
-	}
+function resolveBuiltinFiletype(
+	openTuiFiletype: string,
+): Option.Option<string> {
+	return Match.value(openTuiFiletype).pipe(
+		Match.when("typescriptreact", () => Option.some("typescript")),
+		Match.when("javascriptreact", () => Option.some("typescript")),
+		Match.when("javascript", () => Option.some("typescript")),
+		Match.when("shell", () => Option.some("bash")),
+		Match.orElse((resolved) => Option.some(resolved)),
+	);
+}
 
-	if (openTuiFiletype === "shell") {
-		return "bash";
-	}
+function resolvePatchExtensionFiletype(
+	extension: string,
+): Option.Option<string> {
+	return Match.value(extension).pipe(
+		Match.when("diff", () => Option.some("diff")),
+		Match.when("patch", () => Option.some("diff")),
+		Match.orElse(() => Option.none()),
+	);
+}
 
-	return openTuiFiletype;
+export function resolveDiffFiletype(filePath: string): Option.Option<string> {
+	const fileName = extractFileName(filePath);
+	return Match.value(fileName).pipe(
+		Match.when("dockerfile", () => Option.some("dockerfile")),
+		Match.orElse(() =>
+			pipe(
+				Option.fromNullable(pathToFiletype(filePath)),
+				Option.match({
+					onSome: (openTuiFiletype) => resolveBuiltinFiletype(openTuiFiletype),
+					onNone: () =>
+						pipe(
+							extractFileExtension(fileName),
+							Option.flatMap((extension) =>
+								resolvePatchExtensionFiletype(extension),
+							),
+						),
+				}),
+			),
+		),
+	);
 }

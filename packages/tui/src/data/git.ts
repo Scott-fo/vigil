@@ -1,4 +1,4 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect, Option, pipe } from "effect";
 import { resolveDiffFiletype } from "#syntax/tree-sitter";
 import type { FileEntry, GitCommandResult, StatusEntry } from "#tui/types";
 
@@ -159,7 +159,7 @@ function parseStatusEntries(raw: string): StatusEntry[] {
 	return entries;
 }
 
-function inferFiletype(inputPath: string): string | undefined {
+function inferFiletype(inputPath: string): Option.Option<string> {
 	return resolveDiffFiletype(inputPath);
 }
 
@@ -213,7 +213,7 @@ export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError
 				? `${entry.originalPath} -> ${entry.path}`
 				: entry.path;
 			let diff = "";
-			let note: string | undefined;
+			let note = Option.none<string>();
 
 			if (entry.status === "??") {
 				const untrackedRead = yield* pipe(
@@ -225,16 +225,18 @@ export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError
 				);
 
 				if (!untrackedRead.ok) {
-					note = "Unable to read untracked file content.";
+					note = Option.some("Unable to read untracked file content.");
 				} else {
 					const hasNullByte = untrackedRead.bytes.includes(0);
 					if (hasNullByte) {
-						note = "Binary or non-text file; no preview available.";
+						note = Option.some("Binary or non-text file; no preview available.");
 					} else {
 						const content = TEXT_DECODER.decode(untrackedRead.bytes);
 						diff = createUntrackedFileDiff(entry.path, content);
 						if (!diff.trim()) {
-							note = "Untracked empty file; no textual hunk to preview.";
+							note = Option.some(
+								"Untracked empty file; no textual hunk to preview.",
+							);
 						}
 					}
 				}
@@ -247,11 +249,11 @@ export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError
 					Effect.match({
 						onFailure: (error) => ({
 							diff: "",
-							note: renderGitCommandError(error),
+							note: Option.some(renderGitCommandError(error)),
 						}),
 						onSuccess: (result) => ({
 							diff: result.stdout,
-							note: undefined as string | undefined,
+							note: Option.none<string>(),
 						}),
 					}),
 				);
@@ -259,19 +261,37 @@ export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError
 				note = trackedDiff.note;
 			}
 
-			if (!diff.trim() && !note) {
-				note = "No textual diff available.";
+			if (!diff.trim() && Option.isNone(note)) {
+				note = Option.some("No textual diff available.");
 			}
 
 			const filetype = inferFiletype(entry.path);
-			const fileEntry: FileEntry = {
+			const fileEntryBase: FileEntry = {
 				status: entry.status,
 				path: entry.path,
 				label,
 				diff,
-				...(filetype ? { filetype } : {}),
-				...(note ? { note } : {}),
 			};
+			const fileEntryWithFiletype = pipe(
+				filetype,
+				Option.match({
+					onNone: () => fileEntryBase,
+					onSome: (resolvedFiletype) => ({
+						...fileEntryBase,
+						filetype: resolvedFiletype,
+					}),
+				}),
+			);
+			const fileEntry = pipe(
+				note,
+				Option.match({
+					onNone: () => fileEntryWithFiletype,
+					onSome: (resolvedNote) => ({
+						...fileEntryWithFiletype,
+						note: resolvedNote,
+					}),
+				}),
+			);
 			files.push(fileEntry);
 		}
 
