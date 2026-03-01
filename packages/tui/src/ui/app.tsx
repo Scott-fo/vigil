@@ -1,20 +1,21 @@
 /** biome-ignore-all lint/a11y/noStaticElementInteractions: <opentui> */
-import { Effect, pipe } from "effect";
-import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
-import { useRenderer } from "@opentui/react";
+
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
+import { useRenderer } from "@opentui/react";
+import { Effect, pipe } from "effect";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import {
 	commitStagedChanges,
-	type RepoActionError,
 	isFileStaged,
 	loadFilesWithDiffs,
 	pullFromRemote,
 	pushToRemote,
+	type RepoActionError,
 	toggleFileStage,
 } from "#data/git";
+import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import {
 	cycleThemeName,
 	resolveThemeBundle,
@@ -29,7 +30,7 @@ import {
 } from "#ui/sidebar";
 
 function quoteShellArg(value: string): string {
-	return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+	return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function formatRepoActionError(error: RepoActionError): string {
@@ -63,6 +64,7 @@ export function App(props: AppProps) {
 	const [commitError, setCommitError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [showSplash, setShowSplash] = useState(false);
 	const isRefreshingRef = useRef(false);
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
 
@@ -107,11 +109,13 @@ export function App(props: AppProps) {
 				setFiles([]);
 				setError(result.error);
 				setSelectedPath(null);
+				setShowSplash(true);
 				return;
 			}
 
 			setFiles(result.files);
 			setError(null);
+			setShowSplash(false);
 
 			setSelectedPath((current) => {
 				if (result.files.length === 0) {
@@ -374,13 +378,18 @@ export function App(props: AppProps) {
 		toggleSelectedFileStage,
 	});
 
-	return (
-		<box
-			flexDirection="column"
-			flexGrow={1}
-			padding={1}
-			backgroundColor={theme.background}
-		>
+	const Splash = () => {
+		return (
+			<box flexGrow={1} justifyContent="center" alignItems="center">
+				<box flexDirection="column" alignItems="center">
+					<ascii-font text="reviewer" font="block" color={theme.text} />
+				</box>
+			</box>
+		);
+	};
+
+	const Reviewer = () => {
+		return (
 			<box flexDirection="row" flexGrow={1}>
 				<box
 					width={44}
@@ -545,69 +554,83 @@ export function App(props: AppProps) {
 					</box>
 				</box>
 			</box>
+		);
+	};
 
-			{isCommitModalOpen ? (
+	const CommitModal = () => {
+		return (
+			<box
+				position="absolute"
+				left={0}
+				top={0}
+				width="100%"
+				height="100%"
+				justifyContent="center"
+				alignItems="center"
+				backgroundColor={modalBackdropColor}
+				zIndex={100}
+			>
 				<box
-					position="absolute"
-					left={0}
-					top={0}
-					width="100%"
-					height="100%"
-					justifyContent="center"
-					alignItems="center"
-					backgroundColor={modalBackdropColor}
-					zIndex={100}
+					width={72}
+					border
+					borderStyle="rounded"
+					borderColor={theme.borderActive}
+					backgroundColor={theme.backgroundPanel}
+					padding={1}
+					flexDirection="column"
 				>
-					<box
-						width={72}
-						border
-						borderStyle="rounded"
-						borderColor={theme.borderActive}
-						backgroundColor={theme.backgroundPanel}
-						padding={1}
-						flexDirection="column"
-					>
-						<text fg={theme.text}>
-							<strong>Commit Staged Changes</strong>
-						</text>
-						<box marginTop={1}>
-							<input
-								value={commitMessage}
-								onChange={(value) => {
-									setCommitMessage(value);
-									if (commitError) {
-										setCommitError(null);
-									}
-								}}
-								onSubmit={(payload: unknown) => {
-									if (typeof payload === "string") {
-										submitCommit(payload);
-										return;
-									}
-									submitCommit(commitMessage);
-								}}
-								placeholder="Enter commit message..."
-								focused
-								width="100%"
-								backgroundColor={theme.backgroundElement}
-								focusedBackgroundColor={theme.backgroundElement}
-								textColor={theme.text}
-								focusedTextColor={theme.text}
-								placeholderColor={theme.textMuted}
-							/>
-						</box>
-						<box marginTop={1}>
-							{commitError ? (
-								<text fg={theme.error}>{commitError}</text>
-							) : (
-								<text fg={theme.textMuted}>
-									Enter commits. Esc closes without committing.
-								</text>
-							)}
-						</box>
+					<text fg={theme.text}>
+						<strong>Commit Staged Changes</strong>
+					</text>
+					<box marginTop={1}>
+						<input
+							value={commitMessage}
+							onChange={(value) => {
+								setCommitMessage(value);
+								if (commitError) {
+									setCommitError(null);
+								}
+							}}
+							onSubmit={(payload: unknown) => {
+								if (typeof payload === "string") {
+									submitCommit(payload);
+									return;
+								}
+								submitCommit(commitMessage);
+							}}
+							placeholder="Enter commit message..."
+							focused
+							width="100%"
+							backgroundColor={theme.backgroundElement}
+							focusedBackgroundColor={theme.backgroundElement}
+							textColor={theme.text}
+							focusedTextColor={theme.text}
+							placeholderColor={theme.textMuted}
+						/>
+					</box>
+					<box marginTop={1}>
+						{commitError ? (
+							<text fg={theme.error}>{commitError}</text>
+						) : (
+							<text fg={theme.textMuted}>
+								Enter commits. Esc closes without committing.
+							</text>
+						)}
 					</box>
 				</box>
-			) : null}
+			</box>
+		);
+	};
+
+	return (
+		<box
+			flexDirection="column"
+			flexGrow={1}
+			padding={1}
+			backgroundColor={theme.background}
+		>
+			{showSplash ? <Splash /> : <Reviewer />}
+			{!showSplash && isCommitModalOpen && <CommitModal />}
 		</box>
 	);
 }
