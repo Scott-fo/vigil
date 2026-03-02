@@ -1,6 +1,7 @@
 import { Effect, Option, pipe } from "effect";
 import { useCallback, useEffect, useRef } from "react";
 import {
+	type BranchDiffSelection,
 	loadFilesWithBranchDiffs,
 	loadFilesWithStatus,
 	type RepoActionError,
@@ -16,12 +17,89 @@ interface UseFileRefreshOptions {
 	readonly pollingEnabled?: boolean;
 }
 
+export interface RefreshRequestState {
+	readonly isRefreshing: boolean;
+	readonly hasQueuedRefresh: boolean;
+	readonly queuedShowLoading: boolean;
+}
+
+export function registerRefreshRequest(
+	state: RefreshRequestState,
+	showLoading: boolean,
+): {
+	readonly nextState: RefreshRequestState;
+	readonly shouldRunNow: boolean;
+} {
+	if (!state.isRefreshing) {
+		return {
+			nextState: state,
+			shouldRunNow: true,
+		};
+	}
+	return {
+		nextState: {
+			...state,
+			hasQueuedRefresh: true,
+			queuedShowLoading: state.queuedShowLoading || showLoading,
+		},
+		shouldRunNow: false,
+	};
+}
+
+export function consumeQueuedRefresh(
+	state: RefreshRequestState,
+): {
+	readonly nextState: RefreshRequestState;
+	readonly queuedShowLoading: Option.Option<boolean>;
+} {
+	if (!state.hasQueuedRefresh) {
+		return {
+			nextState: state,
+			queuedShowLoading: Option.none(),
+		};
+	}
+	return {
+		nextState: {
+			...state,
+			hasQueuedRefresh: false,
+			queuedShowLoading: false,
+		},
+		queuedShowLoading: Option.some(state.queuedShowLoading),
+	};
+}
+
+export interface FileRefreshLoaders {
+	readonly loadWorkingTree: () => ReturnType<typeof loadFilesWithStatus>;
+	readonly loadBranchCompare: (
+		selection: BranchDiffSelection,
+	) => ReturnType<typeof loadFilesWithBranchDiffs>;
+}
+
+const defaultFileRefreshLoaders: FileRefreshLoaders = {
+	loadWorkingTree: () => loadFilesWithStatus(),
+	loadBranchCompare: (selection) => loadFilesWithBranchDiffs(selection),
+};
+
+export function buildFilesLoadEffect(
+	reviewMode: ReviewMode,
+	loaders: FileRefreshLoaders = defaultFileRefreshLoaders,
+) {
+	return reviewMode._tag === "working-tree"
+		? loaders.loadWorkingTree()
+		: loaders.loadBranchCompare(reviewMode.selection);
+}
+
 export function useFileRefresh(options: UseFileRefreshOptions) {
 	const { updateFileView, updateUiStatus, renderRepoActionError, reviewMode } =
 		options;
 	const isRefreshingRef = useRef(false);
 	const queuedRefreshRef = useRef(false);
 	const queuedShowLoadingRef = useRef(false);
+	const requestStateRef = useRef<RefreshRequestState>({
+		isRefreshing: false,
+		hasQueuedRefresh: false,
+		queuedShowLoading: false,
+	});
 	const reviewModeRef = useRef(reviewMode);
 	reviewModeRef.current = reviewMode;
 	const pollMs = options.pollMs ?? 2000;
@@ -33,6 +111,10 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 			let shouldContinue = true;
 			while (shouldContinue) {
 				isRefreshingRef.current = true;
+				requestStateRef.current = {
+					...requestStateRef.current,
+					isRefreshing: true,
+				};
 				if (nextShowLoading) {
 					updateFileView((current) =>
 						current.loading ? current : { ...current, loading: true },
@@ -41,9 +123,7 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 
 				const result = await Effect.runPromise(
 					pipe(
-						reviewModeRef.current._tag === "working-tree"
-							? loadFilesWithStatus()
-							: loadFilesWithBranchDiffs(reviewModeRef.current.selection),
+						buildFilesLoadEffect(reviewModeRef.current),
 						Effect.match({
 							onFailure: (repoError) => ({
 								ok: false as const,
@@ -62,6 +142,10 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 									);
 								}
 								isRefreshingRef.current = false;
+								requestStateRef.current = {
+									...requestStateRef.current,
+									isRefreshing: false,
+								};
 							}),
 						),
 					),
@@ -91,8 +175,10 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 							error: Option.some(result.error),
 						};
 					});
-					if (queuedRefreshRef.current) {
-						nextShowLoading = queuedShowLoadingRef.current;
+					const queuedRefresh = consumeQueuedRefresh(requestStateRef.current);
+					requestStateRef.current = queuedRefresh.nextState;
+					if (Option.isSome(queuedRefresh.queuedShowLoading)) {
+						nextShowLoading = queuedRefresh.queuedShowLoading.value;
 						queuedRefreshRef.current = false;
 						queuedShowLoadingRef.current = false;
 						continue;
@@ -159,8 +245,10 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 					};
 				});
 
-				if (queuedRefreshRef.current) {
-					nextShowLoading = queuedShowLoadingRef.current;
+				const queuedRefresh = consumeQueuedRefresh(requestStateRef.current);
+				requestStateRef.current = queuedRefresh.nextState;
+				if (Option.isSome(queuedRefresh.queuedShowLoading)) {
+					nextShowLoading = queuedRefresh.queuedShowLoading.value;
 					queuedRefreshRef.current = false;
 					queuedShowLoadingRef.current = false;
 					continue;
@@ -174,9 +262,14 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 
 	const refreshFiles = useCallback(
 		async (showLoading: boolean) => {
-			if (isRefreshingRef.current) {
+			const request = registerRefreshRequest(
+				requestStateRef.current,
+				showLoading,
+			);
+			requestStateRef.current = request.nextState;
+			if (!request.shouldRunNow) {
 				queuedRefreshRef.current = true;
-				queuedShowLoadingRef.current ||= showLoading;
+				queuedShowLoadingRef.current = request.nextState.queuedShowLoading;
 				return;
 			}
 
