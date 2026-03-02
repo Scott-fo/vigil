@@ -64,6 +64,23 @@ export const themeModalAtom = Atom.make<ThemeModalState>({
 	isOpen: false,
 });
 
+export type DiscardModalState =
+	| {
+			readonly isOpen: false;
+	  }
+	| {
+			readonly isOpen: true;
+			readonly file: FileEntry;
+	  };
+
+export type UpdateDiscardModal = (
+	update: (current: DiscardModalState) => DiscardModalState,
+) => void;
+
+export const discardModalAtom = Atom.make<DiscardModalState>({
+	isOpen: false,
+});
+
 export interface FileViewState {
 	readonly files: FileEntry[];
 	readonly sidebarOpen: boolean;
