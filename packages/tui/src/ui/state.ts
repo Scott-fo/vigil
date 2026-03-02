@@ -1,5 +1,6 @@
 import { Atom } from "@effect-atom/atom-react";
 import { Option } from "effect";
+import type { BranchDiffSelection } from "#data/git";
 import type { FileEntry } from "#tui/types";
 
 export type UiStatus = {
@@ -96,6 +97,23 @@ export type UpdateRemoteSyncState = (
 
 export const remoteSyncAtom = Atom.make<RemoteSyncState>({
 	_tag: "idle",
+});
+
+export type ReviewMode =
+	| {
+			readonly _tag: "working-tree";
+	  }
+	| {
+			readonly _tag: "branch-compare";
+			readonly selection: BranchDiffSelection;
+	  };
+
+export type UpdateReviewMode = (
+	update: (current: ReviewMode) => ReviewMode,
+) => void;
+
+export const reviewModeAtom = Atom.make<ReviewMode>({
+	_tag: "working-tree",
 });
 
 export interface FileViewState {

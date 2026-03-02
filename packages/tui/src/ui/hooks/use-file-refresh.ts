@@ -1,18 +1,24 @@
 import { Effect, Option, pipe } from "effect";
 import { useCallback, useEffect, useRef } from "react";
-import { loadFilesWithStatus, type RepoActionError } from "#data/git";
-import type { UpdateFileViewState, UpdateUiStatus } from "#ui/state";
+import {
+	loadFilesWithBranchDiffs,
+	loadFilesWithStatus,
+	type RepoActionError,
+} from "#data/git";
+import type { ReviewMode, UpdateFileViewState, UpdateUiStatus } from "#ui/state";
 
 interface UseFileRefreshOptions {
 	readonly updateFileView: UpdateFileViewState;
 	readonly updateUiStatus: UpdateUiStatus;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
+	readonly reviewMode: ReviewMode;
 	readonly pollMs?: number;
 	readonly pollingEnabled?: boolean;
 }
 
 export function useFileRefresh(options: UseFileRefreshOptions) {
-	const { updateFileView, updateUiStatus, renderRepoActionError } = options;
+	const { updateFileView, updateUiStatus, renderRepoActionError, reviewMode } =
+		options;
 	const isRefreshingRef = useRef(false);
 	const pollMs = options.pollMs ?? 2000;
 	const pollingEnabled = options.pollingEnabled ?? true;
@@ -32,7 +38,9 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 
 			const result = await Effect.runPromise(
 				pipe(
-					loadFilesWithStatus(),
+					reviewMode._tag === "working-tree"
+						? loadFilesWithStatus()
+						: loadFilesWithBranchDiffs(reviewMode.selection),
 					Effect.match({
 						onFailure: (repoError) => ({
 							ok: false as const,
@@ -142,7 +150,7 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 				};
 			});
 		},
-		[renderRepoActionError, updateFileView, updateUiStatus],
+		[renderRepoActionError, reviewMode, updateFileView, updateUiStatus],
 	);
 
 	useEffect(() => {

@@ -19,6 +19,7 @@ import {
 import { copyTextToClipboard } from "#data/clipboard";
 import {
 	isFileStaged,
+	loadBranchFilePreview,
 	loadFilePreview,
 	type FileDiffPreview,
 	type RepoActionError,
@@ -43,6 +44,7 @@ import {
 	fileViewStateAtom,
 	helpModalAtom,
 	remoteSyncAtom,
+	reviewModeAtom,
 	type RemoteSyncState,
 	themeModalAtom,
 	type UpdateCommitModal,
@@ -207,6 +209,7 @@ export function App(props: AppProps) {
 	const [helpModal, setHelpModal] = useAtom(helpModalAtom);
 	const [themeModal, setThemeModal] = useAtom(themeModalAtom);
 	const [remoteSync, setRemoteSync] = useAtom(remoteSyncAtom);
+	const [reviewMode] = useAtom(reviewModeAtom);
 	const [snackbarNotice, setSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
 	>(Option.none());
@@ -322,6 +325,7 @@ export function App(props: AppProps) {
 		updateFileView,
 		updateUiStatus,
 		renderRepoActionError: formatRepoActionError,
+		reviewMode,
 		pollMs: 2000,
 		pollingEnabled: remoteSync._tag !== "running",
 	});
@@ -426,6 +430,11 @@ export function App(props: AppProps) {
 	}, [copyAndNotify, renderer]);
 
 	useEffect(() => {
+		filePreviewCacheRef.current.clear();
+		setSelectedFilePreview(null);
+	}, [reviewMode]);
+
+	useEffect(() => {
 		if (!selectedFile) {
 			setSelectedFilePreview(null);
 			return;
@@ -450,7 +459,11 @@ export function App(props: AppProps) {
 		});
 
 		let cancelled = false;
-		void Effect.runPromise(loadFilePreview(selectedFile)).then((preview) => {
+		const previewEffect =
+			reviewMode._tag === "working-tree"
+				? loadFilePreview(selectedFile)
+				: loadBranchFilePreview(selectedFile.path, reviewMode.selection);
+		void Effect.runPromise(previewEffect).then((preview) => {
 			if (cancelled) {
 				return;
 			}
@@ -469,7 +482,7 @@ export function App(props: AppProps) {
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedFile]);
+	}, [reviewMode, selectedFile]);
 
 	useEffect(() => {
 		const visiblePaths = new Set(files.map((file) => file.path));
