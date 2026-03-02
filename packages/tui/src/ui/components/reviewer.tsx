@@ -5,8 +5,10 @@ import { isFileStaged } from "#data/git";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import type { ResolvedTheme } from "#theme/theme";
 import type { FileEntry } from "#tui/types";
+import { RemoteSyncStatus } from "#ui/components/remote-sync-status";
 import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection";
 import { getStatusColor, type SidebarItem } from "#ui/sidebar";
+import type { RemoteSyncState } from "#ui/state";
 
 type SidebarHeaderItem = Extract<SidebarItem, { kind: "header" }>;
 type SidebarFileItem = Extract<SidebarItem, { kind: "file" }>;
@@ -88,6 +90,7 @@ interface SidebarPanelProps {
 	readonly theme: ResolvedTheme;
 	readonly files: FileEntry[];
 	readonly sidebarItems: SidebarItem[];
+	readonly remoteSync: RemoteSyncState;
 	readonly selectedFilePath: Option.Option<string>;
 	readonly onToggleDirectory: (path: string) => void;
 	readonly onSelectFilePath: (path: string) => void;
@@ -121,6 +124,7 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 					<strong>Changed Files ({props.files.length})</strong>
 				</text>
 			</box>
+			<RemoteSyncStatus theme={props.theme} state={props.remoteSync} />
 
 			<scrollbox ref={sidebarScrollRef} flexGrow={1}>
 				{props.sidebarItems.map((item) =>
@@ -178,6 +182,9 @@ interface DiffPanelProps {
 	readonly syntaxStyle: SyntaxStyle;
 	readonly diffViewMode: "split" | "unified";
 	readonly selectedFile: FileEntry | null;
+	readonly selectedFileDiff: string;
+	readonly selectedFileDiffNote: Option.Option<string>;
+	readonly selectedFileDiffLoading: boolean;
 	readonly loading: boolean;
 	readonly error: Option.Option<string>;
 	readonly isCommitModalOpen: boolean;
@@ -186,11 +193,11 @@ interface DiffPanelProps {
 
 const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 	const selectedFileHunkDiffs = useMemo(() => {
-		if (!props.selectedFile?.diff.trim()) {
+		if (!props.selectedFileDiff.trim()) {
 			return [];
 		}
-		return splitDiffIntoHunkBlocks(props.selectedFile.diff);
-	}, [props.selectedFile]);
+		return splitDiffIntoHunkBlocks(props.selectedFileDiff);
+	}, [props.selectedFileDiff]);
 
 	return (
 		<box
@@ -216,7 +223,9 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 					<text fg={props.theme.error}>{props.error.value}</text>
 				) : !props.selectedFile ? (
 					<text fg={props.theme.textMuted}>No changed files found.</text>
-				) : props.selectedFile.diff.trim() ? (
+				) : props.selectedFileDiffLoading ? (
+					<text fg={props.theme.textMuted}>Loading diff...</text>
+				) : props.selectedFileDiff.trim() ? (
 					<scrollbox
 						ref={props.diffScrollRef}
 						flexGrow={1}
@@ -264,7 +273,10 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 					</scrollbox>
 				) : (
 					<text fg={props.theme.textMuted}>
-						{props.selectedFile.note ?? "No diff preview available."}
+						{pipe(
+							props.selectedFileDiffNote,
+							Option.getOrElse(() => "No diff preview available."),
+						)}
 					</text>
 				)}
 			</box>
@@ -277,7 +289,11 @@ export interface ReviewerProps {
 	readonly syntaxStyle: SyntaxStyle;
 	readonly files: FileEntry[];
 	readonly sidebarItems: SidebarItem[];
+	readonly remoteSync: RemoteSyncState;
 	readonly selectedFile: FileEntry | null;
+	readonly selectedFileDiff: string;
+	readonly selectedFileDiffNote: Option.Option<string>;
+	readonly selectedFileDiffLoading: boolean;
 	readonly loading: boolean;
 	readonly diffViewMode: "split" | "unified";
 	readonly error: Option.Option<string>;
@@ -309,6 +325,7 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 					theme={props.theme}
 					files={props.files}
 					sidebarItems={props.sidebarItems}
+					remoteSync={props.remoteSync}
 					selectedFilePath={selectedFilePath}
 					onToggleDirectory={props.onToggleDirectory}
 					onSelectFilePath={props.onSelectFilePath}
@@ -324,6 +341,9 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 				syntaxStyle={props.syntaxStyle}
 				diffViewMode={props.diffViewMode}
 				selectedFile={props.selectedFile}
+				selectedFileDiff={props.selectedFileDiff}
+				selectedFileDiffNote={props.selectedFileDiffNote}
+				selectedFileDiffLoading={props.selectedFileDiffLoading}
 				loading={props.loading}
 				error={props.error}
 				isCommitModalOpen={props.isCommitModalOpen}

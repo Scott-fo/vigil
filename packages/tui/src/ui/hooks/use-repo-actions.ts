@@ -33,10 +33,12 @@ import type {
 	DiscardModalState,
 	HelpModalState,
 	ThemeModalState,
+	RemoteSyncState,
 	UpdateCommitModal,
 	UpdateDiscardModal,
 	UpdateFileViewState,
 	UpdateHelpModal,
+	UpdateRemoteSyncState,
 	UpdateThemeModal,
 	UpdateUiStatus,
 } from "#ui/state";
@@ -62,6 +64,7 @@ interface UseRepoActionsOptions {
 	readonly discardModal: DiscardModalState;
 	readonly helpModal: HelpModalState;
 	readonly themeModal: ThemeModalState;
+	readonly remoteSync: RemoteSyncState;
 	readonly canInitializeGitRepo: boolean;
 	readonly updateFileView: UpdateFileViewState;
 	readonly updateUiStatus: UpdateUiStatus;
@@ -69,6 +72,7 @@ interface UseRepoActionsOptions {
 	readonly updateDiscardModal: UpdateDiscardModal;
 	readonly updateHelpModal: UpdateHelpModal;
 	readonly updateThemeModal: UpdateThemeModal;
+	readonly updateRemoteSync: UpdateRemoteSyncState;
 	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
 }
@@ -98,6 +102,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		discardModal,
 		helpModal,
 		themeModal,
+		remoteSync,
 		canInitializeGitRepo,
 		updateFileView,
 		updateUiStatus,
@@ -105,6 +110,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		updateDiscardModal,
 		updateHelpModal,
 		updateThemeModal,
+		updateRemoteSync,
 		refreshFiles,
 		renderRepoActionError,
 	} = options;
@@ -212,20 +218,20 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	const openSelectedFile = useCallback(
 		(filePath: string) => {
 			if (Option.isSome(chooserFilePath)) {
-				const wrote = runAction(
-					writeChooserSelection(chooserFilePath.value, filePath),
-					renderOpenFileError,
-					{
-						refreshOnSuccess: false,
-						refreshOnFailure: false,
-						onSuccess: () => {
-							renderer.destroy();
-						},
-					},
+				void Effect.runPromise(
+					pipe(
+						writeChooserSelection(chooserFilePath.value, filePath),
+						Effect.match({
+							onFailure: (error) => {
+								setUiError(renderOpenFileError(error));
+							},
+							onSuccess: () => {
+								clearUiError();
+								renderer.destroy();
+							},
+						}),
+					),
 				);
-				if (!wrote.ok) {
-					return;
-				}
 				return;
 			}
 
@@ -235,7 +241,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			});
 			renderer.resume();
 		},
-		[chooserFilePath, renderer, runAction],
+		[chooserFilePath, clearUiError, renderer, runAction, setUiError],
 	);
 
 	const toggleCollapsedDirectory = useCallback(
@@ -473,12 +479,44 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 
 	const syncRemote = useCallback(
 		(direction: "pull" | "push") => {
-			runAction(
-				direction === "push" ? pushToRemote() : pullFromRemote(),
-				renderRepoActionError,
+			if (remoteSync._tag === "running") {
+				return;
+			}
+
+			updateRemoteSync(() => ({
+				_tag: "running",
+				direction,
+			}));
+			clearUiError();
+
+			void Effect.runPromise(
+				pipe(
+					direction === "push" ? pushToRemote() : pullFromRemote(),
+					Effect.match({
+						onFailure: (error) => {
+							setUiError(renderRepoActionError(error));
+						},
+						onSuccess: () => {
+							clearUiError();
+							void refreshFiles(false);
+						},
+					}),
+					Effect.ensuring(
+						Effect.sync(() => {
+							updateRemoteSync(() => ({ _tag: "idle" }));
+						}),
+					),
+				),
 			);
 		},
-		[renderRepoActionError, runAction],
+		[
+			clearUiError,
+			refreshFiles,
+			remoteSync,
+			renderRepoActionError,
+			setUiError,
+			updateRemoteSync,
+		],
 	);
 
 	const toggleSelectedFileStage = useCallback(

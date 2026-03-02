@@ -17,7 +17,12 @@ import {
 	useState,
 } from "react";
 import { copyTextToClipboard } from "#data/clipboard";
-import { isFileStaged, type RepoActionError } from "#data/git";
+import {
+	isFileStaged,
+	loadFilePreview,
+	type FileDiffPreview,
+	type RepoActionError,
+} from "#data/git";
 import { type ResolvedTheme, resolveThemeBundle, type ThemeMode } from "#theme/theme";
 import type { AppProps, FileEntry } from "#tui/types";
 import { CommitModal } from "#ui/components/commit-modal";
@@ -36,11 +41,14 @@ import {
 	discardModalAtom,
 	fileViewStateAtom,
 	helpModalAtom,
+	remoteSyncAtom,
+	type RemoteSyncState,
 	themeModalAtom,
 	type UpdateCommitModal,
 	type UpdateDiscardModal,
 	type UpdateFileViewState,
 	type UpdateHelpModal,
+	type UpdateRemoteSyncState,
 	type UpdateThemeModal,
 	type UpdateUiStatus,
 	uiStatusAtom,
@@ -76,7 +84,11 @@ interface AppContentProps {
 	readonly commitError: Option.Option<string>;
 	readonly files: FileEntry[];
 	readonly sidebarItems: SidebarItem[];
+	readonly remoteSync: RemoteSyncState;
 	readonly selectedFile: FileEntry | null;
+	readonly selectedFileDiff: string;
+	readonly selectedFileDiffNote: Option.Option<string>;
+	readonly selectedFileDiffLoading: boolean;
 	readonly loading: boolean;
 	readonly diffViewMode: "split" | "unified";
 	readonly syntaxStyle: SyntaxStyle;
@@ -115,7 +127,11 @@ function AppContent(props: AppContentProps) {
 					syntaxStyle={props.syntaxStyle}
 					files={props.files}
 					sidebarItems={props.sidebarItems}
+					remoteSync={props.remoteSync}
 					selectedFile={props.selectedFile}
+					selectedFileDiff={props.selectedFileDiff}
+					selectedFileDiffNote={props.selectedFileDiffNote}
+					selectedFileDiffLoading={props.selectedFileDiffLoading}
 					loading={props.loading}
 					diffViewMode={props.diffViewMode}
 					error={props.uiError}
@@ -185,11 +201,27 @@ export function App(props: AppProps) {
 	const [discardModal, setDiscardModal] = useAtom(discardModalAtom);
 	const [helpModal, setHelpModal] = useAtom(helpModalAtom);
 	const [themeModal, setThemeModal] = useAtom(themeModalAtom);
+	const [remoteSync, setRemoteSync] = useAtom(remoteSyncAtom);
 	const [snackbarNotice, setSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
 	>(Option.none());
+	const [selectedFilePreview, setSelectedFilePreview] = useState<{
+		path: string;
+		status: string;
+		loading: boolean;
+		preview: FileDiffPreview;
+	} | null>(null);
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
 	const snackbarTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const filePreviewCacheRef = useRef(
+		new Map<
+			string,
+			{
+				status: string;
+				preview: FileDiffPreview;
+			}
+		>(),
+	);
 
 	const updateFileView = useCallback<UpdateFileViewState>(
 		(update) => {
@@ -220,6 +252,12 @@ export function App(props: AppProps) {
 			setThemeModal(update);
 		},
 		[setThemeModal],
+	);
+	const updateRemoteSync = useCallback<UpdateRemoteSyncState>(
+		(update) => {
+			setRemoteSync(update);
+		},
+		[setRemoteSync],
 	);
 	const updateDiscardModal = useCallback<UpdateDiscardModal>(
 		(update) => {
@@ -280,6 +318,7 @@ export function App(props: AppProps) {
 		updateUiStatus,
 		renderRepoActionError: formatRepoActionError,
 		pollMs: 2000,
+		pollingEnabled: remoteSync._tag !== "running",
 	});
 
 	const selectedFile = useMemo(() => {
@@ -382,6 +421,62 @@ export function App(props: AppProps) {
 	}, [copyAndNotify, renderer]);
 
 	useEffect(() => {
+		if (!selectedFile) {
+			setSelectedFilePreview(null);
+			return;
+		}
+
+		const cachedPreview = filePreviewCacheRef.current.get(selectedFile.path);
+		if (cachedPreview && cachedPreview.status === selectedFile.status) {
+			setSelectedFilePreview({
+				path: selectedFile.path,
+				status: selectedFile.status,
+				loading: false,
+				preview: cachedPreview.preview,
+			});
+			return;
+		}
+
+		setSelectedFilePreview({
+			path: selectedFile.path,
+			status: selectedFile.status,
+			loading: true,
+			preview: { diff: "", note: Option.none() },
+		});
+
+		let cancelled = false;
+		void Effect.runPromise(loadFilePreview(selectedFile)).then((preview) => {
+			if (cancelled) {
+				return;
+			}
+			filePreviewCacheRef.current.set(selectedFile.path, {
+				status: selectedFile.status,
+				preview,
+			});
+			setSelectedFilePreview({
+				path: selectedFile.path,
+				status: selectedFile.status,
+				loading: false,
+				preview,
+			});
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedFile]);
+
+	useEffect(() => {
+		const visiblePaths = new Set(files.map((file) => file.path));
+		const cache = filePreviewCacheRef.current;
+		for (const [path] of cache) {
+			if (!visiblePaths.has(path)) {
+				cache.delete(path);
+			}
+		}
+	}, [files]);
+
+	useEffect(() => {
 		if (!isThemeModalOpen) {
 			return;
 		}
@@ -460,6 +555,8 @@ export function App(props: AppProps) {
 		updateCommitModal,
 		updateHelpModal,
 		updateThemeModal,
+		remoteSync,
+		updateRemoteSync,
 		updateDiscardModal,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
@@ -496,6 +593,32 @@ export function App(props: AppProps) {
 		onIntent: onKeyboardIntent,
 	});
 
+	const selectedFileDiffState = useMemo(() => {
+		if (!selectedFile) {
+			return {
+				loading: false,
+				diff: "",
+				note: Option.none<string>(),
+			};
+		}
+		if (
+			!selectedFilePreview ||
+			selectedFilePreview.path !== selectedFile.path ||
+			selectedFilePreview.status !== selectedFile.status
+		) {
+			return {
+				loading: true,
+				diff: "",
+				note: Option.none<string>(),
+			};
+		}
+		return {
+			loading: selectedFilePreview.loading,
+			diff: selectedFilePreview.preview.diff,
+			note: selectedFilePreview.preview.note,
+		};
+	}, [selectedFile, selectedFilePreview]);
+
 	return (
 		<AppContent
 			theme={theme}
@@ -510,7 +633,11 @@ export function App(props: AppProps) {
 			commitError={commitError}
 			files={files}
 			sidebarItems={sidebarItems}
+			remoteSync={remoteSync}
 			selectedFile={selectedFile}
+			selectedFileDiff={selectedFileDiffState.diff}
+			selectedFileDiffNote={selectedFileDiffState.note}
+			selectedFileDiffLoading={selectedFileDiffState.loading}
 			loading={loading}
 			diffViewMode={diffViewMode}
 			syntaxStyle={themeBundle.syntaxStyle}

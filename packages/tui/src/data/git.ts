@@ -1,3 +1,5 @@
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as FileSystem from "@effect/platform/FileSystem";
 import { Data, Effect, Option, pipe } from "effect";
 import { resolveDiffFiletype } from "#syntax/tree-sitter";
 import { FileEntry, type StatusEntry } from "#tui/types";
@@ -29,7 +31,10 @@ function decodeOutput(output?: Uint8Array | null): string {
 function runGitEffect(
 	args: string[],
 	fallbackMessage: string,
-): Effect.Effect<{ readonly stdout: string; readonly stderr: string }, GitCommandError> {
+): Effect.Effect<
+	{ readonly stdout: string; readonly stderr: string },
+	GitCommandError
+> {
 	return pipe(
 		Effect.sync(() =>
 			Bun.spawnSync({
@@ -58,10 +63,60 @@ function runGitEffect(
 	);
 }
 
-function renderGitCommandError(error: GitCommandError): string {
-	return (
-		error.stderr.trim() || error.stdout.trim() || error.fallbackMessage
+function runGitEffectAsync(
+	args: string[],
+	fallbackMessage: string,
+): Effect.Effect<
+	{ readonly stdout: string; readonly stderr: string },
+	GitCommandError
+> {
+	return pipe(
+		Effect.tryPromise({
+			try: async () => {
+				const process = Bun.spawn({
+					cmd: ["git", ...args],
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				const [exitCode, stdout, stderr] = await Promise.all([
+					process.exited,
+					process.stdout
+						? new Response(process.stdout).text()
+						: Promise.resolve(""),
+					process.stderr
+						? new Response(process.stderr).text()
+						: Promise.resolve(""),
+				]);
+				return { exitCode, stdout, stderr };
+			},
+			catch: () =>
+				new GitCommandError({
+					args,
+					stdout: "",
+					stderr: "",
+					fallbackMessage,
+				}),
+		}),
+		Effect.flatMap((result) =>
+			result.exitCode === 0
+				? Effect.succeed({
+						stdout: result.stdout,
+						stderr: result.stderr,
+					})
+				: Effect.fail(
+						new GitCommandError({
+							args,
+							stdout: result.stdout,
+							stderr: result.stderr,
+							fallbackMessage,
+						}),
+					),
+		),
 	);
+}
+
+function renderGitCommandError(error: GitCommandError): string {
+	return error.stderr.trim() || error.stdout.trim() || error.fallbackMessage;
 }
 
 export function isFileStaged(status: string): boolean {
@@ -118,14 +173,14 @@ export function commitStagedChanges(
 
 export function pullFromRemote(): Effect.Effect<void, GitCommandError> {
 	return pipe(
-		runGitEffect(["pull"], "Unable to pull from remote."),
+		runGitEffectAsync(["pull"], "Unable to pull from remote."),
 		Effect.asVoid,
 	);
 }
 
 export function pushToRemote(): Effect.Effect<void, GitCommandError> {
 	return pipe(
-		runGitEffect(["push"], "Unable to push to remote."),
+		runGitEffectAsync(["push"], "Unable to push to remote."),
 		Effect.asVoid,
 	);
 }
@@ -214,6 +269,8 @@ interface FilePreview {
 	readonly note: Option.Option<string>;
 }
 
+export type FileDiffPreview = FilePreview;
+
 function withDefaultPreviewNote(preview: FilePreview): FilePreview {
 	return !preview.diff.trim() && Option.isNone(preview.note)
 		? {
@@ -223,9 +280,15 @@ function withDefaultPreviewNote(preview: FilePreview): FilePreview {
 		: preview;
 }
 
-function loadUntrackedPreview(filePath: string): Effect.Effect<FilePreview, never> {
+function loadUntrackedPreview(
+	filePath: string,
+): Effect.Effect<FilePreview, never> {
 	return pipe(
-		Effect.tryPromise(() => Bun.file(filePath).bytes()),
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			return yield* fs.readFile(filePath);
+		}),
+		Effect.provide(BunFileSystem.layer),
 		Effect.match({
 			onFailure: () =>
 				({
@@ -239,24 +302,31 @@ function loadUntrackedPreview(filePath: string): Effect.Effect<FilePreview, neve
 						note: Option.some("Binary or non-text file; no preview available."),
 					} as const;
 				}
-				const diff = createUntrackedFileDiff(filePath, TEXT_DECODER.decode(bytes));
+				const diff = createUntrackedFileDiff(
+					filePath,
+					TEXT_DECODER.decode(bytes),
+				);
 				return !diff.trim()
 					? ({
 							diff,
-							note: Option.some("Untracked empty file; no textual hunk to preview."),
-						}) as const
+							note: Option.some(
+								"Untracked empty file; no textual hunk to preview.",
+							),
+						} as const)
 					: ({
 							diff,
 							note: Option.none<string>(),
-						}) as const;
+						} as const);
 			},
 		}),
 	);
 }
 
-function loadTrackedPreview(filePath: string): Effect.Effect<FilePreview, never> {
+function loadTrackedPreview(
+	filePath: string,
+): Effect.Effect<FilePreview, never> {
 	return pipe(
-		runGitEffect(
+		runGitEffectAsync(
 			["diff", "--no-color", "--find-renames", "HEAD", "--", filePath],
 			"Unable to load diff for this file.",
 		),
@@ -273,28 +343,26 @@ function loadTrackedPreview(filePath: string): Effect.Effect<FilePreview, never>
 	);
 }
 
-function toFileEntry(entry: StatusEntry, preview: FilePreview): FileEntry {
+function toFileEntry(entry: StatusEntry): FileEntry {
 	const label =
 		entry.originalPath === undefined
 			? entry.path
 			: `${entry.originalPath} -> ${entry.path}`;
 	const filetype = resolveDiffFiletype(entry.path);
-	const resolvedPreview = withDefaultPreviewNote(preview);
 	return FileEntry.make({
 		status: entry.status,
 		path: entry.path,
 		label,
-		diff: resolvedPreview.diff,
 		...(Option.isSome(filetype) ? { filetype: filetype.value } : {}),
-		...(Option.isSome(resolvedPreview.note)
-			? { note: resolvedPreview.note.value }
-			: {}),
 	});
 }
 
-export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError> {
+export function loadFilesWithStatus(): Effect.Effect<
+	FileEntry[],
+	GitCommandError
+> {
 	return Effect.gen(function* () {
-		const statusResult = yield* runGitEffect(
+		const statusResult = yield* runGitEffectAsync(
 			["status", "--porcelain=v1", "-z", "--untracked-files=all"],
 			"Unable to run git status.",
 		);
@@ -302,16 +370,17 @@ export function loadFilesWithDiffs(): Effect.Effect<FileEntry[], GitCommandError
 		const statusEntries = parseStatusEntries(statusResult.stdout).filter(
 			(entry) => entry.status !== "!!",
 		);
-		const files: FileEntry[] = [];
-
-		for (const entry of statusEntries) {
-			const preview =
-				entry.status === "??"
-					? yield* loadUntrackedPreview(entry.path)
-					: yield* loadTrackedPreview(entry.path);
-			files.push(toFileEntry(entry, preview));
-		}
-
-		return files;
+		return statusEntries.map(toFileEntry);
 	});
+}
+
+export function loadFilePreview(
+	file: Pick<FileEntry, "path" | "status">,
+): Effect.Effect<FileDiffPreview, never> {
+	return pipe(
+		file.status === "??"
+			? loadUntrackedPreview(file.path)
+			: loadTrackedPreview(file.path),
+		Effect.map(withDefaultPreviewNote),
+	);
 }

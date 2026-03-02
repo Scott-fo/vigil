@@ -1,6 +1,6 @@
 import { Effect, Option, pipe } from "effect";
 import { useCallback, useEffect, useRef } from "react";
-import { loadFilesWithDiffs, type RepoActionError } from "#data/git";
+import { loadFilesWithStatus, type RepoActionError } from "#data/git";
 import type { UpdateFileViewState, UpdateUiStatus } from "#ui/state";
 
 interface UseFileRefreshOptions {
@@ -8,12 +8,14 @@ interface UseFileRefreshOptions {
 	readonly updateUiStatus: UpdateUiStatus;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
 	readonly pollMs?: number;
+	readonly pollingEnabled?: boolean;
 }
 
 export function useFileRefresh(options: UseFileRefreshOptions) {
 	const { updateFileView, updateUiStatus, renderRepoActionError } = options;
 	const isRefreshingRef = useRef(false);
 	const pollMs = options.pollMs ?? 2000;
+	const pollingEnabled = options.pollingEnabled ?? true;
 
 	const refreshFiles = useCallback(
 		async (showLoading: boolean) => {
@@ -30,7 +32,7 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 
 			const result = await Effect.runPromise(
 				pipe(
-					loadFilesWithDiffs(),
+					loadFilesWithStatus(),
 					Effect.match({
 						onFailure: (repoError) => ({
 							ok: false as const,
@@ -55,11 +57,16 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 			);
 
 			if (!result.ok) {
-				updateFileView((current) => ({
-					...current,
-					files: current.files.length === 0 ? current.files : [],
-					selectedPath: Option.none(),
-				}));
+				updateFileView((current) => {
+					if (current.files.length === 0 && Option.isNone(current.selectedPath)) {
+						return current;
+					}
+					return {
+						...current,
+						files: current.files.length === 0 ? current.files : [],
+						selectedPath: Option.none(),
+					};
+				});
 				updateUiStatus((current) => {
 					if (
 						current.showSplash &&
@@ -77,13 +84,19 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 			}
 
 			updateFileView((current) => {
+				const previousByPath = new Map(
+					current.files.map((file) => [file.path, file] as const),
+				);
+				const nextFiles = result.files.map((file) => {
+					const previous = previousByPath.get(file.path);
+					if (!previous) {
+						return file;
+					}
+					return previous.equals(file) ? previous : file;
+				});
 				const filesAreEqual =
-					current.files.length === result.files.length &&
-					current.files.every((file, index) => {
-						const other = result.files[index];
-						return other !== undefined && file.equals(other);
-					});
-				const nextFiles = filesAreEqual ? current.files : result.files;
+					current.files.length === nextFiles.length &&
+					current.files.every((file, index) => file === nextFiles[index]);
 				const hasCurrentSelection = pipe(
 					current.selectedPath,
 					Option.match({
@@ -100,6 +113,15 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 									Option.fromNullable(result.files[0]),
 									Option.map((file) => file.path),
 								);
+				const selectedPathUnchanged =
+					(Option.isNone(current.selectedPath) &&
+						Option.isNone(nextSelectedPath)) ||
+					(Option.isSome(current.selectedPath) &&
+						Option.isSome(nextSelectedPath) &&
+						current.selectedPath.value === nextSelectedPath.value);
+				if (filesAreEqual && selectedPathUnchanged) {
+					return current;
+				}
 				return {
 					...current,
 					files: nextFiles,
@@ -128,11 +150,14 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 	}, [refreshFiles]);
 
 	useEffect(() => {
+		if (!pollingEnabled) {
+			return;
+		}
 		const interval = setInterval(() => {
 			void refreshFiles(false);
 		}, pollMs);
 		return () => clearInterval(interval);
-	}, [pollMs, refreshFiles]);
+	}, [pollMs, pollingEnabled, refreshFiles]);
 
 	return { refreshFiles };
 }
