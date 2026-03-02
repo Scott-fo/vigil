@@ -85,6 +85,19 @@ export function toggleFileStage(
 	);
 }
 
+export function discardFileChanges(
+	file: Pick<FileEntry, "path" | "status">,
+): Effect.Effect<void, GitCommandError> {
+	const args =
+		file.status === "??"
+			? ["clean", "-f", "--", file.path]
+			: ["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path];
+	return pipe(
+		runGitEffect(args, `Unable to discard changes for ${file.path}.`),
+		Effect.asVoid,
+	);
+}
+
 export function commitStagedChanges(
 	message: string,
 ): Effect.Effect<void, RepoActionError> {
