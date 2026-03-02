@@ -7,17 +7,13 @@ describe("FileEntry.equals", () => {
 			status: "M ",
 			path: "src/app.tsx",
 			label: "src/app.tsx",
-			diff: "@@ -1 +1 @@",
 			filetype: "typescript",
-			note: "note",
 		});
 		const right = FileEntry.make({
 			status: "M ",
 			path: "src/app.tsx",
 			label: "src/app.tsx",
-			diff: "@@ -1 +1 @@",
 			filetype: "typescript",
-			note: "note",
 		});
 
 		expect(left.equals(right)).toBe(true);
@@ -28,13 +24,13 @@ describe("FileEntry.equals", () => {
 			status: "M ",
 			path: "src/app.tsx",
 			label: "src/app.tsx",
-			diff: "@@ -1 +1 @@",
+			filetype: "typescript",
 		});
 		const right = FileEntry.make({
 			status: "M ",
 			path: "src/app.tsx",
 			label: "src/app.tsx",
-			diff: "@@ -1 +2 @@",
+			filetype: "tsx",
 		});
 
 		expect(left.equals(right)).toBe(false);

@@ -11,18 +11,14 @@ export class FileEntry extends Schema.Class<FileEntry>("FileEntry")({
 	status: Schema.String,
 	path: Schema.String,
 	label: Schema.String,
-	diff: Schema.String,
 	filetype: Schema.optional(Schema.String),
-	note: Schema.optional(Schema.String),
 }) {
 	equals(other: FileEntry): boolean {
 		return (
 			this.status === other.status &&
 			this.path === other.path &&
 			this.label === other.label &&
-			this.diff === other.diff &&
-			this.filetype === other.filetype &&
-			this.note === other.note
+			this.filetype === other.filetype
 		);
 	}
 }
