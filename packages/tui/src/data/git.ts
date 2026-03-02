@@ -521,19 +521,36 @@ export function listComparableRefs(): Effect.Effect<
 > {
 	return pipe(
 		runGitEffectAsync(
-			["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+			[
+				"for-each-ref",
+				"--format=%(refname)\t%(refname:short)",
+				"refs/heads",
+				"refs/remotes",
+			],
 			"Unable to list git refs.",
 		),
 		Effect.map((result) => {
 			const refs = result.stdout
 				.split("\n")
-				.map((rawRef) => rawRef.trim())
+				.map((line) => line.trim())
+				.map((line) => {
+					const [fullRef = "", shortRef = ""] = line.split("\t");
+					return {
+						fullRef,
+						shortRef,
+					};
+				})
 				.filter(
-					(refName) =>
-						refName.length > 0 &&
-						refName !== "HEAD" &&
-						!refName.endsWith("/HEAD"),
-				);
+					(ref) =>
+						ref.shortRef.length > 0 &&
+						ref.shortRef !== "HEAD" &&
+						!(
+							ref.fullRef.startsWith("refs/remotes/") &&
+							(!ref.shortRef.includes("/") ||
+								ref.shortRef.endsWith("/HEAD"))
+						),
+				)
+				.map((ref) => ref.shortRef);
 			return [...new Set(refs)].sort((left, right) =>
 				left.localeCompare(right),
 			);

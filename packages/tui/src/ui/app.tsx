@@ -26,6 +26,7 @@ import {
 } from "#data/git";
 import { type ResolvedTheme, resolveThemeBundle, type ThemeMode } from "#theme/theme";
 import type { AppProps, FileEntry } from "#tui/types";
+import { BranchCompareModal } from "#ui/components/branch-compare-modal";
 import { CommitModal } from "#ui/components/commit-modal";
 import { DiscardModal } from "#ui/components/discard-modal";
 import { HelpModal } from "#ui/components/help-modal";
@@ -39,18 +40,22 @@ import { useRepoActions } from "#ui/hooks/use-repo-actions";
 import { useAppKeyboardInput } from "#ui/inputs";
 import { buildSidebarItems, type SidebarItem } from "#ui/sidebar";
 import {
+	branchCompareModalAtom,
 	commitModalAtom,
 	discardModalAtom,
 	fileViewStateAtom,
 	helpModalAtom,
 	remoteSyncAtom,
 	reviewModeAtom,
+	type BranchCompareField,
 	type RemoteSyncState,
 	themeModalAtom,
+	type UpdateBranchCompareModal,
 	type UpdateCommitModal,
 	type UpdateDiscardModal,
 	type UpdateFileViewState,
 	type UpdateHelpModal,
+	type UpdateReviewMode,
 	type UpdateRemoteSyncState,
 	type UpdateThemeModal,
 	type UpdateUiStatus,
@@ -74,6 +79,19 @@ function formatRepoActionError(error: RepoActionError): string {
 	);
 }
 
+function filterBranchRefs(
+	refs: ReadonlyArray<string>,
+	query: string,
+): ReadonlyArray<string> {
+	const normalizedQuery = query.trim().toLowerCase();
+	if (normalizedQuery.length === 0) {
+		return refs;
+	}
+	return refs.filter((refName) =>
+		refName.toLowerCase().includes(normalizedQuery),
+	);
+}
+
 interface AppContentProps {
 	readonly theme: ResolvedTheme;
 	readonly uiShowSplash: boolean;
@@ -82,12 +100,14 @@ interface AppContentProps {
 	readonly isDiscardModalOpen: boolean;
 	readonly isHelpModalOpen: boolean;
 	readonly isThemeModalOpen: boolean;
+	readonly isBranchCompareModalOpen: boolean;
 	readonly modalBackdropColor: RGBA;
 	readonly commitMessage: string;
 	readonly commitError: Option.Option<string>;
 	readonly files: FileEntry[];
 	readonly sidebarItems: SidebarItem[];
 	readonly remoteSync: RemoteSyncState;
+	readonly reviewModeLabel: string;
 	readonly selectedFile: FileEntry | null;
 	readonly selectedFileDiff: string;
 	readonly selectedFileDiffNote: Option.Option<string>;
@@ -109,6 +129,19 @@ interface AppContentProps {
 	readonly themeSearchQuery: string;
 	readonly onThemeSearchQueryChange: (value: string) => void;
 	readonly onSelectThemeInModal: (themeName: string) => void;
+	readonly branchSourceQuery: string;
+	readonly branchDestinationQuery: string;
+	readonly branchSourceRef: Option.Option<string>;
+	readonly branchDestinationRef: Option.Option<string>;
+	readonly branchActiveField: BranchCompareField;
+	readonly branchFilteredRefs: ReadonlyArray<string>;
+	readonly branchSelectedActiveRef: Option.Option<string>;
+	readonly branchModalLoading: boolean;
+	readonly branchModalError: Option.Option<string>;
+	readonly onBranchSourceQueryChange: (value: string) => void;
+	readonly onBranchDestinationQueryChange: (value: string) => void;
+	readonly onBranchSelectRef: (refName: string) => void;
+	readonly onBranchActivateField: (field: BranchCompareField) => void;
 	readonly discardModalFile: FileEntry | null;
 	readonly onCancelDiscardModal: () => void;
 	readonly onConfirmDiscardModal: () => void;
@@ -128,6 +161,7 @@ function AppContent(props: AppContentProps) {
 				<Reviewer
 					theme={props.theme}
 					syntaxStyle={props.syntaxStyle}
+					reviewModeLabel={props.reviewModeLabel}
 					files={props.files}
 					sidebarItems={props.sidebarItems}
 					selectedFile={props.selectedFile}
@@ -141,7 +175,8 @@ function AppContent(props: AppContentProps) {
 						props.isCommitModalOpen ||
 						props.isDiscardModalOpen ||
 						props.isHelpModalOpen ||
-						props.isThemeModalOpen
+						props.isThemeModalOpen ||
+						props.isBranchCompareModalOpen
 					}
 					diffScrollRef={props.diffScrollRef}
 					onToggleDirectory={props.onToggleDirectory}
@@ -187,6 +222,25 @@ function AppContent(props: AppContentProps) {
 					onSelectTheme={props.onSelectThemeInModal}
 				/>
 			)}
+			{props.isBranchCompareModalOpen && (
+				<BranchCompareModal
+					theme={props.theme}
+					modalBackdropColor={props.modalBackdropColor}
+					sourceQuery={props.branchSourceQuery}
+					destinationQuery={props.branchDestinationQuery}
+					sourceRef={props.branchSourceRef}
+					destinationRef={props.branchDestinationRef}
+					activeField={props.branchActiveField}
+					filteredRefs={props.branchFilteredRefs}
+					selectedActiveRef={props.branchSelectedActiveRef}
+					loading={props.branchModalLoading}
+					error={props.branchModalError}
+					onSourceQueryChange={props.onBranchSourceQueryChange}
+					onDestinationQueryChange={props.onBranchDestinationQueryChange}
+					onSelectRef={props.onBranchSelectRef}
+					onActivateField={props.onBranchActivateField}
+				/>
+			)}
 			<RemoteSyncStatus theme={props.theme} state={props.remoteSync} />
 			<Snackbar
 				theme={props.theme}
@@ -208,8 +262,11 @@ export function App(props: AppProps) {
 	const [discardModal, setDiscardModal] = useAtom(discardModalAtom);
 	const [helpModal, setHelpModal] = useAtom(helpModalAtom);
 	const [themeModal, setThemeModal] = useAtom(themeModalAtom);
+	const [branchCompareModal, setBranchCompareModal] = useAtom(
+		branchCompareModalAtom,
+	);
 	const [remoteSync, setRemoteSync] = useAtom(remoteSyncAtom);
-	const [reviewMode] = useAtom(reviewModeAtom);
+	const [reviewMode, setReviewMode] = useAtom(reviewModeAtom);
 	const [snackbarNotice, setSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
 	>(Option.none());
@@ -261,11 +318,23 @@ export function App(props: AppProps) {
 		},
 		[setThemeModal],
 	);
+	const updateBranchCompareModal = useCallback<UpdateBranchCompareModal>(
+		(update) => {
+			setBranchCompareModal(update);
+		},
+		[setBranchCompareModal],
+	);
 	const updateRemoteSync = useCallback<UpdateRemoteSyncState>(
 		(update) => {
 			setRemoteSync(update);
 		},
 		[setRemoteSync],
+	);
+	const updateReviewMode = useCallback<UpdateReviewMode>(
+		(update) => {
+			setReviewMode(update);
+		},
+		[setReviewMode],
 	);
 	const updateDiscardModal = useCallback<UpdateDiscardModal>(
 		(update) => {
@@ -297,10 +366,63 @@ export function App(props: AppProps) {
 	const isDiscardModalOpen = discardModal.isOpen;
 	const isHelpModalOpen = helpModal.isOpen;
 	const isThemeModalOpen = themeModal.isOpen;
+	const isBranchCompareModalOpen = branchCompareModal.isOpen;
 	const discardModalFile = discardModal.isOpen ? discardModal.file : null;
 	const selectedThemeName = themeModal.isOpen
 		? themeModal.selectedThemeName
 		: themeName;
+	const branchSourceQuery = branchCompareModal.isOpen
+		? branchCompareModal.sourceQuery
+		: "";
+	const branchDestinationQuery = branchCompareModal.isOpen
+		? branchCompareModal.destinationQuery
+		: "";
+	const branchSourceRef = branchCompareModal.isOpen
+		? branchCompareModal.sourceRef
+		: Option.none<string>();
+	const branchDestinationRef = branchCompareModal.isOpen
+		? branchCompareModal.destinationRef
+		: Option.none<string>();
+	const branchActiveField: BranchCompareField = branchCompareModal.isOpen
+		? branchCompareModal.activeField
+		: "source";
+	const branchFilteredRefs = useMemo(() => {
+		if (!branchCompareModal.isOpen) {
+			return [] as const;
+		}
+		const query =
+			branchCompareModal.activeField === "source"
+				? branchCompareModal.sourceQuery
+				: branchCompareModal.destinationQuery;
+		return filterBranchRefs(branchCompareModal.availableRefs, query);
+	}, [branchCompareModal]);
+	const branchSelectedActiveRef = useMemo(() => {
+		if (!branchCompareModal.isOpen) {
+			return Option.none<string>();
+		}
+		const selectedIndex =
+			branchCompareModal.activeField === "source"
+				? branchCompareModal.selectedSourceIndex
+				: branchCompareModal.selectedDestinationIndex;
+		const selectedByIndex = branchFilteredRefs[selectedIndex];
+		if (selectedByIndex) {
+			return Option.some(selectedByIndex);
+		}
+		const selectedRef =
+			branchCompareModal.activeField === "source"
+				? branchCompareModal.sourceRef
+				: branchCompareModal.destinationRef;
+		return Option.isSome(selectedRef) &&
+			branchFilteredRefs.includes(selectedRef.value)
+			? selectedRef
+			: Option.fromNullable(branchFilteredRefs[0]);
+	}, [branchCompareModal, branchFilteredRefs]);
+	const branchModalLoading = branchCompareModal.isOpen
+		? branchCompareModal.loading
+		: false;
+	const branchModalError = branchCompareModal.isOpen
+		? branchCompareModal.error
+		: Option.none<string>();
 	const filteredThemeNames = useMemo(() => {
 		const query = themeSearchQuery.trim().toLowerCase();
 		if (query.length === 0) {
@@ -320,6 +442,10 @@ export function App(props: AppProps) {
 				uiStatus.showSplash && /not a git repository/i.test(error),
 		}),
 	);
+	const reviewModeLabel =
+		reviewMode._tag === "working-tree"
+			? "Working tree"
+			: `Compare ${reviewMode.selection.sourceRef} -> ${reviewMode.selection.destinationRef}`;
 
 	const { refreshFiles } = useFileRefresh({
 		updateFileView,
@@ -548,6 +674,10 @@ export function App(props: AppProps) {
 		onCommitSubmit,
 		onCancelDiscardModal,
 		onConfirmDiscardModal,
+		onBranchSourceQueryChange,
+		onBranchDestinationQueryChange,
+		onBranchSelectRef,
+		onBranchActivateField,
 		onKeyboardIntent,
 		onToggleDirectory,
 		onSelectFilePath,
@@ -567,14 +697,18 @@ export function App(props: AppProps) {
 		discardModal,
 		helpModal,
 		themeModal,
+		branchCompareModal,
 		canInitializeGitRepo,
+		reviewMode,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
 		updateHelpModal,
 		updateThemeModal,
+		updateBranchCompareModal,
 		remoteSync,
 		updateRemoteSync,
+		updateReviewMode,
 		updateDiscardModal,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
@@ -603,6 +737,8 @@ export function App(props: AppProps) {
 		isDiscardModalOpen,
 		isHelpModalOpen,
 		isThemeModalOpen,
+		isBranchCompareModalOpen,
+		isBranchCompareMode: reviewMode._tag === "branch-compare",
 		canInitializeGitRepo,
 		stagedFileCount,
 		visibleFilePaths,
@@ -646,12 +782,14 @@ export function App(props: AppProps) {
 			isDiscardModalOpen={isDiscardModalOpen}
 			isHelpModalOpen={isHelpModalOpen}
 			isThemeModalOpen={isThemeModalOpen}
+			isBranchCompareModalOpen={isBranchCompareModalOpen}
 			modalBackdropColor={modalBackdropColor}
 			commitMessage={commitMessage}
 			commitError={commitError}
 			files={files}
 			sidebarItems={sidebarItems}
 			remoteSync={remoteSync}
+			reviewModeLabel={reviewModeLabel}
 			selectedFile={selectedFile}
 			selectedFileDiff={selectedFileDiffState.diff}
 			selectedFileDiffNote={selectedFileDiffState.note}
@@ -673,6 +811,19 @@ export function App(props: AppProps) {
 			themeSearchQuery={themeSearchQuery}
 			onThemeSearchQueryChange={setThemeSearchQuery}
 			onSelectThemeInModal={onSelectThemeInModal}
+			branchSourceQuery={branchSourceQuery}
+			branchDestinationQuery={branchDestinationQuery}
+			branchSourceRef={branchSourceRef}
+			branchDestinationRef={branchDestinationRef}
+			branchActiveField={branchActiveField}
+			branchFilteredRefs={branchFilteredRefs}
+			branchSelectedActiveRef={branchSelectedActiveRef}
+			branchModalLoading={branchModalLoading}
+			branchModalError={branchModalError}
+			onBranchSourceQueryChange={onBranchSourceQueryChange}
+			onBranchDestinationQueryChange={onBranchDestinationQueryChange}
+			onBranchSelectRef={onBranchSelectRef}
+			onBranchActivateField={onBranchActivateField}
 			discardModalFile={discardModalFile}
 			onCancelDiscardModal={onCancelDiscardModal}
 			onConfirmDiscardModal={onConfirmDiscardModal}

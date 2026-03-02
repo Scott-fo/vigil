@@ -32,6 +32,8 @@ function context(
 		isDiscardModalOpen: false,
 		isHelpModalOpen: false,
 		isThemeModalOpen: false,
+		isBranchCompareModalOpen: false,
+		isBranchCompareMode: false,
 		canInitializeGitRepo: false,
 		stagedFileCount: 1,
 		visibleFilePaths: ["src/app.tsx", "src/other.ts"],
@@ -149,6 +151,25 @@ describe("decodeKeyboardIntent", () => {
 		}
 	});
 
+	test("maps b to open branch compare modal", () => {
+		const intent = decodeKeyboardIntent(keyEvent({ name: "b" }), context());
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("OpenBranchCompareModal");
+		}
+	});
+
+	test("maps ctrl+l to reset review mode", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "l", ctrl: true }),
+			context(),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("ResetReviewMode");
+		}
+	});
+
 	test("maps escape to close theme modal when open", () => {
 		const intent = decodeKeyboardIntent(
 			keyEvent({ name: "escape" }),
@@ -207,6 +228,54 @@ describe("decodeKeyboardIntent", () => {
 		);
 		expect(Option.isNone(downIntent)).toBe(true);
 		expect(Option.isNone(upIntent)).toBe(true);
+	});
+
+	test("handles branch compare modal navigation keys", () => {
+		const downIntent = decodeKeyboardIntent(
+			keyEvent({ name: "down" }),
+			context({ isBranchCompareModalOpen: true }),
+		);
+		const tabIntent = decodeKeyboardIntent(
+			keyEvent({ name: "tab" }),
+			context({ isBranchCompareModalOpen: true }),
+		);
+		const enterIntent = decodeKeyboardIntent(
+			keyEvent({ name: "return" }),
+			context({ isBranchCompareModalOpen: true }),
+		);
+		expect(Option.isSome(downIntent)).toBe(true);
+		expect(Option.isSome(tabIntent)).toBe(true);
+		expect(Option.isSome(enterIntent)).toBe(true);
+		if (Option.isSome(downIntent)) {
+			expect(downIntent.value).toEqual({
+				_tag: "MoveBranchSelection",
+				direction: 1,
+			});
+		}
+		if (Option.isSome(tabIntent)) {
+			expect(tabIntent.value._tag).toBe("SwitchBranchModalField");
+		}
+		if (Option.isSome(enterIntent)) {
+			expect(enterIntent.value._tag).toBe("ConfirmBranchCompareModal");
+		}
+	});
+
+	test("blocks staging/discard/commit shortcuts in branch compare mode", () => {
+		const commitIntent = decodeKeyboardIntent(
+			keyEvent({ name: "c" }),
+			context({ isBranchCompareMode: true }),
+		);
+		const discardIntent = decodeKeyboardIntent(
+			keyEvent({ name: "d" }),
+			context({ isBranchCompareMode: true }),
+		);
+		const stageIntent = decodeKeyboardIntent(
+			keyEvent({ name: "space" }),
+			context({ isBranchCompareMode: true }),
+		);
+		expect(Option.isNone(commitIntent)).toBe(true);
+		expect(Option.isNone(discardIntent)).toBe(true);
+		expect(Option.isNone(stageIntent)).toBe(true);
 	});
 
 	test("maps i to init git repository when allowed", () => {

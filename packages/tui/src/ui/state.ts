@@ -116,6 +116,34 @@ export const reviewModeAtom = Atom.make<ReviewMode>({
 	_tag: "working-tree",
 });
 
+export type BranchCompareField = "source" | "destination";
+
+export type BranchCompareModalState =
+	| {
+			readonly isOpen: false;
+	  }
+	| {
+			readonly isOpen: true;
+			readonly loading: boolean;
+			readonly availableRefs: ReadonlyArray<string>;
+			readonly sourceQuery: string;
+			readonly destinationQuery: string;
+			readonly sourceRef: Option.Option<string>;
+			readonly destinationRef: Option.Option<string>;
+			readonly activeField: BranchCompareField;
+			readonly selectedSourceIndex: number;
+			readonly selectedDestinationIndex: number;
+			readonly error: Option.Option<string>;
+	  };
+
+export type UpdateBranchCompareModal = (
+	update: (current: BranchCompareModalState) => BranchCompareModalState,
+) => void;
+
+export const branchCompareModalAtom = Atom.make<BranchCompareModalState>({
+	isOpen: false,
+});
+
 export interface FileViewState {
 	readonly files: FileEntry[];
 	readonly sidebarOpen: boolean;

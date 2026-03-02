@@ -8,6 +8,8 @@ interface UseAppKeyboardInputOptions {
 	isDiscardModalOpen: boolean;
 	isHelpModalOpen: boolean;
 	isThemeModalOpen: boolean;
+	isBranchCompareModalOpen: boolean;
+	isBranchCompareMode: boolean;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
@@ -21,6 +23,8 @@ export interface KeyboardIntentContext {
 	isDiscardModalOpen: boolean;
 	isHelpModalOpen: boolean;
 	isThemeModalOpen: boolean;
+	isBranchCompareModalOpen: boolean;
+	isBranchCompareMode: boolean;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
@@ -41,10 +45,16 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "OpenHelpModal" }
 	| { readonly _tag: "InitGitRepository" }
 	| { readonly _tag: "OpenThemeModal" }
+	| { readonly _tag: "OpenBranchCompareModal" }
 	| { readonly _tag: "CloseThemeModal" }
+	| { readonly _tag: "CloseBranchCompareModal" }
 	| { readonly _tag: "ConfirmThemeModal" }
+	| { readonly _tag: "ConfirmBranchCompareModal" }
 	| { readonly _tag: "MoveThemeSelection"; readonly direction: 1 | -1 }
+	| { readonly _tag: "MoveBranchSelection"; readonly direction: 1 | -1 }
+	| { readonly _tag: "SwitchBranchModalField" }
 	| { readonly _tag: "SyncRemote"; readonly direction: "pull" | "push" }
+	| { readonly _tag: "ResetReviewMode" }
 	| { readonly _tag: "ScrollDiffHalfPage"; readonly direction: "up" | "down" }
 	| { readonly _tag: "OpenSelectedFile"; readonly filePath: string }
 	| { readonly _tag: "ToggleSelectedFileStage"; readonly file: FileEntry }
@@ -111,6 +121,25 @@ export function decodeKeyboardIntent(
 		return Option.none();
 	}
 
+	if (options.isBranchCompareModalOpen) {
+		if (key.name === "escape") {
+			return Option.some({ _tag: "CloseBranchCompareModal" });
+		}
+		if (key.name === "enter" || key.name === "return") {
+			return Option.some({ _tag: "ConfirmBranchCompareModal" });
+		}
+		if (key.name === "tab" && !key.ctrl && !key.meta) {
+			return Option.some({ _tag: "SwitchBranchModalField" });
+		}
+		if (key.name === "down") {
+			return Option.some({ _tag: "MoveBranchSelection", direction: 1 });
+		}
+		if (key.name === "up") {
+			return Option.some({ _tag: "MoveBranchSelection", direction: -1 });
+		}
+		return Option.none();
+	}
+
 	if (key.name === "escape" || key.name === "q") {
 		return Option.some({ _tag: "DestroyRenderer" });
 	}
@@ -119,15 +148,25 @@ export function decodeKeyboardIntent(
 		return Option.some({ _tag: "OpenHelpModal" });
 	}
 
+	if (key.ctrl && key.name === "l") {
+		return Option.some({ _tag: "ResetReviewMode" });
+	}
+
 	if (isUnmodifiedKey(key, "i") && options.canInitializeGitRepo) {
 		return Option.some({ _tag: "InitGitRepository" });
 	}
 
 	if (isUnmodifiedKey(key, "c") && options.stagedFileCount > 0) {
+		if (options.isBranchCompareMode) {
+			return Option.none();
+		}
 		return Option.some({ _tag: "OpenCommitModal" });
 	}
 
 	if (isUnmodifiedKey(key, "d")) {
+		if (options.isBranchCompareMode) {
+			return Option.none();
+		}
 		return pipe(
 			Option.fromNullable(options.selectedFile),
 			Option.map((selectedFile) => ({
@@ -139,6 +178,10 @@ export function decodeKeyboardIntent(
 
 	if (isUnmodifiedKey(key, "t")) {
 		return Option.some({ _tag: "OpenThemeModal" });
+	}
+
+	if (isUnmodifiedKey(key, "b")) {
+		return Option.some({ _tag: "OpenBranchCompareModal" });
 	}
 
 	if (isUnmodifiedKey(key, "p")) {
@@ -181,6 +224,9 @@ export function decodeKeyboardIntent(
 	}
 
 	if (!key.ctrl && !key.meta && (key.name === "space" || key.name === " ")) {
+		if (options.isBranchCompareMode) {
+			return Option.none();
+		}
 		return pipe(
 			Option.fromNullable(options.selectedFile),
 			Option.map((selectedFile) => ({

@@ -176,6 +176,7 @@ const SidebarRail = memo(function SidebarRail(props: SidebarRailProps) {
 interface DiffPanelProps {
 	readonly theme: ResolvedTheme;
 	readonly syntaxStyle: SyntaxStyle;
+	readonly reviewModeLabel: string;
 	readonly diffViewMode: "split" | "unified";
 	readonly selectedFile: FileEntry | null;
 	readonly selectedFileDiff: string;
@@ -204,12 +205,17 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 			flexDirection="column"
 			backgroundColor={props.theme.backgroundPanel}
 		>
-			<box paddingX={1} marginBottom={1}>
-				<text fg={props.theme.text}>
-					<strong>
-						{props.selectedFile ? props.selectedFile.label : "No file selected"}
-					</strong>
-				</text>
+			<box paddingX={1} marginBottom={1} justifyContent="space-between">
+				<box>
+					<text fg={props.theme.text}>
+						<strong>
+							{props.selectedFile ? props.selectedFile.label : "No file selected"}
+						</strong>
+					</text>
+				</box>
+				<box>
+					<text fg={props.theme.textMuted}>{props.reviewModeLabel}</text>
+				</box>
 			</box>
 
 			<box flexGrow={1} padding={1}>
@@ -283,6 +289,7 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 export interface ReviewerProps {
 	readonly theme: ResolvedTheme;
 	readonly syntaxStyle: SyntaxStyle;
+	readonly reviewModeLabel: string;
 	readonly files: FileEntry[];
 	readonly sidebarItems: SidebarItem[];
 	readonly selectedFile: FileEntry | null;
@@ -333,6 +340,7 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 			<DiffPanel
 				theme={props.theme}
 				syntaxStyle={props.syntaxStyle}
+				reviewModeLabel={props.reviewModeLabel}
 				diffViewMode={props.diffViewMode}
 				selectedFile={props.selectedFile}
 				selectedFileDiff={props.selectedFileDiff}
