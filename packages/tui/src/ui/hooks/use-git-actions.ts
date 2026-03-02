@@ -25,7 +25,15 @@ import type {
 	UpdateRemoteSyncState,
 	UpdateReviewMode,
 } from "#ui/state";
-import { isWorkingTreeReviewMode } from "#ui/state";
+import {
+	closeCommitModalState,
+	closeDiscardModalState,
+	isWorkingTreeReviewMode,
+	openCommitModalState,
+	openDiscardModalState,
+	setCommitModalErrorState,
+	setCommitModalMessageState,
+} from "#ui/state";
 
 interface RendererControls {
 	readonly height: number;
@@ -96,17 +104,13 @@ export function useGitActions(options: UseGitActionsOptions) {
 				renderRepoActionError,
 				{
 					onSuccess: () => {
-						updateCommitModal((current) =>
-							current.isOpen ? { isOpen: false } : current,
-						);
+						updateCommitModal(closeCommitModalState);
 					},
 				},
 			);
 			if (!result.ok) {
 				updateCommitModal((current) =>
-					current.isOpen
-						? { ...current, error: Option.some(result.error) }
-						: current,
+					setCommitModalErrorState(current, result.error),
 				);
 			}
 		},
@@ -115,16 +119,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 
 	const onCommitMessageChange = useCallback(
 		(value: string) => {
-			updateCommitModal((current) => {
-				if (!current.isOpen) {
-					return current;
-				}
-				return {
-					...current,
-					message: value,
-					error: Option.none(),
-				};
-			});
+			updateCommitModal((current) => setCommitModalMessageState(current, value));
 		},
 		[updateCommitModal],
 	);
@@ -144,9 +139,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 	);
 
 	const closeCommitModal = useCallback(() => {
-		updateCommitModal((current) =>
-			current.isOpen ? { isOpen: false } : current,
-		);
+		updateCommitModal(closeCommitModalState);
 	}, [updateCommitModal]);
 
 	const openCommitModal = useCallback(() => {
@@ -156,18 +149,12 @@ export function useGitActions(options: UseGitActionsOptions) {
 		if (stagedFileCount === 0) {
 			return;
 		}
-		updateCommitModal(() => ({
-			isOpen: true,
-			message: "",
-			error: Option.none(),
-		}));
+		updateCommitModal(openCommitModalState);
 		clearUiError();
 	}, [clearUiError, reviewMode, stagedFileCount, updateCommitModal]);
 
 	const closeDiscardModal = useCallback(() => {
-		updateDiscardModal((current) =>
-			current.isOpen ? { isOpen: false } : current,
-		);
+		updateDiscardModal(closeDiscardModalState);
 	}, [updateDiscardModal]);
 
 	const openDiscardModal = useCallback(
@@ -175,10 +162,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 			if (!isWorkingTreeReviewMode(reviewMode)) {
 				return;
 			}
-			updateDiscardModal(() => ({
-				isOpen: true,
-				file,
-			}));
+			updateDiscardModal(() => openDiscardModalState(file));
 			clearUiError();
 		},
 		[clearUiError, reviewMode, updateDiscardModal],
@@ -193,7 +177,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 			renderRepoActionError,
 			{
 				onSuccess: () => {
-					updateDiscardModal(() => ({ isOpen: false }));
+					updateDiscardModal(closeDiscardModalState);
 				},
 			},
 		);

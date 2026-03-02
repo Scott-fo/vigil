@@ -341,7 +341,6 @@ export function App(props: AppProps) {
 		stagedFileCount,
 		commitModal,
 		discardModal,
-		helpModal,
 		themeModal,
 		branchCompareModal,
 		canInitializeGitRepo,

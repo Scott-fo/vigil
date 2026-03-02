@@ -17,7 +17,6 @@ import type {
 	BranchCompareModalState,
 	CommitModalState,
 	DiscardModalState,
-	HelpModalState,
 	RemoteSyncState,
 	ReviewMode,
 	ThemeModalState,
@@ -31,6 +30,7 @@ import type {
 	UpdateThemeModal,
 	UpdateUiStatus,
 } from "#ui/state";
+import { closeHelpModalState, openHelpModalState } from "#ui/state";
 
 interface RendererControls {
 	readonly height: number;
@@ -51,7 +51,6 @@ interface UseRepoActionsOptions {
 	readonly stagedFileCount: number;
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
-	readonly helpModal: HelpModalState;
 	readonly themeModal: ThemeModalState;
 	readonly branchCompareModal: BranchCompareModalState;
 	readonly remoteSync: RemoteSyncState;
@@ -93,7 +92,6 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		stagedFileCount,
 		commitModal,
 		discardModal,
-		helpModal,
 		themeModal,
 		branchCompareModal,
 		remoteSync,
@@ -211,17 +209,12 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	);
 
 	const closeHelpModal = useCallback(() => {
-		updateHelpModal((current) =>
-			current.isOpen ? { isOpen: false } : current,
-		);
+		updateHelpModal(closeHelpModalState);
 	}, [updateHelpModal]);
 
 	const openHelpModal = useCallback(() => {
-		if (helpModal.isOpen) {
-			return;
-		}
-		updateHelpModal(() => ({ isOpen: true }));
-	}, [helpModal.isOpen, updateHelpModal]);
+		updateHelpModal(openHelpModalState);
+	}, [updateHelpModal]);
 
 	const {
 		openThemeModal,

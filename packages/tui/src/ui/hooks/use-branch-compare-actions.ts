@@ -8,7 +8,11 @@ import type {
 	UpdateBranchCompareModal,
 	UpdateReviewMode,
 } from "#ui/state";
-import { isBranchCompareReviewMode } from "#ui/state";
+import {
+	closeBranchCompareModalState,
+	isBranchCompareReviewMode,
+	openBranchCompareModalLoadingState,
+} from "#ui/state";
 
 interface UseBranchCompareActionsOptions {
 	readonly branchCompareModal: BranchCompareModalState;
@@ -80,19 +84,12 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 				? Option.some(reviewMode.selection.destinationRef)
 				: Option.none<string>();
 
-		updateBranchCompareModal(() => ({
-			isOpen: true,
-			loading: true,
-			availableRefs: [],
-			sourceQuery: "",
-			destinationQuery: "",
-			sourceRef: seededSourceRef,
-			destinationRef: seededDestinationRef,
-			activeField: "source",
-			selectedSourceIndex: 0,
-			selectedDestinationIndex: 0,
-			error: Option.none(),
-		}));
+		updateBranchCompareModal(() =>
+			openBranchCompareModalLoadingState({
+				sourceRef: seededSourceRef,
+				destinationRef: seededDestinationRef,
+			}),
+		);
 
 		void Effect.runPromise(
 			pipe(
@@ -157,9 +154,7 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 	]);
 
 	const closeBranchCompareModal = useCallback(() => {
-		updateBranchCompareModal((current) =>
-			current.isOpen ? { isOpen: false } : current,
-		);
+		updateBranchCompareModal(closeBranchCompareModalState);
 	}, [updateBranchCompareModal]);
 
 	const onBranchActivateField = useCallback(
@@ -357,7 +352,7 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 				destinationRef,
 			},
 		}));
-		updateBranchCompareModal(() => ({ isOpen: false }));
+		updateBranchCompareModal(closeBranchCompareModalState);
 		clearUiError();
 		void refreshFiles(true);
 	}, [

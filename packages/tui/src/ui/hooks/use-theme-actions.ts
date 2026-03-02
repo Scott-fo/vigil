@@ -1,12 +1,18 @@
-import { Effect, Match, Option, pipe } from "effect";
+import { Effect, Match, pipe } from "effect";
 import { type Dispatch, type SetStateAction, useCallback } from "react";
+import {
+	closeThemeModalState,
+	openThemeModalState,
+	setThemeModalSelectionState,
+	type ThemeModalState,
+	type UpdateThemeModal,
+} from "#ui/state";
 import {
 	persistThemePreferenceToTuiConfig,
 	type ThemeCatalog,
 	type ThemeMode,
 	type ThemePreferencePersistError,
 } from "#theme/theme";
-import type { ThemeModalState, UpdateThemeModal } from "#ui/state";
 
 interface UseThemeActionsOptions {
 	readonly themeModal: ThemeModalState;
@@ -54,11 +60,7 @@ export function useThemeActions(options: UseThemeActionsOptions) {
 		if (themeModal.isOpen) {
 			return;
 		}
-		updateThemeModal(() => ({
-			isOpen: true,
-			initialThemeName: themeName,
-			selectedThemeName: themeName,
-		}));
+		updateThemeModal(() => openThemeModalState(themeName));
 	}, [themeModal.isOpen, themeName, updateThemeModal]);
 
 	const closeThemeModal = useCallback(() => {
@@ -66,7 +68,7 @@ export function useThemeActions(options: UseThemeActionsOptions) {
 			return;
 		}
 		setThemeName(themeModal.initialThemeName);
-		updateThemeModal(() => ({ isOpen: false }));
+		updateThemeModal(closeThemeModalState);
 	}, [setThemeName, themeModal, updateThemeModal]);
 
 	const confirmThemeModal = useCallback(() => {
@@ -75,7 +77,7 @@ export function useThemeActions(options: UseThemeActionsOptions) {
 		}
 		const nextThemeName = themeModal.selectedThemeName;
 		setThemeName(nextThemeName);
-		updateThemeModal(() => ({ isOpen: false }));
+		updateThemeModal(closeThemeModalState);
 		void Effect.runPromise(
 			pipe(
 				persistThemePreferenceToTuiConfig({
@@ -123,9 +125,7 @@ export function useThemeActions(options: UseThemeActionsOptions) {
 			}
 			setThemeName(nextThemeName);
 			updateThemeModal((current) =>
-				current.isOpen
-					? { ...current, selectedThemeName: nextThemeName }
-					: current,
+				setThemeModalSelectionState(current, nextThemeName),
 			);
 		},
 		[setThemeName, themeModal, themeModalThemeNames, updateThemeModal],
@@ -141,9 +141,7 @@ export function useThemeActions(options: UseThemeActionsOptions) {
 			}
 			setThemeName(nextThemeName);
 			updateThemeModal((current) =>
-				current.isOpen
-					? { ...current, selectedThemeName: nextThemeName }
-					: current,
+				setThemeModalSelectionState(current, nextThemeName),
 			);
 		},
 		[setThemeName, themeCatalog.themes, themeModal.isOpen, updateThemeModal],

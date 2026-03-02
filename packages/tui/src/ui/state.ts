@@ -144,6 +144,135 @@ export const branchCompareModalAtom = Atom.make<BranchCompareModalState>({
 	isOpen: false,
 });
 
+export function closeCommitModalState(
+	current: CommitModalState,
+): CommitModalState {
+	return current.isOpen ? { isOpen: false } : current;
+}
+
+export function openCommitModalState(): CommitModalState {
+	return {
+		isOpen: true,
+		message: "",
+		error: Option.none(),
+	};
+}
+
+export function setCommitModalMessageState(
+	current: CommitModalState,
+	value: string,
+): CommitModalState {
+	if (!current.isOpen) {
+		return current;
+	}
+
+	if (current.message === value && Option.isNone(current.error)) {
+		return current;
+	}
+
+	return {
+		...current,
+		message: value,
+		error: Option.none(),
+	};
+}
+
+export function setCommitModalErrorState(
+	current: CommitModalState,
+	error: string,
+): CommitModalState {
+	if (!current.isOpen) {
+		return current;
+	}
+
+	if (Option.isSome(current.error) && current.error.value === error) {
+		return current;
+	}
+
+	return {
+		...current,
+		error: Option.some(error),
+	};
+}
+
+export function closeDiscardModalState(
+	current: DiscardModalState,
+): DiscardModalState {
+	return current.isOpen ? { isOpen: false } : current;
+}
+
+export function openDiscardModalState(file: FileEntry): DiscardModalState {
+	return {
+		isOpen: true,
+		file,
+	};
+}
+
+export function closeHelpModalState(current: HelpModalState): HelpModalState {
+	return current.isOpen ? { isOpen: false } : current;
+}
+
+export function openHelpModalState(current: HelpModalState): HelpModalState {
+	return current.isOpen ? current : { isOpen: true };
+}
+
+export function closeThemeModalState(
+	current: ThemeModalState,
+): ThemeModalState {
+	return current.isOpen ? { isOpen: false } : current;
+}
+
+export function openThemeModalState(themeName: string): ThemeModalState {
+	return {
+		isOpen: true,
+		initialThemeName: themeName,
+		selectedThemeName: themeName,
+	};
+}
+
+export function setThemeModalSelectionState(
+	current: ThemeModalState,
+	nextThemeName: string,
+): ThemeModalState {
+	if (!current.isOpen || current.selectedThemeName === nextThemeName) {
+		return current;
+	}
+
+	return {
+		...current,
+		selectedThemeName: nextThemeName,
+	};
+}
+
+export function closeBranchCompareModalState(
+	current: BranchCompareModalState,
+): BranchCompareModalState {
+	return current.isOpen ? { isOpen: false } : current;
+}
+
+interface OpenBranchCompareModalLoadingOptions {
+	readonly sourceRef: Option.Option<string>;
+	readonly destinationRef: Option.Option<string>;
+}
+
+export function openBranchCompareModalLoadingState(
+	options: OpenBranchCompareModalLoadingOptions,
+): BranchCompareModalState {
+	return {
+		isOpen: true,
+		loading: true,
+		availableRefs: [],
+		sourceQuery: "",
+		destinationQuery: "",
+		sourceRef: options.sourceRef,
+		destinationRef: options.destinationRef,
+		activeField: "source",
+		selectedSourceIndex: 0,
+		selectedDestinationIndex: 0,
+		error: Option.none(),
+	};
+}
+
 export interface FileViewState {
 	readonly files: FileEntry[];
 	readonly sidebarOpen: boolean;
