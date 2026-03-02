@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as FileSystem from "@effect/platform/FileSystem";
 import { Data, Effect, Match, Option, pipe } from "effect";
 
 function quoteShellArg(value: string): string {
@@ -76,11 +77,21 @@ export function writeChooserSelection(
 	filePath: string,
 ): Effect.Effect<void, ChooserWriteError> {
 	return pipe(
-		Effect.try({
-			try: () => fs.writeFileSync(chooserFilePath, `${filePath}\n`, "utf8"),
-			catch: () => new ChooserWriteError({ chooserFilePath }),
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			yield* pipe(
+				fs.writeFileString(chooserFilePath, `${filePath}\n`),
+				Effect.catchTag(
+					"SystemError",
+					() => Effect.fail(new ChooserWriteError({ chooserFilePath })),
+				),
+				Effect.catchTag(
+					"BadArgument",
+					() => Effect.fail(new ChooserWriteError({ chooserFilePath })),
+				),
+			);
 		}),
-		Effect.asVoid,
+		Effect.provide(BunFileSystem.layer),
 	);
 }
 
