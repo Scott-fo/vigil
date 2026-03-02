@@ -21,6 +21,7 @@ import { isFileStaged, type RepoActionError } from "#data/git";
 import { type ResolvedTheme, resolveThemeBundle, type ThemeMode } from "#theme/theme";
 import type { AppProps, FileEntry } from "#tui/types";
 import { CommitModal } from "#ui/components/commit-modal";
+import { DiscardModal } from "#ui/components/discard-modal";
 import { HelpModal } from "#ui/components/help-modal";
 import { Reviewer } from "#ui/components/reviewer";
 import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar";
@@ -32,10 +33,12 @@ import { useAppKeyboardInput } from "#ui/inputs";
 import { buildSidebarItems, type SidebarItem } from "#ui/sidebar";
 import {
 	commitModalAtom,
+	discardModalAtom,
 	fileViewStateAtom,
 	helpModalAtom,
 	themeModalAtom,
 	type UpdateCommitModal,
+	type UpdateDiscardModal,
 	type UpdateFileViewState,
 	type UpdateHelpModal,
 	type UpdateThemeModal,
@@ -65,6 +68,7 @@ interface AppContentProps {
 	readonly uiShowSplash: boolean;
 	readonly uiError: Option.Option<string>;
 	readonly isCommitModalOpen: boolean;
+	readonly isDiscardModalOpen: boolean;
 	readonly isHelpModalOpen: boolean;
 	readonly isThemeModalOpen: boolean;
 	readonly modalBackdropColor: RGBA;
@@ -90,6 +94,9 @@ interface AppContentProps {
 	readonly themeSearchQuery: string;
 	readonly onThemeSearchQueryChange: (value: string) => void;
 	readonly onSelectThemeInModal: (themeName: string) => void;
+	readonly discardModalFile: FileEntry | null;
+	readonly onCancelDiscardModal: () => void;
+	readonly onConfirmDiscardModal: () => void;
 }
 
 function AppContent(props: AppContentProps) {
@@ -114,6 +121,7 @@ function AppContent(props: AppContentProps) {
 					error={props.uiError}
 					isCommitModalOpen={
 						props.isCommitModalOpen ||
+						props.isDiscardModalOpen ||
 						props.isHelpModalOpen ||
 						props.isThemeModalOpen
 					}
@@ -133,6 +141,15 @@ function AppContent(props: AppContentProps) {
 					commitError={props.commitError}
 					onCommitMessageChange={props.onCommitMessageChange}
 					onCommitSubmit={props.onCommitSubmit}
+				/>
+			)}
+			{props.isDiscardModalOpen && props.discardModalFile && (
+				<DiscardModal
+					theme={props.theme}
+					modalBackdropColor={props.modalBackdropColor}
+					file={props.discardModalFile}
+					onCancel={props.onCancelDiscardModal}
+					onConfirm={props.onConfirmDiscardModal}
 				/>
 			)}
 			{props.isHelpModalOpen && (
@@ -165,6 +182,7 @@ export function App(props: AppProps) {
 	const [fileView, setFileView] = useAtom(fileViewStateAtom);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
 	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
+	const [discardModal, setDiscardModal] = useAtom(discardModalAtom);
 	const [helpModal, setHelpModal] = useAtom(helpModalAtom);
 	const [themeModal, setThemeModal] = useAtom(themeModalAtom);
 	const [snackbarNotice, setSnackbarNotice] = useState<
@@ -203,6 +221,12 @@ export function App(props: AppProps) {
 		},
 		[setThemeModal],
 	);
+	const updateDiscardModal = useCallback<UpdateDiscardModal>(
+		(update) => {
+			setDiscardModal(update);
+		},
+		[setDiscardModal],
+	);
 
 	const {
 		files,
@@ -224,8 +248,10 @@ export function App(props: AppProps) {
 		0.55,
 	);
 	const isCommitModalOpen = commitModal.isOpen;
+	const isDiscardModalOpen = discardModal.isOpen;
 	const isHelpModalOpen = helpModal.isOpen;
 	const isThemeModalOpen = themeModal.isOpen;
+	const discardModalFile = discardModal.isOpen ? discardModal.file : null;
 	const selectedThemeName = themeModal.isOpen
 		? themeModal.selectedThemeName
 		: themeName;
@@ -407,6 +433,8 @@ export function App(props: AppProps) {
 	const {
 		onCommitMessageChange,
 		onCommitSubmit,
+		onCancelDiscardModal,
+		onConfirmDiscardModal,
 		onKeyboardIntent,
 		onToggleDirectory,
 		onSelectFilePath,
@@ -417,11 +445,13 @@ export function App(props: AppProps) {
 		renderer,
 		diffScrollRef,
 		themeName,
+		themeMode,
 		themeCatalog: props.themeCatalog,
 		themeModalThemeNames: filteredThemeNames,
 		setThemeName,
 		stagedFileCount,
 		commitModal,
+		discardModal,
 		helpModal,
 		themeModal,
 		canInitializeGitRepo,
@@ -430,6 +460,7 @@ export function App(props: AppProps) {
 		updateCommitModal,
 		updateHelpModal,
 		updateThemeModal,
+		updateDiscardModal,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
 	});
@@ -454,6 +485,7 @@ export function App(props: AppProps) {
 
 	useAppKeyboardInput({
 		isCommitModalOpen,
+		isDiscardModalOpen,
 		isHelpModalOpen,
 		isThemeModalOpen,
 		canInitializeGitRepo,
@@ -470,6 +502,7 @@ export function App(props: AppProps) {
 			uiShowSplash={uiStatus.showSplash}
 			uiError={uiStatus.error}
 			isCommitModalOpen={isCommitModalOpen}
+			isDiscardModalOpen={isDiscardModalOpen}
 			isHelpModalOpen={isHelpModalOpen}
 			isThemeModalOpen={isThemeModalOpen}
 			modalBackdropColor={modalBackdropColor}
@@ -495,6 +528,9 @@ export function App(props: AppProps) {
 			themeSearchQuery={themeSearchQuery}
 			onThemeSearchQueryChange={setThemeSearchQuery}
 			onSelectThemeInModal={onSelectThemeInModal}
+			discardModalFile={discardModalFile}
+			onCancelDiscardModal={onCancelDiscardModal}
+			onConfirmDiscardModal={onConfirmDiscardModal}
 		/>
 	);
 }

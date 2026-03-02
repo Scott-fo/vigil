@@ -30,6 +30,7 @@ function context(
 ): KeyboardIntentContext {
 	return {
 		isCommitModalOpen: false,
+		isDiscardModalOpen: false,
 		isHelpModalOpen: false,
 		isThemeModalOpen: false,
 		canInitializeGitRepo: false,
@@ -83,6 +84,39 @@ describe("decodeKeyboardIntent", () => {
 		expect(Option.isSome(intent)).toBe(true);
 		if (Option.isSome(intent)) {
 			expect(intent.value._tag).toBe("ToggleDiffViewMode");
+		}
+	});
+
+	test("maps d to open discard modal for selected file", () => {
+		const intent = decodeKeyboardIntent(keyEvent({ name: "d" }), context());
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value).toEqual({
+				_tag: "OpenDiscardModal",
+				file: selectedFile,
+			});
+		}
+	});
+
+	test("maps escape to close discard modal when open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "escape" }),
+			context({ isDiscardModalOpen: true }),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("CloseDiscardModal");
+		}
+	});
+
+	test("maps return to confirm discard modal when open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "return" }),
+			context({ isDiscardModalOpen: true }),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("ConfirmDiscardModal");
 		}
 	});
 

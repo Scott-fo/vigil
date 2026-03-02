@@ -5,6 +5,7 @@ import type { FileEntry } from "#tui/types";
 
 interface UseAppKeyboardInputOptions {
 	isCommitModalOpen: boolean;
+	isDiscardModalOpen: boolean;
 	isHelpModalOpen: boolean;
 	isThemeModalOpen: boolean;
 	canInitializeGitRepo: boolean;
@@ -17,6 +18,7 @@ interface UseAppKeyboardInputOptions {
 
 export interface KeyboardIntentContext {
 	isCommitModalOpen: boolean;
+	isDiscardModalOpen: boolean;
 	isHelpModalOpen: boolean;
 	isThemeModalOpen: boolean;
 	canInitializeGitRepo: boolean;
@@ -32,6 +34,9 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "ToggleDiffViewMode" }
 	| { readonly _tag: "CloseCommitModal" }
 	| { readonly _tag: "OpenCommitModal" }
+	| { readonly _tag: "CloseDiscardModal" }
+	| { readonly _tag: "OpenDiscardModal"; readonly file: FileEntry }
+	| { readonly _tag: "ConfirmDiscardModal" }
 	| { readonly _tag: "CloseHelpModal" }
 	| { readonly _tag: "OpenHelpModal" }
 	| { readonly _tag: "InitGitRepository" }
@@ -74,6 +79,16 @@ export function decodeKeyboardIntent(
 			: Option.none();
 	}
 
+	if (options.isDiscardModalOpen) {
+		if (key.name === "escape") {
+			return Option.some({ _tag: "CloseDiscardModal" });
+		}
+		if (key.name === "enter" || key.name === "return") {
+			return Option.some({ _tag: "ConfirmDiscardModal" });
+		}
+		return Option.none();
+	}
+
 	if (options.isHelpModalOpen) {
 		return key.name === "escape"
 			? Option.some({ _tag: "CloseHelpModal" })
@@ -110,6 +125,16 @@ export function decodeKeyboardIntent(
 
 	if (isUnmodifiedKey(key, "c") && options.stagedFileCount > 0) {
 		return Option.some({ _tag: "OpenCommitModal" });
+	}
+
+	if (isUnmodifiedKey(key, "d")) {
+		return pipe(
+			Option.fromNullable(options.selectedFile),
+			Option.map((selectedFile) => ({
+				_tag: "OpenDiscardModal" as const,
+				file: selectedFile,
+			})),
+		);
 	}
 
 	if (isUnmodifiedKey(key, "t")) {
