@@ -3,6 +3,7 @@
 	"module": "src/index.tsx",
 	"type": "module",
 	"private": true,
+	"license": "MIT",
 	"bin": {
 		"vigil": "./bin/vigil"
 	},
@@ -21,6 +22,7 @@
 	},
 	"scripts": {
 		"dev": "bun run --watch src/index.tsx",
+		"install:global": "bun link",
 		"typecheck": "tsgo --noEmit",
 		"prepare": "effect-language-service patch"
 	},

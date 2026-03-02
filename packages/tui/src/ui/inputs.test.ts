@@ -260,6 +260,25 @@ describe("decodeKeyboardIntent", () => {
 		}
 	});
 
+	test("maps escape to close branch compare modal when open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "escape" }),
+			context({ isBranchCompareModalOpen: true }),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("CloseBranchCompareModal");
+		}
+	});
+
+	test("does not map ctrl+l when branch compare modal is open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "l", ctrl: true }),
+			context({ isBranchCompareModalOpen: true }),
+		);
+		expect(Option.isNone(intent)).toBe(true);
+	});
+
 	test("blocks staging/discard/commit shortcuts in branch compare mode", () => {
 		const commitIntent = decodeKeyboardIntent(
 			keyEvent({ name: "c" }),
