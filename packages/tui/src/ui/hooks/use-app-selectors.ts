@@ -20,6 +20,7 @@ import type {
 	ThemeModalState,
 	UiStatus,
 } from "#ui/state";
+import { deriveModalVisibility, isWorkingTreeReviewMode } from "#ui/state";
 
 function filterBranchRefs(
 	refs: ReadonlyArray<string>,
@@ -88,11 +89,20 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		0.55,
 	);
 
-	const isCommitModalOpen = commitModal.isOpen;
-	const isDiscardModalOpen = discardModal.isOpen;
-	const isHelpModalOpen = helpModal.isOpen;
-	const isThemeModalOpen = themeModal.isOpen;
-	const isBranchCompareModalOpen = branchCompareModal.isOpen;
+	const {
+		isCommitModalOpen,
+		isDiscardModalOpen,
+		isHelpModalOpen,
+		isThemeModalOpen,
+		isBranchCompareModalOpen,
+		isAnyModalOpen,
+	} = deriveModalVisibility({
+		commitModal,
+		discardModal,
+		helpModal,
+		themeModal,
+		branchCompareModal,
+	});
 	const discardModalFile = discardModal.isOpen ? discardModal.file : null;
 
 	const selectedThemeName = themeModal.isOpen
@@ -188,10 +198,9 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		}),
 	);
 
-	const reviewModeLabel =
-		reviewMode._tag === "working-tree"
-			? ""
-			: `Compare ${reviewMode.selection.sourceRef} -> ${reviewMode.selection.destinationRef}`;
+	const reviewModeLabel = isWorkingTreeReviewMode(reviewMode)
+		? ""
+		: `Compare ${reviewMode.selection.sourceRef} -> ${reviewMode.selection.destinationRef}`;
 
 	const selectedFile = useMemo(() => {
 		if (files.length === 0) {
@@ -253,6 +262,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
+		isAnyModalOpen,
 		discardModalFile,
 		selectedThemeName,
 		branchSourceQuery,

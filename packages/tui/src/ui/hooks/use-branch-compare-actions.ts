@@ -8,6 +8,7 @@ import type {
 	UpdateBranchCompareModal,
 	UpdateReviewMode,
 } from "#ui/state";
+import { isBranchCompareReviewMode } from "#ui/state";
 
 interface UseBranchCompareActionsOptions {
 	readonly branchCompareModal: BranchCompareModalState;
@@ -71,11 +72,11 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 		}
 
 		const seededSourceRef =
-			reviewMode._tag === "branch-compare"
+			isBranchCompareReviewMode(reviewMode)
 				? Option.some(reviewMode.selection.sourceRef)
 				: Option.none<string>();
 		const seededDestinationRef =
-			reviewMode._tag === "branch-compare"
+			isBranchCompareReviewMode(reviewMode)
 				? Option.some(reviewMode.selection.destinationRef)
 				: Option.none<string>();
 

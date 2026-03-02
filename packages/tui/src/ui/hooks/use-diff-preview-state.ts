@@ -7,6 +7,7 @@ import {
 } from "#data/git";
 import type { FileEntry } from "#tui/types";
 import type { ReviewMode } from "#ui/state";
+import { isWorkingTreeReviewMode } from "#ui/state";
 
 interface SelectedFilePreview {
 	readonly path: string;
@@ -74,7 +75,7 @@ export function useDiffPreviewState(
 
 		let cancelled = false;
 		const previewEffect =
-			reviewMode._tag === "working-tree"
+			isWorkingTreeReviewMode(reviewMode)
 				? loadFilePreview(selectedFile)
 				: loadBranchFilePreview(selectedFile.path, reviewMode.selection);
 

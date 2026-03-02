@@ -25,6 +25,7 @@ import type {
 	UpdateRemoteSyncState,
 	UpdateReviewMode,
 } from "#ui/state";
+import { isWorkingTreeReviewMode } from "#ui/state";
 
 interface RendererControls {
 	readonly height: number;
@@ -149,7 +150,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 	}, [updateCommitModal]);
 
 	const openCommitModal = useCallback(() => {
-		if (reviewMode._tag !== "working-tree") {
+		if (!isWorkingTreeReviewMode(reviewMode)) {
 			return;
 		}
 		if (stagedFileCount === 0) {
@@ -161,7 +162,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 			error: Option.none(),
 		}));
 		clearUiError();
-	}, [clearUiError, reviewMode._tag, stagedFileCount, updateCommitModal]);
+	}, [clearUiError, reviewMode, stagedFileCount, updateCommitModal]);
 
 	const closeDiscardModal = useCallback(() => {
 		updateDiscardModal((current) =>
@@ -171,7 +172,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 
 	const openDiscardModal = useCallback(
 		(file: FileEntry) => {
-			if (reviewMode._tag !== "working-tree") {
+			if (!isWorkingTreeReviewMode(reviewMode)) {
 				return;
 			}
 			updateDiscardModal(() => ({
@@ -180,7 +181,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 			}));
 			clearUiError();
 		},
-		[clearUiError, reviewMode._tag, updateDiscardModal],
+		[clearUiError, reviewMode, updateDiscardModal],
 	);
 
 	const confirmDiscardModal = useCallback(() => {
@@ -229,12 +230,12 @@ export function useGitActions(options: UseGitActionsOptions) {
 
 	const toggleSelectedFileStage = useCallback(
 		(file: FileEntry) => {
-			if (reviewMode._tag !== "working-tree") {
+			if (!isWorkingTreeReviewMode(reviewMode)) {
 				return;
 			}
 			runAction(toggleFileStage(file), renderRepoActionError);
 		},
-		[renderRepoActionError, reviewMode._tag, runAction],
+		[renderRepoActionError, reviewMode, runAction],
 	);
 
 	const initializeGitRepository = useCallback(() => {
@@ -247,13 +248,13 @@ export function useGitActions(options: UseGitActionsOptions) {
 	}, [canInitializeGitRepo, renderRepoActionError, runAction]);
 
 	const resetReviewMode = useCallback(() => {
-		if (reviewMode._tag === "working-tree") {
+		if (isWorkingTreeReviewMode(reviewMode)) {
 			return;
 		}
 		updateReviewMode(() => ({ _tag: "working-tree" }));
 		clearUiError();
 		void refreshFiles(true);
-	}, [clearUiError, refreshFiles, reviewMode._tag, updateReviewMode]);
+	}, [clearUiError, refreshFiles, reviewMode, updateReviewMode]);
 
 	const syncRemote = useCallback(
 		(direction: "pull" | "push") => {

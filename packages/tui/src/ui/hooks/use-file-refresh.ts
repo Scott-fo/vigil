@@ -7,6 +7,7 @@ import {
 	type RepoActionError,
 } from "#data/git";
 import type { ReviewMode, UpdateFileViewState, UpdateUiStatus } from "#ui/state";
+import { isWorkingTreeReviewMode } from "#ui/state";
 
 interface UseFileRefreshOptions {
 	readonly updateFileView: UpdateFileViewState;
@@ -84,7 +85,7 @@ export function buildFilesLoadEffect(
 	reviewMode: ReviewMode,
 	loaders: FileRefreshLoaders = defaultFileRefreshLoaders,
 ) {
-	return reviewMode._tag === "working-tree"
+	return isWorkingTreeReviewMode(reviewMode)
 		? loaders.loadWorkingTree()
 		: loaders.loadBranchCompare(reviewMode.selection);
 }

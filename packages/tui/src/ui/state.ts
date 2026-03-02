@@ -165,3 +165,55 @@ export const fileViewStateAtom = Atom.make<FileViewState>({
 	selectedPath: Option.none(),
 	loading: true,
 });
+
+export interface ModalVisibility {
+	readonly isCommitModalOpen: boolean;
+	readonly isDiscardModalOpen: boolean;
+	readonly isHelpModalOpen: boolean;
+	readonly isThemeModalOpen: boolean;
+	readonly isBranchCompareModalOpen: boolean;
+	readonly isAnyModalOpen: boolean;
+}
+
+interface DeriveModalVisibilityOptions {
+	readonly commitModal: CommitModalState;
+	readonly discardModal: DiscardModalState;
+	readonly helpModal: HelpModalState;
+	readonly themeModal: ThemeModalState;
+	readonly branchCompareModal: BranchCompareModalState;
+}
+
+export function deriveModalVisibility(
+	options: DeriveModalVisibilityOptions,
+): ModalVisibility {
+	const isCommitModalOpen = options.commitModal.isOpen;
+	const isDiscardModalOpen = options.discardModal.isOpen;
+	const isHelpModalOpen = options.helpModal.isOpen;
+	const isThemeModalOpen = options.themeModal.isOpen;
+	const isBranchCompareModalOpen = options.branchCompareModal.isOpen;
+	return {
+		isCommitModalOpen,
+		isDiscardModalOpen,
+		isHelpModalOpen,
+		isThemeModalOpen,
+		isBranchCompareModalOpen,
+		isAnyModalOpen:
+			isCommitModalOpen ||
+			isDiscardModalOpen ||
+			isHelpModalOpen ||
+			isThemeModalOpen ||
+			isBranchCompareModalOpen,
+	};
+}
+
+export function isWorkingTreeReviewMode(
+	reviewMode: ReviewMode,
+): reviewMode is Extract<ReviewMode, { readonly _tag: "working-tree" }> {
+	return reviewMode._tag === "working-tree";
+}
+
+export function isBranchCompareReviewMode(
+	reviewMode: ReviewMode,
+): reviewMode is Extract<ReviewMode, { readonly _tag: "branch-compare" }> {
+	return reviewMode._tag === "branch-compare";
+}

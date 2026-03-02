@@ -32,6 +32,7 @@ import {
 	remoteSyncAtom,
 	reviewModeAtom,
 	themeModalAtom,
+	isBranchCompareReviewMode,
 	type UpdateBranchCompareModal,
 	type UpdateCommitModal,
 	type UpdateDiscardModal,
@@ -159,6 +160,7 @@ export function App(props: AppProps) {
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
+		isAnyModalOpen,
 		discardModalFile,
 		selectedThemeName,
 		branchSourceQuery,
@@ -382,7 +384,7 @@ export function App(props: AppProps) {
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
-		isBranchCompareMode: reviewMode._tag === "branch-compare",
+		isBranchCompareMode: isBranchCompareReviewMode(reviewMode),
 		canInitializeGitRepo,
 		stagedFileCount,
 		visibleFilePaths,
@@ -397,13 +399,6 @@ export function App(props: AppProps) {
 			selectedFile,
 			reviewMode,
 		});
-
-	const isAnyModalOpen =
-		isCommitModalOpen ||
-		isDiscardModalOpen ||
-		isHelpModalOpen ||
-		isThemeModalOpen ||
-		isBranchCompareModalOpen;
 
 	return (
 		<box
