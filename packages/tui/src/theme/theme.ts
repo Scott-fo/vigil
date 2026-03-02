@@ -1,8 +1,6 @@
 import { RGBA, SyntaxStyle } from "@opentui/core";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as FileSystem from "@effect/platform/FileSystem";
-import type { Dirent } from "node:fs";
-import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Data, Effect, Option, pipe, Schema } from "effect";
@@ -41,6 +39,15 @@ const ThemeJsonSchema = Schema.Struct({
 	}),
 });
 type ThemeJson = Schema.Schema.Type<typeof ThemeJsonSchema>;
+
+const JsonUnknownFromStringSchema = Schema.parseJson();
+const JsonObjectFromStringSchema = Schema.parseJson(
+	Schema.Record({
+		key: Schema.String,
+		value: Schema.Unknown,
+	}),
+	{ space: 2 },
+);
 
 export type ThemeColors = {
 	primary: RGBA;
@@ -415,75 +422,83 @@ function resolveTheme(
 
 function loadThemeFile(
 	filePath: string,
-): Effect.Effect<ThemeJson, ThemeFileError> {
-	return pipe(
-		Effect.tryPromise({
-			try: () => Bun.file(filePath).text(),
-			catch: (error) =>
-				new ThemeFileReadError({
-					filePath,
-					message:
-						error instanceof Error
-							? error.message
-							: "Unable to read theme file.",
-				}),
-		}),
-		Effect.flatMap((raw) =>
-			Effect.try({
-				try: () => JSON.parse(raw) as unknown,
-				catch: (error) =>
+): Effect.Effect<ThemeJson, ThemeFileError, FileSystem.FileSystem> {
+	return Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const raw = yield* pipe(
+			fs.readFileString(filePath),
+			Effect.catchTag("SystemError", (cause) =>
+				Effect.fail(
+					new ThemeFileReadError({
+						filePath,
+						message: cause.message,
+					}),
+				),
+			),
+			Effect.catchTag("BadArgument", (cause) =>
+				Effect.fail(
+					new ThemeFileReadError({
+						filePath,
+						message: cause.message,
+					}),
+				),
+			),
+		);
+
+		const parsed = yield* pipe(
+			Schema.decodeUnknown(JsonUnknownFromStringSchema)(raw),
+			Effect.mapError(
+				() =>
 					new ThemeFileParseError({
 						filePath,
-						message:
-							error instanceof Error
-								? error.message
-								: "Invalid JSON in theme file.",
+						message: "Invalid JSON in theme file.",
 					}),
-			}),
-		),
-		Effect.flatMap((parsed) =>
-			pipe(
-				Schema.decodeUnknown(ThemeJsonSchema)(parsed),
-				Effect.mapError(() => new ThemeFileInvalidError({ filePath })),
 			),
-		),
-	);
+		);
+
+		return yield* pipe(
+			Schema.decodeUnknown(ThemeJsonSchema)(parsed),
+			Effect.mapError(() => new ThemeFileInvalidError({ filePath })),
+		);
+	});
 }
 
 async function loadThemesFromDirectory(
 	directory: string,
 ): Promise<Record<string, ThemeJson>> {
 	return Effect.runPromise(
-		Effect.gen(function* () {
-			const entries = yield* pipe(
-				Effect.tryPromise(() =>
-					readdir(directory, { withFileTypes: true, encoding: "utf8" }),
-				),
-				Effect.orElseSucceed(() => [] as Dirent[]),
-			);
+		pipe(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const entries = yield* pipe(
+					fs.readDirectory(directory),
+					Effect.orElseSucceed(() => [] as string[]),
+				);
 
-			const themes: Record<string, ThemeJson> = {};
-			for (const entry of entries) {
-				if (!entry.isFile() || !entry.name.endsWith(".json")) {
-					continue;
+				const themes: Record<string, ThemeJson> = {};
+				for (const entry of entries) {
+					if (!entry.endsWith(".json")) {
+						continue;
+					}
+
+					const filePath = path.join(directory, entry);
+					const parsedTheme = yield* pipe(loadThemeFile(filePath), Effect.option);
+					pipe(
+						parsedTheme,
+						Option.match({
+							onNone: () => undefined,
+							onSome: (theme) => {
+								const themeName = path.basename(entry, ".json");
+								themes[themeName] = theme;
+							},
+						}),
+					);
 				}
 
-				const filePath = path.join(directory, entry.name);
-				const parsedTheme = yield* pipe(loadThemeFile(filePath), Effect.option);
-				pipe(
-					parsedTheme,
-					Option.match({
-						onNone: () => undefined,
-						onSome: (theme) => {
-							const themeName = path.basename(entry.name, ".json");
-							themes[themeName] = theme;
-						},
-					}),
-				);
-			}
-
-			return themes;
-		}),
+				return themes;
+			}),
+			Effect.provide(BunFileSystem.layer),
+		),
 	);
 }
 
@@ -683,11 +698,11 @@ export function persistThemePreferenceToTuiConfig(preference: {
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
 			const configDir = path.dirname(filePath);
-				yield* pipe(
-					fs.makeDirectory(configDir, { recursive: true }),
-					Effect.catchTag("SystemError", (cause) =>
-						Effect.fail(
-							new ThemePreferenceConfigWriteError({
+			yield* pipe(
+				fs.makeDirectory(configDir, { recursive: true }),
+				Effect.catchTag("SystemError", (cause) =>
+					Effect.fail(
+						new ThemePreferenceConfigWriteError({
 							filePath,
 							message: cause.message,
 							cause,
@@ -700,11 +715,11 @@ export function persistThemePreferenceToTuiConfig(preference: {
 							filePath,
 							message: cause.message,
 							cause,
-							}),
-						),
+						}),
 					),
-				);
-				const config = yield* readTuiConfigObject(filePath);
+				),
+			);
+			const config = yield* readTuiConfigObject(filePath);
 			const nextConfig: Record<string, unknown> = {
 				...config,
 				theme: preference.theme,
@@ -753,25 +768,17 @@ function readTuiConfigObject(
 			return {} as Record<string, unknown>;
 		}
 
-		return yield* Effect.try({
-			try: () => {
-				const parsed = JSON.parse(raw);
-				if (
-					parsed === null ||
-					Array.isArray(parsed) ||
-					typeof parsed !== "object"
-				) {
-					throw new Error("Config root must be a JSON object.");
-				}
-				return parsed as Record<string, unknown>;
-			},
-			catch: (cause) =>
-				new ThemePreferenceConfigParseError({
-					filePath,
-					message: `Invalid ${TUI_CONFIG_FILE}.`,
-					cause,
-				}),
-		});
+		return yield* pipe(
+			Schema.decodeUnknown(JsonObjectFromStringSchema)(raw),
+			Effect.mapError(
+				(cause) =>
+					new ThemePreferenceConfigParseError({
+						filePath,
+						message: `Invalid ${TUI_CONFIG_FILE}.`,
+						cause,
+					}),
+			),
+		);
 	});
 }
 
@@ -781,15 +788,17 @@ function writeTuiConfigObject(
 ): Effect.Effect<void, ThemePreferenceConfigWriteError, FileSystem.FileSystem> {
 	return Effect.gen(function* () {
 		const fs = yield* FileSystem.FileSystem;
-		const encoded = yield* Effect.try({
-			try: () => JSON.stringify(config, null, 2),
-			catch: (cause) =>
-				new ThemePreferenceConfigWriteError({
-					filePath,
-					message: `Unable to encode ${TUI_CONFIG_FILE}.`,
-					cause,
-				}),
-		});
+		const encoded = yield* pipe(
+			Schema.encode(JsonObjectFromStringSchema)(config),
+			Effect.mapError(
+				(cause) =>
+					new ThemePreferenceConfigWriteError({
+						filePath,
+						message: `Unable to encode ${TUI_CONFIG_FILE}.`,
+						cause,
+					}),
+			),
+		);
 		yield* pipe(
 			fs.writeFileString(filePath, `${encoded}\n`),
 			Effect.catchTag("SystemError", (cause) =>
