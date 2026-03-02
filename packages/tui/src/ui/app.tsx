@@ -28,6 +28,7 @@ import type { AppProps, FileEntry } from "#tui/types";
 import { CommitModal } from "#ui/components/commit-modal";
 import { DiscardModal } from "#ui/components/discard-modal";
 import { HelpModal } from "#ui/components/help-modal";
+import { RemoteSyncStatus } from "#ui/components/remote-sync-status";
 import { Reviewer } from "#ui/components/reviewer";
 import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar";
 import { Splash } from "#ui/components/splash";
@@ -127,7 +128,6 @@ function AppContent(props: AppContentProps) {
 					syntaxStyle={props.syntaxStyle}
 					files={props.files}
 					sidebarItems={props.sidebarItems}
-					remoteSync={props.remoteSync}
 					selectedFile={props.selectedFile}
 					selectedFileDiff={props.selectedFileDiff}
 					selectedFileDiffNote={props.selectedFileDiffNote}
@@ -185,7 +185,12 @@ function AppContent(props: AppContentProps) {
 					onSelectTheme={props.onSelectThemeInModal}
 				/>
 			)}
-			<Snackbar theme={props.theme} notice={props.snackbarNotice} />
+			<RemoteSyncStatus theme={props.theme} state={props.remoteSync} />
+			<Snackbar
+				theme={props.theme}
+				notice={props.snackbarNotice}
+				top={props.remoteSync._tag === "running" ? 4 : 1}
+			/>
 		</box>
 	);
 }

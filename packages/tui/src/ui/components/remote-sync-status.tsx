@@ -22,8 +22,16 @@ export const RemoteSyncStatus = memo(function RemoteSyncStatus(
 
 	return (
 		<box
+			position="absolute"
+			top={1}
+			right={1}
+			zIndex={121}
 			paddingX={1}
-			marginBottom={1}
+			paddingY={0}
+			border
+			borderStyle="rounded"
+			borderColor={props.theme.primary}
+			backgroundColor={props.theme.backgroundPanel}
 			flexDirection="row"
 			alignItems="center"
 			gap={1}

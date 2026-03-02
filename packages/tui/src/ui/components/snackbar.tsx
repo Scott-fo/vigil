@@ -10,6 +10,7 @@ export type SnackbarNotice = {
 export interface SnackbarProps {
 	readonly theme: ResolvedTheme;
 	readonly notice: Option.Option<SnackbarNotice>;
+	readonly top?: number;
 }
 
 export const Snackbar = memo(function Snackbar(props: SnackbarProps) {
@@ -23,7 +24,7 @@ export const Snackbar = memo(function Snackbar(props: SnackbarProps) {
 	return (
 		<box
 			position="absolute"
-			top={1}
+			top={props.top ?? 1}
 			right={1}
 			zIndex={120}
 			maxWidth={56}

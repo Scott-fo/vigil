@@ -5,10 +5,8 @@ import { isFileStaged } from "#data/git";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import type { ResolvedTheme } from "#theme/theme";
 import type { FileEntry } from "#tui/types";
-import { RemoteSyncStatus } from "#ui/components/remote-sync-status";
 import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection";
 import { getStatusColor, type SidebarItem } from "#ui/sidebar";
-import type { RemoteSyncState } from "#ui/state";
 
 type SidebarHeaderItem = Extract<SidebarItem, { kind: "header" }>;
 type SidebarFileItem = Extract<SidebarItem, { kind: "file" }>;
@@ -90,7 +88,6 @@ interface SidebarPanelProps {
 	readonly theme: ResolvedTheme;
 	readonly files: FileEntry[];
 	readonly sidebarItems: SidebarItem[];
-	readonly remoteSync: RemoteSyncState;
 	readonly selectedFilePath: Option.Option<string>;
 	readonly onToggleDirectory: (path: string) => void;
 	readonly onSelectFilePath: (path: string) => void;
@@ -124,7 +121,6 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 					<strong>Changed Files ({props.files.length})</strong>
 				</text>
 			</box>
-			<RemoteSyncStatus theme={props.theme} state={props.remoteSync} />
 
 			<scrollbox ref={sidebarScrollRef} flexGrow={1}>
 				{props.sidebarItems.map((item) =>
@@ -289,7 +285,6 @@ export interface ReviewerProps {
 	readonly syntaxStyle: SyntaxStyle;
 	readonly files: FileEntry[];
 	readonly sidebarItems: SidebarItem[];
-	readonly remoteSync: RemoteSyncState;
 	readonly selectedFile: FileEntry | null;
 	readonly selectedFileDiff: string;
 	readonly selectedFileDiffNote: Option.Option<string>;
@@ -325,7 +320,6 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 					theme={props.theme}
 					files={props.files}
 					sidebarItems={props.sidebarItems}
-					remoteSync={props.remoteSync}
 					selectedFilePath={selectedFilePath}
 					onToggleDirectory={props.onToggleDirectory}
 					onSelectFilePath={props.onSelectFilePath}
