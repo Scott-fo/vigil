@@ -36,3 +36,6 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 .ref
 .reference/
 plans/
+AGENTS.md
+.agents/
+ATOM.md
