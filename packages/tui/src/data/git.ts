@@ -21,6 +21,11 @@ export class CommitMessageRequiredError extends Data.TaggedError(
 
 export type RepoActionError = GitCommandError | CommitMessageRequiredError;
 
+export interface BranchDiffSelection {
+	readonly sourceRef: string;
+	readonly destinationRef: string;
+}
+
 function decodeOutput(output?: Uint8Array | null): string {
 	if (!output) {
 		return "";
@@ -119,6 +124,44 @@ function renderGitCommandError(error: GitCommandError): string {
 	return error.stderr.trim() || error.stdout.trim() || error.fallbackMessage;
 }
 
+function buildBranchDiffRange(selection: BranchDiffSelection): string {
+	return `${selection.destinationRef}...${selection.sourceRef}`;
+}
+
+function normalizeBranchDiffSelection(
+	selection: BranchDiffSelection,
+): BranchDiffSelection {
+	return {
+		sourceRef: selection.sourceRef.trim(),
+		destinationRef: selection.destinationRef.trim(),
+	};
+}
+
+function normalizeStatusCode(raw: string, fallback: string): string {
+	const trimmed = raw.trim();
+	if (!trimmed) {
+		return fallback;
+	}
+	return trimmed[0] ?? fallback;
+}
+
+function toStatusPair(indexCode: string, worktreeCode: string): string {
+	const x = indexCode[0] ?? " ";
+	const y = worktreeCode[0] ?? " ";
+
+	if (x === "?" && y === "?") {
+		return "??";
+	}
+	if (x === "!" && y === "!") {
+		return "!!";
+	}
+	return `${x}${y}`;
+}
+
+function isRenameOrCopyStatus(code: string): boolean {
+	return code === "R" || code === "C";
+}
+
 export function isFileStaged(status: string): boolean {
 	if (status === "??") {
 		return false;
@@ -207,14 +250,14 @@ function parseStatusEntries(raw: string): StatusEntry[] {
 
 		const x = field[0] ?? " ";
 		const y = field[1] ?? " ";
-		const status = `${x}${y}`;
+		const status = toStatusPair(x, y);
 		const firstPath = field.slice(3);
 
 		if (!firstPath) {
 			continue;
 		}
 
-		if (x === "R" || x === "C") {
+		if (isRenameOrCopyStatus(x)) {
 			const renamedTo = fields[index];
 			index += 1;
 			entries.push({
@@ -226,6 +269,64 @@ function parseStatusEntries(raw: string): StatusEntry[] {
 		}
 
 		entries.push({ status, path: firstPath });
+	}
+
+	return entries;
+}
+
+function parseDiffNameStatusEntries(raw: string): StatusEntry[] {
+	const entries: StatusEntry[] = [];
+	const fields = raw.split("\0");
+	let index = 0;
+
+	while (index < fields.length) {
+		const field = fields[index] ?? "";
+		index += 1;
+		if (!field) {
+			continue;
+		}
+
+		const separatorIndex = field.indexOf("\t");
+		const statusRaw =
+			separatorIndex === -1 ? field : field.slice(0, separatorIndex);
+		const inlinePath =
+			separatorIndex === -1 ? "" : field.slice(separatorIndex + 1);
+		const code = normalizeStatusCode(statusRaw, "M");
+		const status = toStatusPair(code, " ");
+
+		if (isRenameOrCopyStatus(code)) {
+			const originalPath = inlinePath || fields[index] || "";
+			if (!inlinePath) {
+				index += 1;
+			}
+			const renamedPath = fields[index] || "";
+			index += 1;
+
+			if (!originalPath || !renamedPath) {
+				continue;
+			}
+
+			entries.push({
+				status,
+				path: renamedPath,
+				originalPath,
+			});
+			continue;
+		}
+
+		const path = inlinePath || fields[index] || "";
+		if (!inlinePath) {
+			index += 1;
+		}
+
+		if (!path) {
+			continue;
+		}
+
+		entries.push({
+			status,
+			path,
+		});
 	}
 
 	return entries;
@@ -343,6 +444,35 @@ function loadTrackedPreview(
 	);
 }
 
+function loadBranchPreview(
+	filePath: string,
+	selection: BranchDiffSelection,
+): Effect.Effect<FilePreview, never> {
+	return pipe(
+		runGitEffectAsync(
+			[
+				"diff",
+				"--no-color",
+				"--find-renames",
+				buildBranchDiffRange(selection),
+				"--",
+				filePath,
+			],
+			`Unable to load branch diff for ${filePath}.`,
+		),
+		Effect.match({
+			onFailure: (error) => ({
+				diff: "",
+				note: Option.some(renderGitCommandError(error)),
+			}),
+			onSuccess: (result) => ({
+				diff: result.stdout,
+				note: Option.none<string>(),
+			}),
+		}),
+	);
+}
+
 function toFileEntry(entry: StatusEntry): FileEntry {
 	const label =
 		entry.originalPath === undefined
@@ -381,6 +511,66 @@ export function loadFilePreview(
 		file.status === "??"
 			? loadUntrackedPreview(file.path)
 			: loadTrackedPreview(file.path),
+		Effect.map(withDefaultPreviewNote),
+	);
+}
+
+export function listComparableRefs(): Effect.Effect<
+	readonly string[],
+	GitCommandError
+> {
+	return pipe(
+		runGitEffectAsync(
+			["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+			"Unable to list git refs.",
+		),
+		Effect.map((result) => {
+			const refs = result.stdout
+				.split("\n")
+				.map((rawRef) => rawRef.trim())
+				.filter(
+					(refName) =>
+						refName.length > 0 &&
+						refName !== "HEAD" &&
+						!refName.endsWith("/HEAD"),
+				);
+			return [...new Set(refs)].sort((left, right) =>
+				left.localeCompare(right),
+			);
+		}),
+	);
+}
+
+export function loadFilesWithBranchDiffs(
+	selection: BranchDiffSelection,
+): Effect.Effect<FileEntry[], GitCommandError> {
+	return Effect.gen(function* () {
+		const normalizedSelection = normalizeBranchDiffSelection(selection);
+		const statusResult = yield* runGitEffectAsync(
+			[
+				"diff",
+				"--name-status",
+				"--find-renames",
+				"-z",
+				buildBranchDiffRange(normalizedSelection),
+			],
+			"Unable to load branch comparison file list.",
+		);
+
+		const statusEntries = parseDiffNameStatusEntries(statusResult.stdout).filter(
+			(entry) => entry.status !== "!!",
+		);
+		return statusEntries.map(toFileEntry);
+	});
+}
+
+export function loadBranchFilePreview(
+	filePath: string,
+	selection: BranchDiffSelection,
+): Effect.Effect<FileDiffPreview, never> {
+	const normalizedSelection = normalizeBranchDiffSelection(selection);
+	return pipe(
+		loadBranchPreview(filePath, normalizedSelection),
 		Effect.map(withDefaultPreviewNote),
 	);
 }
