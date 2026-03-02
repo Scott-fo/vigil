@@ -13,20 +13,28 @@ import {
 } from "#data/editor";
 import {
 	commitStagedChanges,
+	discardFileChanges,
 	initGitRepository,
 	pullFromRemote,
 	pushToRemote,
 	type RepoActionError,
 	toggleFileStage,
 } from "#data/git";
-import type { ThemeCatalog } from "#theme/theme";
+import {
+	persistThemePreferenceToTuiConfig,
+	type ThemeCatalog,
+	type ThemeMode,
+	type ThemePreferencePersistError,
+} from "#theme/theme";
 import type { FileEntry } from "#tui/types";
 import type { AppKeyboardIntent } from "#ui/inputs";
 import type {
 	CommitModalState,
+	DiscardModalState,
 	HelpModalState,
 	ThemeModalState,
 	UpdateCommitModal,
+	UpdateDiscardModal,
 	UpdateFileViewState,
 	UpdateHelpModal,
 	UpdateThemeModal,
@@ -45,17 +53,20 @@ interface UseRepoActionsOptions {
 	readonly renderer: RendererControls;
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
 	readonly themeName: string;
+	readonly themeMode: ThemeMode;
 	readonly themeCatalog: ThemeCatalog;
 	readonly themeModalThemeNames: ReadonlyArray<string>;
 	readonly setThemeName: Dispatch<SetStateAction<string>>;
 	readonly stagedFileCount: number;
 	readonly commitModal: CommitModalState;
+	readonly discardModal: DiscardModalState;
 	readonly helpModal: HelpModalState;
 	readonly themeModal: ThemeModalState;
 	readonly canInitializeGitRepo: boolean;
 	readonly updateFileView: UpdateFileViewState;
 	readonly updateUiStatus: UpdateUiStatus;
 	readonly updateCommitModal: UpdateCommitModal;
+	readonly updateDiscardModal: UpdateDiscardModal;
 	readonly updateHelpModal: UpdateHelpModal;
 	readonly updateThemeModal: UpdateThemeModal;
 	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
@@ -78,17 +89,20 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		renderer,
 		diffScrollRef,
 		themeName,
+		themeMode,
 		themeCatalog,
 		themeModalThemeNames,
 		setThemeName,
 		stagedFileCount,
 		commitModal,
+		discardModal,
 		helpModal,
 		themeModal,
 		canInitializeGitRepo,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
+		updateDiscardModal,
 		updateHelpModal,
 		updateThemeModal,
 		refreshFiles,
@@ -151,6 +165,24 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			return { ok: true };
 		},
 		[clearUiError, refreshFiles, setUiError],
+	);
+
+	const renderThemePreferencePersistError = useCallback(
+		(error: ThemePreferencePersistError) =>
+			Match.value(error).pipe(
+				Match.tag(
+					"ThemePreferenceConfigParseError",
+					() => "Invalid theme config. Fix it and try again.",
+				),
+				Match.tag("ThemePreferenceConfigReadError", (typedError) =>
+					typedError.message,
+				),
+				Match.tag("ThemePreferenceConfigWriteError", (typedError) =>
+					typedError.message,
+				),
+				Match.exhaustive,
+			),
+		[],
 	);
 
 	const submitCommit = useCallback(
@@ -282,6 +314,38 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		);
 	}, [updateCommitModal]);
 
+	const closeDiscardModal = useCallback(() => {
+		updateDiscardModal((current) =>
+			current.isOpen ? { isOpen: false } : current,
+		);
+	}, [updateDiscardModal]);
+
+	const openDiscardModal = useCallback(
+		(file: FileEntry) => {
+			updateDiscardModal(() => ({
+				isOpen: true,
+				file,
+			}));
+			clearUiError();
+		},
+		[clearUiError, updateDiscardModal],
+	);
+
+	const confirmDiscardModal = useCallback(() => {
+		if (!discardModal.isOpen) {
+			return;
+		}
+		runAction(
+			discardFileChanges(discardModal.file),
+			renderRepoActionError,
+			{
+				onSuccess: () => {
+					updateDiscardModal(() => ({ isOpen: false }));
+				},
+			},
+		);
+	}, [discardModal, renderRepoActionError, runAction, updateDiscardModal]);
+
 	const openCommitModal = useCallback(() => {
 		if (stagedFileCount === 0) {
 			return;
@@ -330,8 +394,34 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		if (!themeModal.isOpen) {
 			return;
 		}
+		const nextThemeName = themeModal.selectedThemeName;
+		setThemeName(nextThemeName);
 		updateThemeModal(() => ({ isOpen: false }));
-	}, [themeModal.isOpen, updateThemeModal]);
+		void Effect.runPromise(
+			pipe(
+				persistThemePreferenceToTuiConfig({
+					theme: nextThemeName,
+					mode: themeMode,
+				}),
+				Effect.match({
+					onFailure: (error) => {
+						setUiError(renderThemePreferencePersistError(error));
+					},
+					onSuccess: () => {
+						clearUiError();
+					},
+				}),
+			),
+		);
+	}, [
+		clearUiError,
+		renderThemePreferencePersistError,
+		setThemeName,
+		setUiError,
+		themeModal,
+		themeMode,
+		updateThemeModal,
+	]);
 
 	const moveThemeSelection = useCallback(
 		(direction: 1 | -1) => {
@@ -410,72 +500,84 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	const onKeyboardIntent = useCallback(
 		(intent: AppKeyboardIntent) =>
 			Match.value(intent).pipe(
-				Match.tag("DestroyRenderer", () => {
-					renderer.destroy();
+				Match.tagsExhaustive({
+					DestroyRenderer: () => {
+						renderer.destroy();
+					},
+					ToggleSidebar: () => {
+						toggleSidebar();
+					},
+					ToggleDiffViewMode: () => {
+						toggleDiffViewMode();
+					},
+					CloseCommitModal: () => {
+						closeCommitModal();
+					},
+					OpenCommitModal: () => {
+						openCommitModal();
+					},
+					CloseDiscardModal: () => {
+						closeDiscardModal();
+					},
+					OpenDiscardModal: (typedIntent) => {
+						openDiscardModal(typedIntent.file);
+					},
+					ConfirmDiscardModal: () => {
+						confirmDiscardModal();
+					},
+					CloseHelpModal: () => {
+						closeHelpModal();
+					},
+					OpenHelpModal: () => {
+						openHelpModal();
+					},
+					InitGitRepository: () => {
+						initializeGitRepository();
+					},
+					OpenThemeModal: () => {
+						openThemeModal();
+					},
+					CloseThemeModal: () => {
+						closeThemeModal();
+					},
+					ConfirmThemeModal: () => {
+						confirmThemeModal();
+					},
+					MoveThemeSelection: (typedIntent) => {
+						moveThemeSelection(typedIntent.direction);
+					},
+					SyncRemote: (typedIntent) => {
+						syncRemote(typedIntent.direction);
+					},
+					ScrollDiffHalfPage: (typedIntent) => {
+						const step = Math.max(6, Math.floor(renderer.height * 0.45));
+						diffScrollRef.current?.scrollBy({
+							x: 0,
+							y: typedIntent.direction === "up" ? -step : step,
+						});
+					},
+					OpenSelectedFile: (typedIntent) => {
+						openSelectedFile(typedIntent.filePath);
+					},
+					ToggleSelectedFileStage: (typedIntent) => {
+						toggleSelectedFileStage(typedIntent.file);
+					},
+					SelectVisiblePath: (typedIntent) => {
+						selectFilePath(typedIntent.path);
+					},
 				}),
-				Match.tag("ToggleSidebar", () => {
-					toggleSidebar();
-				}),
-				Match.tag("ToggleDiffViewMode", () => {
-					toggleDiffViewMode();
-				}),
-				Match.tag("CloseCommitModal", () => {
-					closeCommitModal();
-				}),
-				Match.tag("OpenCommitModal", () => {
-					openCommitModal();
-				}),
-				Match.tag("CloseHelpModal", () => {
-					closeHelpModal();
-				}),
-				Match.tag("OpenHelpModal", () => {
-					openHelpModal();
-				}),
-				Match.tag("InitGitRepository", () => {
-					initializeGitRepository();
-				}),
-				Match.tag("OpenThemeModal", () => {
-					openThemeModal();
-				}),
-				Match.tag("CloseThemeModal", () => {
-					closeThemeModal();
-				}),
-				Match.tag("ConfirmThemeModal", () => {
-					confirmThemeModal();
-				}),
-				Match.tag("MoveThemeSelection", (typedIntent) => {
-					moveThemeSelection(typedIntent.direction);
-				}),
-				Match.tag("SyncRemote", (typedIntent) => {
-					syncRemote(typedIntent.direction);
-				}),
-				Match.tag("ScrollDiffHalfPage", (typedIntent) => {
-					const step = Math.max(6, Math.floor(renderer.height * 0.45));
-					diffScrollRef.current?.scrollBy({
-						x: 0,
-						y: typedIntent.direction === "up" ? -step : step,
-					});
-				}),
-				Match.tag("OpenSelectedFile", (typedIntent) => {
-					openSelectedFile(typedIntent.filePath);
-				}),
-				Match.tag("ToggleSelectedFileStage", (typedIntent) => {
-					toggleSelectedFileStage(typedIntent.file);
-				}),
-				Match.tag("SelectVisiblePath", (typedIntent) => {
-					selectFilePath(typedIntent.path);
-				}),
-				Match.exhaustive,
 			),
 		[
 			closeCommitModal,
+			closeDiscardModal,
 			closeHelpModal,
 			closeThemeModal,
+			confirmDiscardModal,
 			confirmThemeModal,
-			helpModal.isOpen,
 			initializeGitRepository,
 			moveThemeSelection,
 			openCommitModal,
+			openDiscardModal,
 			openHelpModal,
 			openThemeModal,
 			openSelectedFile,
@@ -492,6 +594,8 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	return {
 		onCommitMessageChange,
 		onCommitSubmit,
+		onCancelDiscardModal: closeDiscardModal,
+		onConfirmDiscardModal: confirmDiscardModal,
 		onKeyboardIntent,
 		onToggleDirectory: toggleCollapsedDirectory,
 		onSelectFilePath: selectFilePath,
