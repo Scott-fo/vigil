@@ -81,6 +81,23 @@ export const discardModalAtom = Atom.make<DiscardModalState>({
 	isOpen: false,
 });
 
+export type RemoteSyncState =
+	| {
+			readonly _tag: "idle";
+	  }
+	| {
+			readonly _tag: "running";
+			readonly direction: "pull" | "push";
+	  };
+
+export type UpdateRemoteSyncState = (
+	update: (current: RemoteSyncState) => RemoteSyncState,
+) => void;
+
+export const remoteSyncAtom = Atom.make<RemoteSyncState>({
+	_tag: "idle",
+});
+
 export interface FileViewState {
 	readonly files: FileEntry[];
 	readonly sidebarOpen: boolean;
