@@ -1,4 +1,4 @@
-import { RGBA } from "@opentui/core";
+import type { RGBA } from "@opentui/core";
 import { memo } from "react";
 import type { ResolvedTheme } from "#theme/theme";
 
@@ -11,6 +11,7 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	{ keys: "j / k, ↑ / ↓", description: "Navigate changed files" },
 	{ keys: "space", description: "Stage / unstage selected file" },
 	{ keys: "enter / e / o", description: "Open selected file in editor" },
+	{ keys: "d", description: "Open discard confirmation for selected file" },
 	{ keys: "tab", description: "Toggle split / unified diff" },
 	{ keys: "Ctrl+u / Ctrl+d", description: "Scroll diff up / down" },
 	{ keys: "Ctrl+b", description: "Toggle sidebar" },
