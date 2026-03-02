@@ -71,9 +71,25 @@ function isQuestionMarkKey(key: KeyEvent): boolean {
 	return key.name === "?" || (key.name === "/" && key.shift);
 }
 
-export function decodeKeyboardIntent(
+type DecoderLayerResult =
+	| { readonly _tag: "pass" }
+	| {
+			readonly _tag: "handled";
+			readonly intent: Option.Option<AppKeyboardIntent>;
+	  };
+
+function passLayer(): DecoderLayerResult {
+	return { _tag: "pass" };
+}
+
+function handledLayer(
+	intent: Option.Option<AppKeyboardIntent>,
+): DecoderLayerResult {
+	return { _tag: "handled", intent };
+}
+
+function decodePriorityGlobalIntent(
 	key: KeyEvent,
-	options: KeyboardIntentContext,
 ): Option.Option<AppKeyboardIntent> {
 	if (key.ctrl && key.name === "c") {
 		return Option.some({ _tag: "DestroyRenderer" });
@@ -83,63 +99,89 @@ export function decodeKeyboardIntent(
 		return Option.some({ _tag: "ToggleSidebar" });
 	}
 
+	return Option.none();
+}
+
+function decodeModalIntentLayer(
+	key: KeyEvent,
+	options: KeyboardIntentContext,
+): DecoderLayerResult {
 	if (options.isCommitModalOpen) {
-		return key.name === "escape"
-			? Option.some({ _tag: "CloseCommitModal" })
-			: Option.none();
+		return handledLayer(
+			key.name === "escape"
+				? Option.some({ _tag: "CloseCommitModal" })
+				: Option.none(),
+		);
 	}
 
 	if (options.isDiscardModalOpen) {
 		if (key.name === "escape") {
-			return Option.some({ _tag: "CloseDiscardModal" });
+			return handledLayer(Option.some({ _tag: "CloseDiscardModal" }));
 		}
 		if (key.name === "enter" || key.name === "return") {
-			return Option.some({ _tag: "ConfirmDiscardModal" });
+			return handledLayer(Option.some({ _tag: "ConfirmDiscardModal" }));
 		}
-		return Option.none();
+		return handledLayer(Option.none());
 	}
 
 	if (options.isHelpModalOpen) {
-		return key.name === "escape"
-			? Option.some({ _tag: "CloseHelpModal" })
-			: Option.none();
+		return handledLayer(
+			key.name === "escape"
+				? Option.some({ _tag: "CloseHelpModal" })
+				: Option.none(),
+		);
 	}
 
 	if (options.isThemeModalOpen) {
 		if (key.name === "escape") {
-			return Option.some({ _tag: "CloseThemeModal" });
+			return handledLayer(Option.some({ _tag: "CloseThemeModal" }));
 		}
 		if (key.name === "enter" || key.name === "return") {
-			return Option.some({ _tag: "ConfirmThemeModal" });
+			return handledLayer(Option.some({ _tag: "ConfirmThemeModal" }));
 		}
 		if (key.name === "down") {
-			return Option.some({ _tag: "MoveThemeSelection", direction: 1 });
+			return handledLayer(
+				Option.some({ _tag: "MoveThemeSelection", direction: 1 }),
+			);
 		}
 		if (key.name === "up") {
-			return Option.some({ _tag: "MoveThemeSelection", direction: -1 });
+			return handledLayer(
+				Option.some({ _tag: "MoveThemeSelection", direction: -1 }),
+			);
 		}
-		return Option.none();
+		return handledLayer(Option.none());
 	}
 
 	if (options.isBranchCompareModalOpen) {
 		if (key.name === "escape") {
-			return Option.some({ _tag: "CloseBranchCompareModal" });
+			return handledLayer(Option.some({ _tag: "CloseBranchCompareModal" }));
 		}
 		if (key.name === "enter" || key.name === "return") {
-			return Option.some({ _tag: "ConfirmBranchCompareModal" });
+			return handledLayer(Option.some({ _tag: "ConfirmBranchCompareModal" }));
 		}
 		if (key.name === "tab" && !key.ctrl && !key.meta) {
-			return Option.some({ _tag: "SwitchBranchModalField" });
+			return handledLayer(Option.some({ _tag: "SwitchBranchModalField" }));
 		}
 		if (key.name === "down") {
-			return Option.some({ _tag: "MoveBranchSelection", direction: 1 });
+			return handledLayer(
+				Option.some({ _tag: "MoveBranchSelection", direction: 1 }),
+			);
 		}
 		if (key.name === "up") {
-			return Option.some({ _tag: "MoveBranchSelection", direction: -1 });
+			return handledLayer(
+				Option.some({ _tag: "MoveBranchSelection", direction: -1 }),
+			);
 		}
-		return Option.none();
+		return handledLayer(Option.none());
 	}
 
+	return passLayer();
+}
+
+function decodeGlobalIntentLayer(
+	key: KeyEvent,
+	options: KeyboardIntentContext,
+): Option.Option<AppKeyboardIntent> {
 	if (key.name === "escape" || key.name === "q") {
 		return Option.some({ _tag: "DestroyRenderer" });
 	}
@@ -157,10 +199,9 @@ export function decodeKeyboardIntent(
 	}
 
 	if (isUnmodifiedKey(key, "c") && options.stagedFileCount > 0) {
-		if (options.isBranchCompareMode) {
-			return Option.none();
-		}
-		return Option.some({ _tag: "OpenCommitModal" });
+		return options.isBranchCompareMode
+			? Option.none()
+			: Option.some({ _tag: "OpenCommitModal" });
 	}
 
 	if (isUnmodifiedKey(key, "d")) {
@@ -202,6 +243,13 @@ export function decodeKeyboardIntent(
 		});
 	}
 
+	return Option.none();
+}
+
+function decodeSelectionIntentLayer(
+	key: KeyEvent,
+	options: KeyboardIntentContext,
+): Option.Option<AppKeyboardIntent> {
 	const hasVisibleSelection =
 		options.visibleFilePaths.length > 0 && options.selectedVisibleIndex !== -1;
 	if (!hasVisibleSelection) {
@@ -256,6 +304,28 @@ export function decodeKeyboardIntent(
 	}
 
 	return Option.none();
+}
+
+export function decodeKeyboardIntent(
+	key: KeyEvent,
+	options: KeyboardIntentContext,
+): Option.Option<AppKeyboardIntent> {
+	const priorityGlobalIntent = decodePriorityGlobalIntent(key);
+	if (Option.isSome(priorityGlobalIntent)) {
+		return priorityGlobalIntent;
+	}
+
+	const modalIntent = decodeModalIntentLayer(key, options);
+	if (modalIntent._tag === "handled") {
+		return modalIntent.intent;
+	}
+
+	const globalIntent = decodeGlobalIntentLayer(key, options);
+	if (Option.isSome(globalIntent)) {
+		return globalIntent;
+	}
+
+	return decodeSelectionIntentLayer(key, options);
 }
 
 export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
