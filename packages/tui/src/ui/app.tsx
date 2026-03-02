@@ -444,7 +444,7 @@ export function App(props: AppProps) {
 	);
 	const reviewModeLabel =
 		reviewMode._tag === "working-tree"
-			? "Working tree"
+			? ""
 			: `Compare ${reviewMode.selection.sourceRef} -> ${reviewMode.selection.destinationRef}`;
 
 	const { refreshFiles } = useFileRefresh({
@@ -452,7 +452,7 @@ export function App(props: AppProps) {
 		updateUiStatus,
 		renderRepoActionError: formatRepoActionError,
 		reviewMode,
-		pollMs: 2000,
+		pollMs: 5000,
 		pollingEnabled: remoteSync._tag !== "running",
 	});
 

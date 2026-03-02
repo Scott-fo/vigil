@@ -205,16 +205,27 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 			flexDirection="column"
 			backgroundColor={props.theme.backgroundPanel}
 		>
-			<box paddingX={1} marginBottom={1} justifyContent="space-between">
-				<box>
+			<box paddingX={1} marginBottom={1} flexDirection="column" width="100%">
+				{props.reviewModeLabel.length > 0 ? (
+					<box
+						width="100%"
+						height={1}
+						justifyContent="flex-end"
+						backgroundColor={props.theme.backgroundPanel}
+					>
+						<text fg={props.theme.textMuted}>{props.reviewModeLabel}</text>
+					</box>
+				) : null}
+				<box
+					width="100%"
+					height={1}
+					backgroundColor={props.theme.backgroundPanel}
+				>
 					<text fg={props.theme.text}>
 						<strong>
 							{props.selectedFile ? props.selectedFile.label : "No file selected"}
 						</strong>
 					</text>
-				</box>
-				<box>
-					<text fg={props.theme.textMuted}>{props.reviewModeLabel}</text>
 				</box>
 			</box>
 
