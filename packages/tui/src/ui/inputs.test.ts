@@ -22,7 +22,6 @@ const selectedFile = FileEntry.make({
 	status: "M ",
 	path: "src/app.tsx",
 	label: "src/app.tsx",
-	diff: "@@ -1 +1 @@",
 });
 
 function context(

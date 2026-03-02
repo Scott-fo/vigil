@@ -7,7 +7,6 @@ function file(path: string, label = path): FileEntry {
 		status: "M ",
 		path,
 		label,
-		diff: "",
 	});
 }
 
