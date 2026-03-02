@@ -1,5 +1,3 @@
-/** biome-ignore-all lint/a11y/noStaticElementInteractions: <opentui> */
-
 import { useAtom } from "@effect-atom/atom-react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";

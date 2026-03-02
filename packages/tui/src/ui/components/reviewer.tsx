@@ -48,12 +48,17 @@ interface SidebarFileRowProps {
 	readonly onSelectFilePath: (path: string) => void;
 }
 
-const SidebarFileRow = memo(function SidebarFileRow(props: SidebarFileRowProps) {
+const SidebarFileRow = memo(function SidebarFileRow(
+	props: SidebarFileRowProps,
+) {
 	const { file } = props.item;
+
 	const selected =
 		Option.isSome(props.selectedFilePath) &&
 		props.selectedFilePath.value === file.path;
+
 	const staged = isFileStaged(file.status);
+
 	const rowBackground = selected
 		? staged
 			? props.theme.diffAddedLineNumberBg
@@ -61,6 +66,7 @@ const SidebarFileRow = memo(function SidebarFileRow(props: SidebarFileRowProps) 
 		: staged
 			? props.theme.diffAddedBg
 			: "transparent";
+
 	const filePrefix = "  ".repeat(props.item.depth);
 
 	return (
@@ -76,7 +82,9 @@ const SidebarFileRow = memo(function SidebarFileRow(props: SidebarFileRowProps) 
 			<text>
 				<span fg={props.theme.borderSubtle}>{filePrefix}</span>
 				<span fg={getStatusColor(file.status, props.theme)}>{file.status}</span>{" "}
-				<span fg={selected || staged ? props.theme.text : props.theme.textMuted}>
+				<span
+					fg={selected || staged ? props.theme.text : props.theme.textMuted}
+				>
 					{props.item.label}
 				</span>
 			</text>
@@ -223,7 +231,9 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 				>
 					<text fg={props.theme.text}>
 						<strong>
-							{props.selectedFile ? props.selectedFile.label : "No file selected"}
+							{props.selectedFile
+								? props.selectedFile.label
+								: "No file selected"}
 						</strong>
 					</text>
 				</box>
