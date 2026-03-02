@@ -1,38 +1,26 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
-import { Effect, Match, Option, pipe } from "effect";
+import { Effect, Option, pipe } from "effect";
 import {
 	type Dispatch,
 	type RefObject,
 	type SetStateAction,
 	useCallback,
 } from "react";
-import {
-	openFileInEditor,
-	renderOpenFileError,
-	writeChooserSelection,
-} from "#data/editor";
-import {
-	commitStagedChanges,
-	discardFileChanges,
-	initGitRepository,
-	pullFromRemote,
-	pushToRemote,
-	type RepoActionError,
-	toggleFileStage,
-} from "#data/git";
+import type { RepoActionError } from "#data/git";
 import { type ThemeCatalog, type ThemeMode } from "#theme/theme";
-import type { FileEntry } from "#tui/types";
 import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions";
-import type { AppKeyboardIntent } from "#ui/inputs";
+import { useGitActions } from "#ui/hooks/use-git-actions";
+import { routeKeyboardIntent } from "#ui/hooks/keyboard-intent-router";
 import { useThemeActions } from "#ui/hooks/use-theme-actions";
+import type { AppKeyboardIntent } from "#ui/inputs";
 import type {
 	BranchCompareModalState,
 	CommitModalState,
 	DiscardModalState,
 	HelpModalState,
+	RemoteSyncState,
 	ReviewMode,
 	ThemeModalState,
-	RemoteSyncState,
 	UpdateBranchCompareModal,
 	UpdateCommitModal,
 	UpdateDiscardModal,
@@ -182,59 +170,6 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		[clearUiError, refreshFiles, setUiError],
 	);
 
-	const submitCommit = useCallback(
-		(rawMessage: string) => {
-			const result = runAction(
-				commitStagedChanges(rawMessage),
-				renderRepoActionError,
-				{
-					onSuccess: () => {
-						updateCommitModal((current) =>
-							current.isOpen ? { isOpen: false } : current,
-						);
-					},
-				},
-			);
-			if (!result.ok) {
-				updateCommitModal((current) =>
-					current.isOpen
-						? { ...current, error: Option.some(result.error) }
-						: current,
-				);
-			}
-		},
-		[renderRepoActionError, runAction, updateCommitModal],
-	);
-
-	const openSelectedFile = useCallback(
-		(filePath: string) => {
-			if (Option.isSome(chooserFilePath)) {
-				void Effect.runPromise(
-					pipe(
-						writeChooserSelection(chooserFilePath.value, filePath),
-						Effect.match({
-							onFailure: (error) => {
-								setUiError(renderOpenFileError(error));
-							},
-							onSuccess: () => {
-								clearUiError();
-								renderer.destroy();
-							},
-						}),
-					),
-				);
-				return;
-			}
-
-			renderer.suspend();
-			runAction(openFileInEditor(filePath), renderOpenFileError, {
-				refreshOnFailure: true,
-			});
-			renderer.resume();
-		},
-		[chooserFilePath, clearUiError, renderer, runAction, setUiError],
-	);
-
 	const toggleCollapsedDirectory = useCallback(
 		(path: string) => {
 			updateFileView((current) => {
@@ -274,92 +209,6 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		},
 		[updateFileView],
 	);
-
-	const onCommitMessageChange = useCallback(
-		(value: string) => {
-			updateCommitModal((current) => {
-				if (!current.isOpen) {
-					return current;
-				}
-				return {
-					...current,
-					message: value,
-					error: Option.none(),
-				};
-			});
-		},
-		[updateCommitModal],
-	);
-
-	const onCommitSubmit = useCallback(
-		(payload: unknown) => {
-			if (typeof payload === "string") {
-				submitCommit(payload);
-				return;
-			}
-			if (!commitModal.isOpen) {
-				return;
-			}
-			submitCommit(commitModal.message);
-		},
-		[commitModal, submitCommit],
-	);
-
-	const closeCommitModal = useCallback(() => {
-		updateCommitModal((current) =>
-			current.isOpen ? { isOpen: false } : current,
-		);
-	}, [updateCommitModal]);
-
-	const closeDiscardModal = useCallback(() => {
-		updateDiscardModal((current) =>
-			current.isOpen ? { isOpen: false } : current,
-		);
-	}, [updateDiscardModal]);
-
-	const openDiscardModal = useCallback(
-		(file: FileEntry) => {
-			if (reviewMode._tag !== "working-tree") {
-				return;
-			}
-			updateDiscardModal(() => ({
-				isOpen: true,
-				file,
-			}));
-			clearUiError();
-		},
-		[clearUiError, reviewMode._tag, updateDiscardModal],
-	);
-
-	const confirmDiscardModal = useCallback(() => {
-		if (!discardModal.isOpen) {
-			return;
-		}
-		runAction(
-			discardFileChanges(discardModal.file),
-			renderRepoActionError,
-			{
-				onSuccess: () => {
-					updateDiscardModal(() => ({ isOpen: false }));
-				},
-			},
-		);
-	}, [discardModal, renderRepoActionError, runAction, updateDiscardModal]);
-
-	const openCommitModal = useCallback(() => {
-		if (reviewMode._tag !== "working-tree") {
-			return;
-		}
-		if (stagedFileCount === 0) {
-			return;
-		}
-		updateCommitModal(() => ({
-			isOpen: true,
-			message: "",
-			error: Option.none(),
-		}));
-		clearUiError();
-	}, [clearUiError, reviewMode._tag, stagedFileCount, updateCommitModal]);
 
 	const closeHelpModal = useCallback(() => {
 		updateHelpModal((current) =>
@@ -412,191 +261,109 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		renderRepoActionError,
 	});
 
-	const resetReviewMode = useCallback(() => {
-		if (reviewMode._tag === "working-tree") {
-			return;
-		}
-		updateReviewMode(() => ({ _tag: "working-tree" }));
-		clearUiError();
-		void refreshFiles(true);
-	}, [clearUiError, refreshFiles, reviewMode._tag, updateReviewMode]);
+	const {
+		onCommitMessageChange,
+		onCommitSubmit,
+		closeCommitModal,
+		openCommitModal,
+		closeDiscardModal,
+		openDiscardModal,
+		confirmDiscardModal,
+		openSelectedFile,
+		toggleSelectedFileStage,
+		initializeGitRepository,
+		resetReviewMode,
+		syncRemote,
+	} = useGitActions({
+		chooserFilePath,
+		renderer,
+		reviewMode,
+		remoteSync,
+		stagedFileCount,
+		canInitializeGitRepo,
+		commitModal,
+		discardModal,
+		updateCommitModal,
+		updateDiscardModal,
+		updateRemoteSync,
+		updateReviewMode,
+		refreshFiles,
+		clearUiError,
+		setUiError,
+		renderRepoActionError,
+		runAction,
+	});
 
-	const syncRemote = useCallback(
-		(direction: "pull" | "push") => {
-			if (remoteSync._tag === "running") {
-				return;
-			}
-
-			updateRemoteSync(() => ({
-				_tag: "running",
-				direction,
-			}));
-			clearUiError();
-
-			void Effect.runPromise(
-				pipe(
-					direction === "push" ? pushToRemote() : pullFromRemote(),
-					Effect.match({
-						onFailure: (error) => {
-							setUiError(renderRepoActionError(error));
-						},
-						onSuccess: () => {
-							clearUiError();
-							void refreshFiles(false);
-						},
-					}),
-					Effect.ensuring(
-						Effect.sync(() => {
-							updateRemoteSync(() => ({ _tag: "idle" }));
-						}),
-					),
-				),
-			);
+	const scrollDiffHalfPage = useCallback(
+		(direction: "up" | "down") => {
+			const step = Math.max(6, Math.floor(renderer.height * 0.45));
+			diffScrollRef.current?.scrollBy({
+				x: 0,
+				y: direction === "up" ? -step : step,
+			});
 		},
-		[
-			clearUiError,
-			refreshFiles,
-			remoteSync,
-			renderRepoActionError,
-			setUiError,
-			updateRemoteSync,
-		],
+		[diffScrollRef, renderer.height],
 	);
-
-	const toggleSelectedFileStage = useCallback(
-		(file: FileEntry) => {
-			if (reviewMode._tag !== "working-tree") {
-				return;
-			}
-			runAction(toggleFileStage(file), renderRepoActionError);
-		},
-		[renderRepoActionError, reviewMode._tag, runAction],
-	);
-
-	const initializeGitRepository = useCallback(() => {
-		if (!canInitializeGitRepo) {
-			return;
-		}
-		runAction(initGitRepository(), renderRepoActionError, {
-			refreshOnFailure: true,
-		});
-	}, [canInitializeGitRepo, renderRepoActionError, runAction]);
 
 	const onKeyboardIntent = useCallback(
 		(intent: AppKeyboardIntent) =>
-			Match.value(intent).pipe(
-				Match.tagsExhaustive({
-					DestroyRenderer: () => {
-						renderer.destroy();
-					},
-					ToggleSidebar: () => {
-						toggleSidebar();
-					},
-					ToggleDiffViewMode: () => {
-						toggleDiffViewMode();
-					},
-					CloseCommitModal: () => {
-						closeCommitModal();
-					},
-					OpenCommitModal: () => {
-						openCommitModal();
-					},
-					CloseDiscardModal: () => {
-						closeDiscardModal();
-					},
-					OpenDiscardModal: (typedIntent) => {
-						openDiscardModal(typedIntent.file);
-					},
-					ConfirmDiscardModal: () => {
-						confirmDiscardModal();
-					},
-					CloseHelpModal: () => {
-						closeHelpModal();
-					},
-					OpenHelpModal: () => {
-						openHelpModal();
-					},
-					InitGitRepository: () => {
-						initializeGitRepository();
-					},
-					OpenThemeModal: () => {
-						openThemeModal();
-					},
-					OpenBranchCompareModal: () => {
-						openBranchCompareModal();
-					},
-					CloseThemeModal: () => {
-						closeThemeModal();
-					},
-					CloseBranchCompareModal: () => {
-						closeBranchCompareModal();
-					},
-					ConfirmThemeModal: () => {
-						confirmThemeModal();
-					},
-					ConfirmBranchCompareModal: () => {
-						confirmBranchCompareModal();
-					},
-					MoveThemeSelection: (typedIntent) => {
-						moveThemeSelection(typedIntent.direction);
-					},
-					MoveBranchSelection: (typedIntent) => {
-						moveBranchSelection(typedIntent.direction);
-					},
-					SwitchBranchModalField: () => {
-						switchBranchField();
-					},
-					SyncRemote: (typedIntent) => {
-						syncRemote(typedIntent.direction);
-					},
-					ResetReviewMode: () => {
-						resetReviewMode();
-					},
-					ScrollDiffHalfPage: (typedIntent) => {
-						const step = Math.max(6, Math.floor(renderer.height * 0.45));
-						diffScrollRef.current?.scrollBy({
-							x: 0,
-							y: typedIntent.direction === "up" ? -step : step,
-						});
-					},
-					OpenSelectedFile: (typedIntent) => {
-						openSelectedFile(typedIntent.filePath);
-					},
-					ToggleSelectedFileStage: (typedIntent) => {
-						toggleSelectedFileStage(typedIntent.file);
-					},
-					SelectVisiblePath: (typedIntent) => {
-						selectFilePath(typedIntent.path);
-					},
-				}),
-			),
+			routeKeyboardIntent(intent, {
+				destroyRenderer: () => {
+					renderer.destroy();
+				},
+				toggleSidebar,
+				toggleDiffViewMode,
+				closeCommitModal,
+				openCommitModal,
+				closeDiscardModal,
+				openDiscardModal,
+				confirmDiscardModal,
+				closeHelpModal,
+				openHelpModal,
+				initializeGitRepository,
+				openThemeModal,
+				openBranchCompareModal,
+				closeThemeModal,
+				closeBranchCompareModal,
+				confirmThemeModal,
+				confirmBranchCompareModal,
+				moveThemeSelection,
+				moveBranchSelection,
+				switchBranchField,
+				syncRemote,
+				resetReviewMode,
+				scrollDiffHalfPage,
+				openSelectedFile,
+				toggleSelectedFileStage,
+				selectFilePath,
+			}),
 		[
+			closeBranchCompareModal,
 			closeCommitModal,
 			closeDiscardModal,
 			closeHelpModal,
 			closeThemeModal,
+			confirmBranchCompareModal,
 			confirmDiscardModal,
 			confirmThemeModal,
 			initializeGitRepository,
-			moveThemeSelection,
 			moveBranchSelection,
-			openCommitModal,
+			moveThemeSelection,
 			openBranchCompareModal,
+			openCommitModal,
 			openDiscardModal,
 			openHelpModal,
-			openThemeModal,
 			openSelectedFile,
-			renderer,
-			diffScrollRef,
+			openThemeModal,
+			renderer.destroy,
 			resetReviewMode,
+			scrollDiffHalfPage,
 			selectFilePath,
 			switchBranchField,
 			syncRemote,
 			toggleDiffViewMode,
-			toggleSidebar,
 			toggleSelectedFileStage,
-			closeBranchCompareModal,
-			confirmBranchCompareModal,
+			toggleSidebar,
 		],
 	);
 
