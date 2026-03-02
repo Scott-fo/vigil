@@ -1,22 +1,22 @@
 import { parseArgs } from "node:util";
 import { Data, Effect, Option, pipe } from "effect";
-import { type StartReviewerTuiError, startReviewerTuiProgram } from "#tui";
+import { type StartVigilTuiError, startVigilTuiProgram } from "#tui";
 
 class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;
 }> {}
 
-interface ReviewerCliArgs {
+interface VigilCliArgs {
 	readonly chooserFilePath: Option.Option<string>;
 	readonly help: boolean;
 }
 
-function reviewerUsage(): string {
+function vigilUsage(): string {
 	return [
-		"reviewer",
+		"vigil",
 		"",
 		"Usage:",
-		"  reviewer [--chooser-file <path>]",
+		"  vigil [--chooser-file <path>]",
 		"",
 		"Options:",
 		"  --chooser-file <path>  Write selected file path and exit",
@@ -24,9 +24,9 @@ function reviewerUsage(): string {
 	].join("\n");
 }
 
-function parseReviewerArgs(
+function parseVigilArgs(
 	argv: string[],
-): Effect.Effect<ReviewerCliArgs, CliArgumentError> {
+): Effect.Effect<VigilCliArgs, CliArgumentError> {
 	return pipe(
 		Effect.try({
 			try: () =>
@@ -73,16 +73,16 @@ function parseReviewerArgs(
 
 function runCli(
 	argv: string[],
-): Effect.Effect<void, CliArgumentError | StartReviewerTuiError> {
+): Effect.Effect<void, CliArgumentError | StartVigilTuiError> {
 	return Effect.gen(function* () {
-		const args = yield* parseReviewerArgs(argv);
+		const args = yield* parseVigilArgs(argv);
 		if (args.help) {
 			return yield* Effect.sync(() => {
-				console.log(reviewerUsage());
+				console.log(vigilUsage());
 			});
 		}
 
-		yield* startReviewerTuiProgram({
+		yield* startVigilTuiProgram({
 			chooserFilePath: args.chooserFilePath,
 		});
 	});
@@ -95,7 +95,7 @@ await Effect.runPromise(
 			Effect.sync(() => {
 				console.error(error.message);
 				console.error("");
-				console.error(reviewerUsage());
+				console.error(vigilUsage());
 				process.exitCode = 1;
 			}),
 		),

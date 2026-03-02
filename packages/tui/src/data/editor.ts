@@ -35,7 +35,7 @@ function resolveEditorCommand(): Effect.Effect<string, EditorEnvMissingError> {
 			onNone: () =>
 				Effect.fail(
 					new EditorEnvMissingError({
-						message: "Set VISUAL or EDITOR to open files from reviewer.",
+						message: "Set VISUAL or EDITOR to open files from vigil.",
 					}),
 				),
 			onSome: (editorCommand) => Effect.succeed(editorCommand),

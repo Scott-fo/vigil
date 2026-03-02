@@ -1,5 +1,5 @@
 export {
-	startReviewerTuiProgram,
-	type StartReviewerTuiOptions,
-	type StartReviewerTuiError,
+	startVigilTuiProgram,
+	type StartVigilTuiOptions,
+	type StartVigilTuiError,
 } from "./bootstrap";

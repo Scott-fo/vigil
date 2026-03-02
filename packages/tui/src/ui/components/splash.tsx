@@ -19,7 +19,7 @@ export const Splash = memo(function Splash(props: SplashProps) {
 			Match.value(error).pipe(
 				Match.when(
 					(message) => /not a git repository/i.test(message),
-					() => "Not a git repo, init to use reviewer.",
+					() => "Not a git repo, init to use vigil.",
 				),
 				Match.orElse((message) => message),
 			),
@@ -28,7 +28,7 @@ export const Splash = memo(function Splash(props: SplashProps) {
 	return (
 		<box flexGrow={1} justifyContent="center" alignItems="center">
 			<box flexDirection="column" rowGap={1} alignItems="center">
-				<ascii-font text="reviewer" font="block" color={props.theme.text} />
+				<ascii-font text="vigil" font="block" color={props.theme.text} />
 				<text fg={props.theme.textMuted}>{subtitle}</text>
 				{isNotGitRepositoryError ? (
 					<text fg={props.theme.textMuted}>Press i to git init.</text>

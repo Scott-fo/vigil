@@ -1,5 +1,5 @@
 {
-  "name": "@reviewer/tui",
+  "name": "@vigil/tui",
   "private": true,
   "type": "module",
   "imports": {

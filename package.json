@@ -1,10 +1,10 @@
 {
-	"name": "reviewer",
+	"name": "vigil",
 	"module": "src/index.tsx",
 	"type": "module",
 	"private": true,
 	"bin": {
-		"reviewer": "./bin/reviewer"
+		"vigil": "./bin/vigil"
 	},
 	"workspaces": [
 		"packages/*"

@@ -600,14 +600,14 @@ type ThemePreference = {
 const TUI_CONFIG_FILE = "tui.json";
 const LEGACY_TUI_CONFIG_FILE = "tui.json";
 
-function resolveReviewerDataDirectory(): string {
+function resolveVigilDataDirectory(): string {
 	return process.env.XDG_DATA_HOME
-		? path.join(process.env.XDG_DATA_HOME, "reviewer")
-		: path.join(os.homedir(), ".local", "share", "reviewer");
+		? path.join(process.env.XDG_DATA_HOME, "vigil")
+		: path.join(os.homedir(), ".local", "share", "vigil");
 }
 
 function resolveConfigFilePath(): string {
-	return path.join(resolveReviewerDataDirectory(), TUI_CONFIG_FILE);
+	return path.join(resolveVigilDataDirectory(), TUI_CONFIG_FILE);
 }
 
 function resolveLegacyConfigFilePath(): string {
@@ -629,8 +629,9 @@ function parseThemePreference(raw: Record<string, unknown>): ThemePreference {
 }
 
 function applyEnvThemePreference(preference: ThemePreference): ThemePreference {
-	const envTheme = process.env.REVIEWER_THEME;
-	const envMode = process.env.REVIEWER_THEME_MODE;
+	const envTheme = process.env.VIGIL_THEME ?? process.env.REVIEWER_THEME;
+	const envMode =
+		process.env.VIGIL_THEME_MODE ?? process.env.REVIEWER_THEME_MODE;
 	return {
 		...(envTheme
 			? { theme: envTheme }

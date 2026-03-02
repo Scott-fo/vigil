@@ -42,7 +42,7 @@ describe("Splash", () => {
 				await setup.renderOnce();
 			});
 			expect(setup.captureCharFrame()).toContain(
-				"Not a git repo, init to use reviewer.",
+				"Not a git repo, init to use vigil.",
 			);
 			expect(setup.captureCharFrame()).toContain("Press i to git init.");
 		} finally {

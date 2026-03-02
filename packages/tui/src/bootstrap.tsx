@@ -9,7 +9,7 @@ import {
 } from "#theme/theme";
 import { App } from "#ui/app";
 
-export interface StartReviewerTuiOptions {
+export interface StartVigilTuiOptions {
 	readonly chooserFilePath: Option.Option<string>;
 }
 
@@ -39,7 +39,7 @@ export class AppRenderError extends Data.TaggedError("AppRenderError")<{
 	readonly cause: unknown;
 }> {}
 
-export type StartReviewerTuiError =
+export type StartVigilTuiError =
 	| ThemeCatalogLoadError
 	| ThemePreferenceLoadError
 	| RendererCreateError
@@ -61,9 +61,9 @@ function selectInitialThemeName(
 	return themeCatalog.order[0] ?? "opencode";
 }
 
-export function startReviewerTuiProgram(
-	options: StartReviewerTuiOptions,
-): Effect.Effect<void, StartReviewerTuiError> {
+export function startVigilTuiProgram(
+	options: StartVigilTuiOptions,
+): Effect.Effect<void, StartVigilTuiError> {
 	return Effect.gen(function* () {
 		const themeCatalog = yield* Effect.tryPromise({
 			try: () => loadThemeCatalog(),
@@ -120,7 +120,7 @@ export function startReviewerTuiProgram(
 				),
 			catch: (cause) =>
 				new AppRenderError({
-					message: "Failed to render reviewer UI.",
+					message: "Failed to render vigil UI.",
 					cause,
 				}),
 		});
