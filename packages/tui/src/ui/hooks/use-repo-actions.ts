@@ -15,22 +15,17 @@ import {
 	commitStagedChanges,
 	discardFileChanges,
 	initGitRepository,
-	listComparableRefs,
 	pullFromRemote,
 	pushToRemote,
 	type RepoActionError,
 	toggleFileStage,
 } from "#data/git";
-import {
-	persistThemePreferenceToTuiConfig,
-	type ThemeCatalog,
-	type ThemeMode,
-	type ThemePreferencePersistError,
-} from "#theme/theme";
+import { type ThemeCatalog, type ThemeMode } from "#theme/theme";
 import type { FileEntry } from "#tui/types";
+import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions";
 import type { AppKeyboardIntent } from "#ui/inputs";
+import { useThemeActions } from "#ui/hooks/use-theme-actions";
 import type {
-	BranchCompareField,
 	BranchCompareModalState,
 	CommitModalState,
 	DiscardModalState,
@@ -185,24 +180,6 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			return { ok: true };
 		},
 		[clearUiError, refreshFiles, setUiError],
-	);
-
-	const renderThemePreferencePersistError = useCallback(
-		(error: ThemePreferencePersistError) =>
-			Match.value(error).pipe(
-				Match.tag(
-					"ThemePreferenceConfigParseError",
-					() => "Invalid theme config. Fix it and try again.",
-				),
-				Match.tag("ThemePreferenceConfigReadError", (typedError) =>
-					typedError.message,
-				),
-				Match.tag("ThemePreferenceConfigWriteError", (typedError) =>
-					typedError.message,
-				),
-				Match.exhaustive,
-			),
-		[],
 	);
 
 	const submitCommit = useCallback(
@@ -397,448 +374,43 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		updateHelpModal(() => ({ isOpen: true }));
 	}, [helpModal.isOpen, updateHelpModal]);
 
-	const openThemeModal = useCallback(() => {
-		if (themeModal.isOpen) {
-			return;
-		}
-		updateThemeModal(() => ({
-			isOpen: true,
-			initialThemeName: themeName,
-			selectedThemeName: themeName,
-		}));
-	}, [themeModal.isOpen, themeName, updateThemeModal]);
-
-	const closeThemeModal = useCallback(() => {
-		if (!themeModal.isOpen) {
-			return;
-		}
-		setThemeName(themeModal.initialThemeName);
-		updateThemeModal(() => ({ isOpen: false }));
-	}, [setThemeName, themeModal, updateThemeModal]);
-
-	const confirmThemeModal = useCallback(() => {
-		if (!themeModal.isOpen) {
-			return;
-		}
-		const nextThemeName = themeModal.selectedThemeName;
-		setThemeName(nextThemeName);
-		updateThemeModal(() => ({ isOpen: false }));
-		void Effect.runPromise(
-			pipe(
-				persistThemePreferenceToTuiConfig({
-					theme: nextThemeName,
-					mode: themeMode,
-				}),
-				Effect.match({
-					onFailure: (error) => {
-						setUiError(renderThemePreferencePersistError(error));
-					},
-					onSuccess: () => {
-						clearUiError();
-					},
-				}),
-			),
-		);
-	}, [
-		clearUiError,
-		renderThemePreferencePersistError,
-		setThemeName,
-		setUiError,
+	const {
+		openThemeModal,
+		closeThemeModal,
+		confirmThemeModal,
+		moveThemeSelection,
+		selectThemeInModal,
+	} = useThemeActions({
 		themeModal,
+		themeModalThemeNames,
+		themeCatalog,
+		themeName,
 		themeMode,
+		setThemeName,
 		updateThemeModal,
-	]);
+		clearUiError,
+		setUiError,
+	});
 
-	const moveThemeSelection = useCallback(
-		(direction: 1 | -1) => {
-			if (!themeModal.isOpen) {
-				return;
-			}
-			if (themeModalThemeNames.length === 0) {
-				return;
-			}
-			const currentIndex = themeModalThemeNames.indexOf(
-				themeModal.selectedThemeName,
-			);
-			const baseIndex = currentIndex === -1 ? 0 : currentIndex;
-			const nextIndex =
-				(baseIndex + direction + themeModalThemeNames.length) %
-				themeModalThemeNames.length;
-			const nextThemeName =
-				themeModalThemeNames[nextIndex] ?? themeModal.selectedThemeName;
-			if (nextThemeName === themeModal.selectedThemeName) {
-				return;
-			}
-			setThemeName(nextThemeName);
-			updateThemeModal((current) =>
-				current.isOpen
-					? { ...current, selectedThemeName: nextThemeName }
-					: current,
-			);
-		},
-		[setThemeName, themeModal, themeModalThemeNames, updateThemeModal],
-	);
-
-	const selectThemeInModal = useCallback(
-		(nextThemeName: string) => {
-			if (!themeModal.isOpen) {
-				return;
-			}
-			if (!themeCatalog.themes[nextThemeName]) {
-				return;
-			}
-			setThemeName(nextThemeName);
-			updateThemeModal((current) =>
-				current.isOpen
-					? { ...current, selectedThemeName: nextThemeName }
-					: current,
-			);
-		},
-		[setThemeName, themeCatalog.themes, themeModal.isOpen, updateThemeModal],
-	);
-
-	const filterComparableRefs = useCallback(
-		(refs: ReadonlyArray<string>, query: string): ReadonlyArray<string> => {
-			const normalizedQuery = query.trim().toLowerCase();
-			if (normalizedQuery.length === 0) {
-				return refs;
-			}
-			return refs.filter((refName) =>
-				refName.toLowerCase().includes(normalizedQuery),
-			);
-		},
-		[],
-	);
-
-	const resolveDestinationRef = useCallback(
-		(
-			refs: ReadonlyArray<string>,
-			sourceRef: Option.Option<string>,
-		): Option.Option<string> => {
-			const sourceValue = Option.match(sourceRef, {
-				onNone: () => undefined,
-				onSome: (value) => value,
-			});
-			const preferred = refs.find(
-				(refName) =>
-					(refName === "main" || refName === "master") && refName !== sourceValue,
-			);
-			if (preferred) {
-				return Option.some(preferred);
-			}
-			const firstDifferent = refs.find((refName) => refName !== sourceValue);
-			if (firstDifferent) {
-				return Option.some(firstDifferent);
-			}
-			return Option.fromNullable(refs[0]);
-		},
-		[],
-	);
-
-	const openBranchCompareModal = useCallback(() => {
-		if (branchCompareModal.isOpen) {
-			return;
-		}
-
-		const seededSourceRef =
-			reviewMode._tag === "branch-compare"
-				? Option.some(reviewMode.selection.sourceRef)
-				: Option.none<string>();
-		const seededDestinationRef =
-			reviewMode._tag === "branch-compare"
-				? Option.some(reviewMode.selection.destinationRef)
-				: Option.none<string>();
-
-		updateBranchCompareModal(() => ({
-			isOpen: true,
-			loading: true,
-			availableRefs: [],
-			sourceQuery: "",
-			destinationQuery: "",
-			sourceRef: seededSourceRef,
-			destinationRef: seededDestinationRef,
-			activeField: "source",
-			selectedSourceIndex: 0,
-			selectedDestinationIndex: 0,
-			error: Option.none(),
-		}));
-
-		void Effect.runPromise(
-			pipe(
-				listComparableRefs(),
-				Effect.match({
-					onFailure: (error) => {
-						updateBranchCompareModal((current) =>
-							current.isOpen
-								? {
-										...current,
-										loading: false,
-										error: Option.some(renderRepoActionError(error)),
-									}
-								: current,
-						);
-					},
-					onSuccess: (refs) => {
-						updateBranchCompareModal((current) => {
-							if (!current.isOpen) {
-								return current;
-							}
-
-							const sourceRef =
-								Option.isSome(current.sourceRef) &&
-								refs.includes(current.sourceRef.value)
-									? current.sourceRef
-									: Option.fromNullable(refs[0]);
-							const destinationRef =
-								Option.isSome(current.destinationRef) &&
-								refs.includes(current.destinationRef.value)
-									? current.destinationRef
-									: resolveDestinationRef(refs, sourceRef);
-							const selectedSourceIndex = Option.match(sourceRef, {
-								onNone: () => 0,
-								onSome: (refName) => Math.max(refs.indexOf(refName), 0),
-							});
-							const selectedDestinationIndex = Option.match(destinationRef, {
-								onNone: () => 0,
-								onSome: (refName) => Math.max(refs.indexOf(refName), 0),
-							});
-
-							return {
-								...current,
-								loading: false,
-								availableRefs: refs,
-								sourceRef,
-								destinationRef,
-								selectedSourceIndex,
-								selectedDestinationIndex,
-								error: Option.none(),
-							};
-						});
-					},
-				}),
-			),
-		);
-	}, [
-		branchCompareModal.isOpen,
-		renderRepoActionError,
-		resolveDestinationRef,
+	const {
+		openBranchCompareModal,
+		closeBranchCompareModal,
+		confirmBranchCompareModal,
+		moveBranchSelection,
+		switchBranchField,
+		onBranchSourceQueryChange,
+		onBranchDestinationQueryChange,
+		onBranchSelectRef,
+		onBranchActivateField,
+	} = useBranchCompareActions({
+		branchCompareModal,
 		reviewMode,
 		updateBranchCompareModal,
-	]);
-
-	const closeBranchCompareModal = useCallback(() => {
-		updateBranchCompareModal((current) =>
-			current.isOpen ? { isOpen: false } : current,
-		);
-	}, [updateBranchCompareModal]);
-
-	const activateBranchField = useCallback(
-		(field: BranchCompareField) => {
-			updateBranchCompareModal((current) =>
-				current.isOpen ? { ...current, activeField: field } : current,
-			);
-		},
-		[updateBranchCompareModal],
-	);
-
-	const updateBranchQuery = useCallback(
-		(field: BranchCompareField, query: string) => {
-			updateBranchCompareModal((current) => {
-				if (!current.isOpen) {
-					return current;
-				}
-				const filtered = filterComparableRefs(current.availableRefs, query);
-				const currentRef =
-					field === "source" ? current.sourceRef : current.destinationRef;
-				const nextRef =
-					Option.isSome(currentRef) && filtered.includes(currentRef.value)
-						? currentRef
-						: Option.fromNullable(filtered[0]);
-				const nextIndex = Option.match(nextRef, {
-					onNone: () => 0,
-					onSome: (refName) => Math.max(filtered.indexOf(refName), 0),
-				});
-				return field === "source"
-					? {
-							...current,
-							sourceQuery: query,
-							sourceRef: nextRef,
-							selectedSourceIndex: nextIndex,
-							error: Option.none(),
-						}
-					: {
-							...current,
-							destinationQuery: query,
-							destinationRef: nextRef,
-							selectedDestinationIndex: nextIndex,
-							error: Option.none(),
-						};
-			});
-		},
-		[filterComparableRefs, updateBranchCompareModal],
-	);
-
-	const onBranchSourceQueryChange = useCallback(
-		(value: string) => {
-			updateBranchQuery("source", value);
-		},
-		[updateBranchQuery],
-	);
-
-	const onBranchDestinationQueryChange = useCallback(
-		(value: string) => {
-			updateBranchQuery("destination", value);
-		},
-		[updateBranchQuery],
-	);
-
-	const selectBranchRef = useCallback(
-		(refName: string) => {
-			updateBranchCompareModal((current) => {
-				if (!current.isOpen) {
-					return current;
-				}
-				const activeField = current.activeField;
-				const activeQuery =
-					activeField === "source"
-						? current.sourceQuery
-						: current.destinationQuery;
-				const filtered = filterComparableRefs(current.availableRefs, activeQuery);
-				const nextIndex = Math.max(filtered.indexOf(refName), 0);
-
-				return activeField === "source"
-					? {
-							...current,
-							sourceRef: Option.some(refName),
-							sourceQuery: refName,
-							selectedSourceIndex: nextIndex,
-							error: Option.none(),
-						}
-					: {
-							...current,
-							destinationRef: Option.some(refName),
-							destinationQuery: refName,
-							selectedDestinationIndex: nextIndex,
-							error: Option.none(),
-						};
-			});
-		},
-		[filterComparableRefs, updateBranchCompareModal],
-	);
-
-	const moveBranchSelection = useCallback(
-		(direction: 1 | -1) => {
-			updateBranchCompareModal((current) => {
-				if (!current.isOpen || current.loading) {
-					return current;
-				}
-				const activeField = current.activeField;
-				const activeQuery =
-					activeField === "source"
-						? current.sourceQuery
-						: current.destinationQuery;
-				const filtered = filterComparableRefs(current.availableRefs, activeQuery);
-				if (filtered.length === 0) {
-					return current;
-				}
-				const selectedIndex =
-					activeField === "source"
-						? current.selectedSourceIndex
-						: current.selectedDestinationIndex;
-				const baseIndex = Math.min(
-					Math.max(selectedIndex, 0),
-					filtered.length - 1,
-				);
-				const nextIndex = (baseIndex + direction + filtered.length) % filtered.length;
-				const nextRef = filtered[nextIndex];
-				if (!nextRef) {
-					return current;
-				}
-
-				return activeField === "source"
-					? {
-							...current,
-							sourceRef: Option.some(nextRef),
-							selectedSourceIndex: nextIndex,
-							error: Option.none(),
-						}
-					: {
-							...current,
-							destinationRef: Option.some(nextRef),
-							selectedDestinationIndex: nextIndex,
-							error: Option.none(),
-						};
-			});
-		},
-		[filterComparableRefs, updateBranchCompareModal],
-	);
-
-	const switchBranchField = useCallback(() => {
-		updateBranchCompareModal((current) => {
-			if (!current.isOpen) {
-				return current;
-			}
-			return {
-				...current,
-				activeField:
-					current.activeField === "source" ? "destination" : "source",
-			};
-		});
-	}, [updateBranchCompareModal]);
-
-	const confirmBranchCompareModal = useCallback(() => {
-		if (!branchCompareModal.isOpen || branchCompareModal.loading) {
-			return;
-		}
-
-		if (
-			Option.isNone(branchCompareModal.sourceRef) ||
-			Option.isNone(branchCompareModal.destinationRef)
-		) {
-			updateBranchCompareModal((current) =>
-				current.isOpen
-					? {
-							...current,
-							error: Option.some("Select both source and destination refs."),
-						}
-					: current,
-			);
-			return;
-		}
-
-		const sourceRef = branchCompareModal.sourceRef.value;
-		const destinationRef = branchCompareModal.destinationRef.value;
-		if (sourceRef === destinationRef) {
-			updateBranchCompareModal((current) =>
-				current.isOpen
-					? {
-							...current,
-							error: Option.some(
-								"Source and destination refs must be different.",
-							),
-						}
-					: current,
-			);
-			return;
-		}
-
-		updateReviewMode(() => ({
-			_tag: "branch-compare",
-			selection: {
-				sourceRef,
-				destinationRef,
-			},
-		}));
-		updateBranchCompareModal(() => ({ isOpen: false }));
-		clearUiError();
-		void refreshFiles(true);
-	}, [
-		branchCompareModal,
+		updateReviewMode,
 		clearUiError,
 		refreshFiles,
-		updateBranchCompareModal,
-		updateReviewMode,
-	]);
+		renderRepoActionError,
+	});
 
 	const resetReviewMode = useCallback(() => {
 		if (reviewMode._tag === "working-tree") {
@@ -1035,8 +607,8 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		onConfirmDiscardModal: confirmDiscardModal,
 		onBranchSourceQueryChange,
 		onBranchDestinationQueryChange,
-		onBranchSelectRef: selectBranchRef,
-		onBranchActivateField: activateBranchField,
+		onBranchSelectRef,
+		onBranchActivateField,
 		onKeyboardIntent,
 		onToggleDirectory: toggleCollapsedDirectory,
 		onSelectFilePath: selectFilePath,
