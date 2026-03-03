@@ -20,6 +20,7 @@ interface UseDiffPreviewStateOptions {
 	readonly files: ReadonlyArray<FileEntry>;
 	readonly selectedFile: FileEntry | null;
 	readonly reviewMode: ReviewMode;
+	readonly externalRefreshVersion?: number;
 	readonly pollMs?: number;
 	readonly pollingEnabled?: boolean;
 }
@@ -34,6 +35,7 @@ export function useDiffPreviewState(
 	options: UseDiffPreviewStateOptions,
 ): UseDiffPreviewStateResult {
 	const { files, selectedFile, reviewMode } = options;
+	const externalRefreshVersion = options.externalRefreshVersion ?? 0;
 	const pollMs = options.pollMs ?? 2000;
 	const pollingEnabled = options.pollingEnabled ?? true;
 	const [selectedFilePreview, setSelectedFilePreview] =
@@ -114,7 +116,7 @@ export function useDiffPreviewState(
 		return () => {
 			cancelled = true;
 		};
-	}, [reviewMode, selectedFile, refreshTick]);
+	}, [externalRefreshVersion, reviewMode, selectedFile, refreshTick]);
 
 	useEffect(() => {
 		const visiblePaths = new Set(files.map((file) => file.path));

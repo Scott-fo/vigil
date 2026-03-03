@@ -1,5 +1,8 @@
 import { Schema, type Option } from "effect";
-import type { VigilDaemonApiCall } from "#daemon/client.ts";
+import type {
+	VigilDaemonApiCall,
+	VigilDaemonConnection,
+} from "#daemon/client.ts";
 import type { ThemeCatalog, ThemeMode } from "#theme/theme.ts";
 
 export interface StatusEntry {
@@ -30,4 +33,5 @@ export interface AppProps {
 	readonly initialThemeMode: ThemeMode;
 	readonly chooserFilePath: Option.Option<string>;
 	readonly daemonApiCall: VigilDaemonApiCall;
+	readonly daemonConnection: VigilDaemonConnection;
 }

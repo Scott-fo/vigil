@@ -123,6 +123,7 @@ export function startVigilTuiProgram(
 						initialThemeMode={themePreference.mode ?? "dark"}
 						chooserFilePath={options.chooserFilePath}
 						daemonApiCall={daemonApiCall}
+						daemonConnection={options.daemonConnection}
 					/>,
 				),
 			catch: (cause) =>

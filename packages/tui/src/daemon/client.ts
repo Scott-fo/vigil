@@ -8,7 +8,9 @@ export interface VigilDaemonConnection {
 	readonly token: string;
 }
 
-function daemonBaseUrl(connection: Pick<VigilDaemonConnection, "host" | "port">) {
+export function buildVigilDaemonBaseUrl(
+	connection: Pick<VigilDaemonConnection, "host" | "port">,
+) {
 	const host = connection.host.includes(":")
 		? `[${connection.host.replace(/^\[(.*)\]$/, "$1")}]`
 		: connection.host;
@@ -29,7 +31,7 @@ function makeFetchWithDaemonToken(connection: VigilDaemonConnection) {
 
 export const makeVigilDaemonClient = (connection: VigilDaemonConnection) =>
 	HttpApiClient.make(VigilApi, {
-		baseUrl: daemonBaseUrl(connection),
+		baseUrl: buildVigilDaemonBaseUrl(connection),
 	}).pipe(Effect.provide(makeFetchWithDaemonToken(connection)));
 
 export type VigilDaemonClient = Effect.Effect.Success<

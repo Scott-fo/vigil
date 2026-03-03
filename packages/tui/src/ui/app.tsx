@@ -18,6 +18,7 @@ import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar.tsx";
 import { Splash } from "#ui/components/splash.tsx";
 import { ThemeModal } from "#ui/components/theme-modal.tsx";
 import { useAppSelectors } from "#ui/hooks/use-app-selectors.ts";
+import { useDaemonWatch } from "#ui/hooks/use-daemon-watch.ts";
 import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state.ts";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh.ts";
 import { useRepoActions } from "#ui/hooks/use-repo-actions.ts";
@@ -30,6 +31,7 @@ import {
 	fileViewStateAtom,
 	helpModalAtom,
 	isBranchCompareReviewMode,
+	isWorkingTreeReviewMode,
 	remoteSyncAtom,
 	reviewModeAtom,
 	themeModalAtom,
@@ -80,6 +82,8 @@ export function App(props: AppProps) {
 	);
 	const [remoteSync, setRemoteSync] = useAtom(remoteSyncAtom);
 	const [reviewMode, setReviewMode] = useAtom(reviewModeAtom);
+	const [watchConnected, setWatchConnected] = useState(false);
+	const [refreshInstructionVersion, setRefreshInstructionVersion] = useState(0);
 	const [snackbarNotice, setSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
 	>(Option.none());
@@ -199,13 +203,32 @@ export function App(props: AppProps) {
 		themeSearchQuery,
 	});
 
+	const watchRepoPath = useMemo(() => process.cwd(), []);
+	const isWorkingTreeMode = isWorkingTreeReviewMode(reviewMode);
+	const shouldPollFromClient =
+		remoteSync._tag !== "running" && (!isWorkingTreeMode || !watchConnected);
+
 	const { refreshFiles } = useFileRefresh({
 		updateFileView,
 		updateUiStatus,
 		renderRepoActionError: formatRepoActionError,
 		reviewMode,
 		pollMs: 5000,
-		pollingEnabled: remoteSync._tag !== "running",
+		pollingEnabled: shouldPollFromClient,
+	});
+
+	const onRefreshInstruction = useCallback(async () => {
+		await refreshFiles(false);
+		setRefreshInstructionVersion((current) => current + 1);
+	}, [refreshFiles]);
+
+	useDaemonWatch({
+		daemonApiCall: props.daemonApiCall,
+		daemonConnection: props.daemonConnection,
+		repoPath: watchRepoPath,
+		enabled: isWorkingTreeMode,
+		onConnectionChange: setWatchConnected,
+		onRefreshInstruction,
 	});
 
 	const showSnackbar = useCallback((notice: SnackbarNotice) => {
@@ -322,8 +345,9 @@ export function App(props: AppProps) {
 			files,
 			selectedFile,
 			reviewMode,
+			externalRefreshVersion: refreshInstructionVersion,
 			pollMs: 5000,
-			pollingEnabled: remoteSync._tag !== "running",
+			pollingEnabled: shouldPollFromClient,
 		});
 
 	const diffNavigationModel = useMemo(
