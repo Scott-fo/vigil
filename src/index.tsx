@@ -378,6 +378,11 @@ function runCli(
 
 		yield* startVigilTuiProgram({
 			chooserFilePath: args.chooserFilePath,
+			daemonConnection: {
+				host: args.serverHost,
+				port: args.serverPort,
+				token: daemonToken,
+			},
 		});
 	});
 }

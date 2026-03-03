@@ -12,6 +12,7 @@
 		"#ui/*": "./src/ui/*",
 		"#data/*": "./src/data/*",
 		"#diff/*": "./src/diff/*",
+		"#daemon/*": "./src/daemon/*",
 		"#theme/*": "./src/theme/*",
 		"#syntax/*": "./src/syntax/*",
 		"#config/*": "./src/config/*"
@@ -25,6 +26,7 @@
 		"@effect/platform-bun": "^0.87.1",
 		"@opentui/core": "^0.1.84",
 		"@opentui/react": "^0.1.84",
+		"@vigil/api": "workspace:*",
 		"@vigil/config": "workspace:*",
 		"effect": "^3.19.19",
 		"fuzzysort": "^3.1.0",

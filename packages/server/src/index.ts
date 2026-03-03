@@ -71,7 +71,7 @@ function makeVigilDaemonAuthLayer(options: StartVigilServerOptions) {
 	);
 }
 
-function makeVigilApiLive(options: StartVigilServerOptions) {
+export function makeVigilApiLayer(options: StartVigilServerOptions) {
 	const textEncoder = new TextEncoder();
 	const encodeSseChunk = (eventName: string, payload: unknown) =>
 		textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
@@ -128,20 +128,20 @@ function makeVigilApiLive(options: StartVigilServerOptions) {
 						subscription.unsubscribe(payload.clientId, payload.subscriptionId),
 					),
 					Effect.asVoid,
-					Effect.catchTag("RepoSubscriptionNotFoundError", (error) =>
-						Effect.fail(
-							WatchSubscriptionNotFoundError.make({
-								message: error.message,
-							}),
-						),
-					),
-					Effect.catchAll((error) =>
-						Effect.fail(
-							WatchBadRequestError.make({
-								message: error.message,
-							}),
-						),
-					),
+					Effect.catchTags({
+						RepoSubscriptionNotFoundError: (error) =>
+							Effect.fail(
+								WatchSubscriptionNotFoundError.make({
+									message: error.message,
+								}),
+							),
+						RepoSubscriptionClientIdError: (error) =>
+							Effect.fail(
+								WatchBadRequestError.make({
+									message: error.message,
+								}),
+							),
+					}),
 				),
 			)
 			.handle("unsubscribeAll", ({ payload }) =>
@@ -205,7 +205,7 @@ function makeVigilApiLive(options: StartVigilServerOptions) {
 function makeServerLive(options: StartVigilServerOptions) {
 	return pipe(
 		HttpApiBuilder.serve(),
-		Layer.provide(makeVigilApiLive(options)),
+		Layer.provide(makeVigilApiLayer(options)),
 		Layer.provide(
 			BunHttpServer.layer({
 				hostname: options.host,

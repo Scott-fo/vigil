@@ -1,6 +1,10 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { Data, Effect, type Option, pipe } from "effect";
+import {
+	makeVigilDaemonApiCall,
+	type VigilDaemonConnection,
+} from "#daemon/client.ts";
 import { initializeTreeSitterClient } from "#syntax/tree-sitter.ts";
 import {
 	loadThemeCatalog,
@@ -11,6 +15,7 @@ import { App } from "#ui/app.tsx";
 
 export interface StartVigilTuiOptions {
 	readonly chooserFilePath: Option.Option<string>;
+	readonly daemonConnection: VigilDaemonConnection;
 }
 
 export class ThemeCatalogLoadError extends Data.TaggedError(
@@ -98,6 +103,7 @@ export function startVigilTuiProgram(
 			themeCatalog,
 			themePreference,
 		);
+		const daemonApiCall = makeVigilDaemonApiCall(options.daemonConnection);
 
 		const renderer = yield* Effect.tryPromise({
 			try: () => createCliRenderer({ useMouse: true }),
@@ -116,6 +122,7 @@ export function startVigilTuiProgram(
 						initialThemeName={initialThemeName}
 						initialThemeMode={themePreference.mode ?? "dark"}
 						chooserFilePath={options.chooserFilePath}
+						daemonApiCall={daemonApiCall}
 					/>,
 				),
 			catch: (cause) =>

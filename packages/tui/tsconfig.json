@@ -7,9 +7,12 @@
       "#ui/*": ["./src/ui/*"],
       "#data/*": ["./src/data/*"],
       "#diff/*": ["./src/diff/*"],
+      "#daemon/*": ["./src/daemon/*"],
       "#theme/*": ["./src/theme/*"],
       "#syntax/*": ["./src/syntax/*"],
       "#config/*": ["./src/config/*"],
+      "@vigil/api": ["../api/src/index.ts"],
+      "@vigil/api/*": ["../api/src/*"],
       "@vigil/config": ["../config/src/index.ts"],
       "@vigil/config/*": ["../config/src/*"]
     }
