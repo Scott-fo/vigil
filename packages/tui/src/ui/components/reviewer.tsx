@@ -207,12 +207,14 @@ interface DiffPanelProps {
 }
 
 const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
-	const selectedFileHunkDiffs = useMemo(() => {
+	const selectedFileDiffBlocks = useMemo(() => {
 		if (!props.selectedFileDiff.trim()) {
 			return [];
 		}
-		return splitDiffIntoHunkBlocks(props.selectedFileDiff);
-	}, [props.selectedFileDiff]);
+		return props.isFocused
+			? [props.selectedFileDiff]
+			: splitDiffIntoHunkBlocks(props.selectedFileDiff);
+	}, [props.isFocused, props.selectedFileDiff]);
 
 	return (
 		<box
@@ -276,7 +278,7 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 						}}
 					>
 						<box flexDirection="column">
-							{selectedFileHunkDiffs.map((hunkDiff, hunkIndex) => (
+							{selectedFileDiffBlocks.map((hunkDiff, hunkIndex) => (
 								<box
 									key={`${props.selectedFile?.path}:${hunkIndex}`}
 									flexDirection="column"
@@ -302,7 +304,7 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 										addedLineNumberBg={props.theme.diffAddedLineNumberBg}
 										removedLineNumberBg={props.theme.diffRemovedLineNumberBg}
 									/>
-									{hunkIndex < selectedFileHunkDiffs.length - 1 ? (
+									{hunkIndex < selectedFileDiffBlocks.length - 1 ? (
 										<box height={1} backgroundColor={props.theme.background} />
 									) : null}
 								</box>
