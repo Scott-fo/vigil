@@ -41,6 +41,8 @@ function context(
 		visibleFilePaths: ["src/app.tsx", "src/other.ts"],
 		selectedVisibleIndex: 0,
 		selectedFile,
+		selectedDiffFilePath: "src/app.tsx",
+		selectedDiffLineNumber: 12,
 		...overrides,
 	};
 }
@@ -383,7 +385,7 @@ describe("decodeKeyboardIntent", () => {
 		}
 	});
 
-	test("blocks sidebar selection keys when diff pane is focused", () => {
+	test("maps enter to open selected diff line when diff pane is focused", () => {
 		const openIntent = decodeKeyboardIntent(
 			keyEvent({ name: "return" }),
 			context({ activePane: "diff" }),
@@ -401,10 +403,17 @@ describe("decodeKeyboardIntent", () => {
 			context({ activePane: "diff" }),
 		);
 
-		expect(Option.isNone(openIntent)).toBe(true);
+		expect(Option.isSome(openIntent)).toBe(true);
 		expect(Option.isNone(stageIntent)).toBe(true);
 		expect(Option.isSome(moveIntent)).toBe(true);
 		expect(Option.isSome(upIntent)).toBe(true);
+		if (Option.isSome(openIntent)) {
+			expect(openIntent.value).toEqual({
+				_tag: "OpenSelectedDiffLine",
+				filePath: "src/app.tsx",
+				lineNumber: 12,
+			});
+		}
 		if (Option.isSome(moveIntent)) {
 			expect(moveIntent.value).toEqual({
 				_tag: "MoveDiffLineSelection",
@@ -417,6 +426,18 @@ describe("decodeKeyboardIntent", () => {
 				direction: -1,
 			});
 		}
+	});
+
+	test("does not map open diff line when line metadata is unavailable", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "return" }),
+			context({
+				activePane: "diff",
+				selectedDiffLineNumber: null,
+			}),
+		);
+
+		expect(Option.isNone(intent)).toBe(true);
 	});
 
 	test("maps arrow keys to diff line navigation when diff pane is focused", () => {

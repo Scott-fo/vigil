@@ -22,7 +22,7 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	},
 	{
 		keys: "enter / e / o",
-		description: "Open selected file in editor (sidebar focus)",
+		description: "Open selected file (sidebar) or selected diff line (diff panel)",
 	},
 	{ keys: "d", description: "Open discard confirmation for selected file" },
 	{ keys: "tab", description: "Toggle split / unified diff" },

@@ -30,6 +30,7 @@ interface KeyboardIntentRouterActions {
 	readonly focusSidebarPane: () => void;
 	readonly focusDiffPane: () => void;
 	readonly openSelectedFile: (filePath: string) => void;
+	readonly openSelectedDiffLine: (filePath: string, lineNumber: number) => void;
 	readonly toggleSelectedFileStage: (file: FileEntry) => void;
 	readonly selectFilePath: (path: string) => void;
 }
@@ -80,6 +81,12 @@ export function routeKeyboardIntent(
 			FocusDiffPane: actions.focusDiffPane,
 			OpenSelectedFile: (typedIntent) => {
 				actions.openSelectedFile(typedIntent.filePath);
+			},
+			OpenSelectedDiffLine: (typedIntent) => {
+				actions.openSelectedDiffLine(
+					typedIntent.filePath,
+					typedIntent.lineNumber,
+				);
 			},
 			ToggleSelectedFileStage: (typedIntent) => {
 				actions.toggleSelectedFileStage(typedIntent.file);

@@ -287,6 +287,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		openDiscardModal,
 		confirmDiscardModal,
 		openSelectedFile,
+		openSelectedDiffLine,
 		toggleSelectedFileStage,
 		initializeGitRepository,
 		resetReviewMode,
@@ -313,13 +314,31 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 
 	const scrollDiffHalfPage = useCallback(
 		(direction: "up" | "down") => {
+			const diffScroll = diffScrollRef.current;
+			if (!diffScroll) {
+				return;
+			}
+
 			const step = Math.max(6, Math.floor(renderer.height * 0.45));
-			diffScrollRef.current?.scrollBy({
+			diffScroll.scrollBy({
 				x: 0,
 				y: direction === "up" ? -step : step,
 			});
+
+			if (activePane !== "diff" || diffLineCount <= 0) {
+				return;
+			}
+
+			const topVisibleLine = Math.max(0, Math.floor(diffScroll.scrollTop));
+			setSelectedDiffLineIndex(Math.min(topVisibleLine, diffLineCount - 1));
 		},
-		[diffScrollRef, renderer.height],
+		[
+			activePane,
+			diffLineCount,
+			diffScrollRef,
+			renderer.height,
+			setSelectedDiffLineIndex,
+		],
 	);
 
 	const moveDiffSelection = useCallback(
@@ -367,6 +386,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				focusSidebarPane,
 				focusDiffPane,
 				openSelectedFile,
+				openSelectedDiffLine,
 				toggleSelectedFileStage,
 				selectFilePath,
 			}),
@@ -398,6 +418,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			switchBranchField,
 			syncRemote,
 			toggleDiffViewMode,
+			openSelectedDiffLine,
 			toggleSelectedFileStage,
 			toggleSidebar,
 		],

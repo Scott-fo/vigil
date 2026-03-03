@@ -330,6 +330,10 @@ export function App(props: AppProps) {
 	);
 
 	const diffLineCount = diffNavigationModel.lines.length;
+	const selectedDiffLine = diffNavigationModel.lines[selectedDiffLineIndex] ?? null;
+	const selectedDiffLineNumber =
+		selectedDiffLine?.newLine ?? selectedDiffLine?.oldLine ?? null;
+	const selectedDiffFilePath = selectedFile?.path ?? null;
 
 	useEffect(() => {
 		setSelectedDiffLineIndex(0);
@@ -424,6 +428,8 @@ export function App(props: AppProps) {
 		visibleFilePaths,
 		selectedVisibleIndex,
 		selectedFile,
+		selectedDiffFilePath,
+		selectedDiffLineNumber,
 		onIntent: onKeyboardIntent,
 	});
 

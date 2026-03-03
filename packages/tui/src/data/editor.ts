@@ -26,6 +26,13 @@ export type OpenFileError =
 	| EditorLaunchError
 	| ChooserWriteError;
 
+function normalizeLineNumber(lineNumber: number): number {
+	if (!Number.isFinite(lineNumber)) {
+		return 1;
+	}
+	return Math.max(1, Math.floor(lineNumber));
+}
+
 function resolveEditorCommand(): Effect.Effect<string, EditorEnvMissingError> {
 	return pipe(
 		Option.fromNullable(process.env.VISUAL ?? process.env.EDITOR),
@@ -43,13 +50,13 @@ function resolveEditorCommand(): Effect.Effect<string, EditorEnvMissingError> {
 	);
 }
 
-export function openFileInEditor(
-	filePath: string,
+function launchEditor(
+	target: string,
 ): Effect.Effect<void, EditorEnvMissingError | EditorLaunchError> {
 	return Effect.gen(function* () {
 		const editorCommand = yield* resolveEditorCommand();
 		const result = yield* Effect.sync(() =>
-			spawnSync("sh", ["-lc", `${editorCommand} ${quoteShellArg(filePath)}`], {
+			spawnSync("sh", ["-lc", `${editorCommand} ${target}`], {
 				stdio: "inherit",
 			}),
 		);
@@ -70,6 +77,20 @@ export function openFileInEditor(
 			);
 		}
 	});
+}
+
+export function openFileInEditor(
+	filePath: string,
+): Effect.Effect<void, EditorEnvMissingError | EditorLaunchError> {
+	return launchEditor(quoteShellArg(filePath));
+}
+
+export function openFileInEditorAtLine(
+	filePath: string,
+	lineNumber: number,
+): Effect.Effect<void, EditorEnvMissingError | EditorLaunchError> {
+	const normalizedLineNumber = normalizeLineNumber(lineNumber);
+	return launchEditor(`${quoteShellArg(filePath)}:${normalizedLineNumber}`);
 }
 
 export function writeChooserSelection(

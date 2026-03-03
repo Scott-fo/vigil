@@ -19,6 +19,8 @@ interface UseAppKeyboardInputOptions {
 	visibleFilePaths: string[];
 	selectedVisibleIndex: number;
 	selectedFile: FileEntry | null;
+	selectedDiffFilePath: string | null;
+	selectedDiffLineNumber: number | null;
 	onIntent: (intent: AppKeyboardIntent) => void;
 }
 
@@ -35,6 +37,8 @@ export interface KeyboardIntentContext {
 	visibleFilePaths: string[];
 	selectedVisibleIndex: number;
 	selectedFile: FileEntry | null;
+	selectedDiffFilePath: string | null;
+	selectedDiffLineNumber: number | null;
 }
 
 export type AppKeyboardIntent =
@@ -65,6 +69,11 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "FocusSidebarPane" }
 	| { readonly _tag: "FocusDiffPane" }
 	| { readonly _tag: "OpenSelectedFile"; readonly filePath: string }
+	| {
+			readonly _tag: "OpenSelectedDiffLine";
+			readonly filePath: string;
+			readonly lineNumber: number;
+	  }
 	| { readonly _tag: "ToggleSelectedFileStage"; readonly file: FileEntry }
 	| { readonly _tag: "SelectVisiblePath"; readonly path: string };
 
@@ -281,6 +290,28 @@ function decodeSelectionIntentLayer(
 	options: KeyboardIntentContext,
 ): Option.Option<AppKeyboardIntent> {
 	if (options.activePane === "diff") {
+		if (
+			key.name === "enter" ||
+			key.name === "return" ||
+			isUnmodifiedKey(key, "e") ||
+			isUnmodifiedKey(key, "o")
+		) {
+			return pipe(
+				Option.fromNullable(options.selectedDiffFilePath),
+				Option.flatMap((filePath) =>
+					pipe(
+						Option.fromNullable(options.selectedDiffLineNumber),
+						Option.filter((lineNumber) => lineNumber >= 1),
+						Option.map((lineNumber) => ({
+							_tag: "OpenSelectedDiffLine" as const,
+							filePath,
+							lineNumber,
+						})),
+					),
+				),
+			);
+		}
+
 		if (key.name === "down" || key.name === "j") {
 			return Option.some({
 				_tag: "MoveDiffLineSelection",

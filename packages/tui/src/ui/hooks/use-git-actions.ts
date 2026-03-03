@@ -1,6 +1,7 @@
 import { Effect, Option, pipe } from "effect";
 import { useCallback } from "react";
 import {
+	openFileInEditorAtLine,
 	openFileInEditor,
 	renderOpenFileError,
 	writeChooserSelection,
@@ -212,6 +213,39 @@ export function useGitActions(options: UseGitActionsOptions) {
 		[chooserFilePath, clearUiError, renderer, runAction, setUiError],
 	);
 
+	const openSelectedDiffLine = useCallback(
+		(filePath: string, lineNumber: number) => {
+			if (Option.isSome(chooserFilePath)) {
+				void Effect.runPromise(
+					pipe(
+						writeChooserSelection(chooserFilePath.value, filePath),
+						Effect.match({
+							onFailure: (error) => {
+								setUiError(renderOpenFileError(error));
+							},
+							onSuccess: () => {
+								clearUiError();
+								renderer.destroy();
+							},
+						}),
+					),
+				);
+				return;
+			}
+
+			renderer.suspend();
+			runAction(
+				openFileInEditorAtLine(filePath, lineNumber),
+				renderOpenFileError,
+				{
+					refreshOnFailure: true,
+				},
+			);
+			renderer.resume();
+		},
+		[chooserFilePath, clearUiError, renderer, runAction, setUiError],
+	);
+
 	const toggleSelectedFileStage = useCallback(
 		(file: FileEntry) => {
 			if (!isWorkingTreeReviewMode(reviewMode)) {
@@ -291,6 +325,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 		openDiscardModal,
 		confirmDiscardModal,
 		openSelectedFile,
+		openSelectedDiffLine,
 		toggleSelectedFileStage,
 		initializeGitRepository,
 		resetReviewMode,
