@@ -61,6 +61,7 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "SyncRemote"; readonly direction: "pull" | "push" }
 	| { readonly _tag: "ResetReviewMode" }
 	| { readonly _tag: "ScrollDiffHalfPage"; readonly direction: "up" | "down" }
+	| { readonly _tag: "MoveDiffLineSelection"; readonly direction: 1 | -1 }
 	| { readonly _tag: "FocusSidebarPane" }
 	| { readonly _tag: "FocusDiffPane" }
 	| { readonly _tag: "OpenSelectedFile"; readonly filePath: string }
@@ -279,6 +280,24 @@ function decodeSelectionIntentLayer(
 	key: KeyEvent,
 	options: KeyboardIntentContext,
 ): Option.Option<AppKeyboardIntent> {
+	if (options.activePane === "diff") {
+		if (key.name === "down" || key.name === "j") {
+			return Option.some({
+				_tag: "MoveDiffLineSelection",
+				direction: 1,
+			});
+		}
+
+		if (key.name === "up" || key.name === "k") {
+			return Option.some({
+				_tag: "MoveDiffLineSelection",
+				direction: -1,
+			});
+		}
+
+		return Option.none();
+	}
+
 	if (options.activePane !== "sidebar") {
 		return Option.none();
 	}
@@ -377,6 +396,7 @@ export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
 
 			const priorityGlobalIntent = decodePriorityGlobalIntent(key);
 			if (Option.isSome(priorityGlobalIntent)) {
+				key.preventDefault();
 				options.onIntent(priorityGlobalIntent.value);
 				return;
 			}
@@ -390,6 +410,7 @@ export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
 				Option.match({
 					onNone: () => {},
 					onSome: (intent) => {
+						key.preventDefault();
 						options.onIntent(intent);
 					},
 				}),
@@ -407,6 +428,7 @@ export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
 			Option.match({
 				onNone: () => {},
 				onSome: (intent) => {
+					key.preventDefault();
 					options.onIntent(intent);
 				},
 			}),

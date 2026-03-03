@@ -14,7 +14,7 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	},
 	{
 		keys: "j / k, ↑ / ↓",
-		description: "Navigate changed files (sidebar focus)",
+		description: "Navigate files (sidebar) or diff lines (diff panel)",
 	},
 	{
 		keys: "space",

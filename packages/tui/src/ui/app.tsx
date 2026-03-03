@@ -2,9 +2,10 @@ import { useAtom } from "@effect-atom/atom-react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { Effect, Match, Option, pipe } from "effect";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { copyTextToClipboard } from "#data/clipboard";
 import type { RepoActionError } from "#data/git";
+import { buildDiffNavigationModel } from "#diff/navigation";
 import type { ThemeMode } from "#theme/theme";
 import type { AppProps } from "#tui/types";
 import { BranchCompareModal } from "#ui/components/branch-compare-modal";
@@ -66,6 +67,7 @@ export function App(props: AppProps) {
 	const [themeName, setThemeName] = useState(props.initialThemeName);
 	const [themeSearchQuery, setThemeSearchQuery] = useState("");
 	const [activePane, setActivePane] = useState<FocusedPane>("sidebar");
+	const [selectedDiffLineIndex, setSelectedDiffLineIndex] = useState(0);
 	const [themeMode] = useState<ThemeMode>(props.initialThemeMode);
 	const [fileView, setFileView] = useAtom(fileViewStateAtom);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
@@ -315,6 +317,33 @@ export function App(props: AppProps) {
 		};
 	}, [copyAndNotify, renderer]);
 
+	const { selectedFileDiff, selectedFileDiffNote, selectedFileDiffLoading } =
+		useDiffPreviewState({
+			files,
+			selectedFile,
+			reviewMode,
+		});
+
+	const diffNavigationModel = useMemo(
+		() => buildDiffNavigationModel(selectedFileDiff),
+		[selectedFileDiff],
+	);
+
+	const diffLineCount = diffNavigationModel.lines.length;
+
+	useEffect(() => {
+		setSelectedDiffLineIndex(0);
+	}, [selectedFile?.path]);
+
+	useEffect(() => {
+		setSelectedDiffLineIndex((current) => {
+			if (diffLineCount === 0) {
+				return 0;
+			}
+			return Math.min(current, diffLineCount - 1);
+		});
+	}, [diffLineCount]);
+
 	const {
 		onCommitMessageChange,
 		onCommitSubmit,
@@ -333,6 +362,7 @@ export function App(props: AppProps) {
 		chooserFilePath: props.chooserFilePath,
 		renderer,
 		diffScrollRef,
+		diffLineCount,
 		themeName,
 		themeMode,
 		themeCatalog: props.themeCatalog,
@@ -342,6 +372,7 @@ export function App(props: AppProps) {
 		sidebarOpen,
 		activePane,
 		setActivePane,
+		setSelectedDiffLineIndex,
 		commitModal,
 		discardModal,
 		themeModal,
@@ -396,13 +427,6 @@ export function App(props: AppProps) {
 		onIntent: onKeyboardIntent,
 	});
 
-	const { selectedFileDiff, selectedFileDiffNote, selectedFileDiffLoading } =
-		useDiffPreviewState({
-			files,
-			selectedFile,
-			reviewMode,
-		});
-
 	return (
 		<box
 			flexDirection="column"
@@ -423,6 +447,8 @@ export function App(props: AppProps) {
 					selectedFileDiff={selectedFileDiff}
 					selectedFileDiffNote={selectedFileDiffNote}
 					selectedFileDiffLoading={selectedFileDiffLoading}
+					selectedDiffLineIndex={selectedDiffLineIndex}
+					diffNavigationLines={diffNavigationModel.lines}
 					loading={loading}
 					diffViewMode={diffViewMode}
 					error={uiStatus.error}

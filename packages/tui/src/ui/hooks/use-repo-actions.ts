@@ -43,6 +43,7 @@ interface UseRepoActionsOptions {
 	readonly chooserFilePath: Option.Option<string>;
 	readonly renderer: RendererControls;
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
+	readonly diffLineCount: number;
 	readonly themeName: string;
 	readonly themeMode: ThemeMode;
 	readonly themeCatalog: ThemeCatalog;
@@ -52,6 +53,7 @@ interface UseRepoActionsOptions {
 	readonly sidebarOpen: boolean;
 	readonly activePane: FocusedPane;
 	readonly setActivePane: Dispatch<SetStateAction<FocusedPane>>;
+	readonly setSelectedDiffLineIndex: Dispatch<SetStateAction<number>>;
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
 	readonly themeModal: ThemeModalState;
@@ -87,6 +89,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		chooserFilePath,
 		renderer,
 		diffScrollRef,
+		diffLineCount,
 		themeName,
 		themeMode,
 		themeCatalog,
@@ -96,6 +99,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		sidebarOpen,
 		activePane,
 		setActivePane,
+		setSelectedDiffLineIndex,
 		commitModal,
 		discardModal,
 		themeModal,
@@ -318,6 +322,19 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		[diffScrollRef, renderer.height],
 	);
 
+	const moveDiffSelection = useCallback(
+		(direction: 1 | -1) => {
+			if (activePane !== "diff" || diffLineCount <= 0) {
+				return;
+			}
+
+			setSelectedDiffLineIndex((current) =>
+				Math.max(0, Math.min(current + direction, diffLineCount - 1)),
+			);
+		},
+		[activePane, diffLineCount, setSelectedDiffLineIndex],
+	);
+
 	const onKeyboardIntent = useCallback(
 		(intent: AppKeyboardIntent) =>
 			routeKeyboardIntent(intent, {
@@ -346,6 +363,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				syncRemote,
 				resetReviewMode,
 				scrollDiffHalfPage,
+				moveDiffSelection,
 				focusSidebarPane,
 				focusDiffPane,
 				openSelectedFile,
@@ -373,6 +391,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			renderer.destroy,
 			resetReviewMode,
 			scrollDiffHalfPage,
+			moveDiffSelection,
 			focusSidebarPane,
 			focusDiffPane,
 			selectFilePath,

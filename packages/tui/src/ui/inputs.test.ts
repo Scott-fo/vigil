@@ -396,10 +396,53 @@ describe("decodeKeyboardIntent", () => {
 			keyEvent({ name: "j" }),
 			context({ activePane: "diff" }),
 		);
+		const upIntent = decodeKeyboardIntent(
+			keyEvent({ name: "k" }),
+			context({ activePane: "diff" }),
+		);
 
 		expect(Option.isNone(openIntent)).toBe(true);
 		expect(Option.isNone(stageIntent)).toBe(true);
-		expect(Option.isNone(moveIntent)).toBe(true);
+		expect(Option.isSome(moveIntent)).toBe(true);
+		expect(Option.isSome(upIntent)).toBe(true);
+		if (Option.isSome(moveIntent)) {
+			expect(moveIntent.value).toEqual({
+				_tag: "MoveDiffLineSelection",
+				direction: 1,
+			});
+		}
+		if (Option.isSome(upIntent)) {
+			expect(upIntent.value).toEqual({
+				_tag: "MoveDiffLineSelection",
+				direction: -1,
+			});
+		}
+	});
+
+	test("maps arrow keys to diff line navigation when diff pane is focused", () => {
+		const downIntent = decodeKeyboardIntent(
+			keyEvent({ name: "down" }),
+			context({ activePane: "diff" }),
+		);
+		const upIntent = decodeKeyboardIntent(
+			keyEvent({ name: "up" }),
+			context({ activePane: "diff" }),
+		);
+
+		expect(Option.isSome(downIntent)).toBe(true);
+		expect(Option.isSome(upIntent)).toBe(true);
+		if (Option.isSome(downIntent)) {
+			expect(downIntent.value).toEqual({
+				_tag: "MoveDiffLineSelection",
+				direction: 1,
+			});
+		}
+		if (Option.isSome(upIntent)) {
+			expect(upIntent.value).toEqual({
+				_tag: "MoveDiffLineSelection",
+				direction: -1,
+			});
+		}
 	});
 
 	test("maps pane focus keys for ctrl+w chord follow-up", () => {

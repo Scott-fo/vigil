@@ -1,8 +1,14 @@
-import type { ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
+import type {
+	DiffRenderable,
+	LineColorConfig,
+	ScrollBoxRenderable,
+	SyntaxStyle,
+} from "@opentui/core";
 import { Option, pipe } from "effect";
-import { memo, type RefObject, useMemo, useRef } from "react";
+import { memo, type RefObject, useEffect, useMemo, useRef } from "react";
 import { isFileStaged } from "#data/git";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
+import type { DiffNavigationLine } from "#diff/navigation";
 import type { ResolvedTheme } from "#theme/theme";
 import type { FileEntry } from "#tui/types";
 import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection";
@@ -11,6 +17,55 @@ import { getStatusColor, type SidebarItem } from "#ui/sidebar";
 
 type SidebarHeaderItem = Extract<SidebarItem, { kind: "header" }>;
 type SidebarFileItem = Extract<SidebarItem, { kind: "file" }>;
+
+function getDiffLineBaseColor(
+	line: DiffNavigationLine,
+	theme: ResolvedTheme,
+): LineColorConfig {
+	if (line.kind === "add") {
+		return {
+			gutter: theme.diffAddedLineNumberBg,
+			content: theme.diffAddedBg,
+		};
+	}
+
+	if (line.kind === "remove") {
+		return {
+			gutter: theme.diffRemovedLineNumberBg,
+			content: theme.diffRemovedBg,
+		};
+	}
+
+	return {
+		gutter: theme.diffContextBg,
+		content: theme.diffContextBg,
+	};
+}
+
+function getSelectedDiffLineColor(theme: ResolvedTheme): LineColorConfig {
+	return {
+		gutter: theme.primary,
+		content: theme.backgroundElement,
+	};
+}
+
+function ensureDiffLineVisible(
+	scrollBox: ScrollBoxRenderable,
+	lineIndex: number,
+): void {
+	const viewportHeight = Math.max(1, scrollBox.height);
+	const scrollTop = scrollBox.scrollTop;
+	const viewportBottom = scrollTop + viewportHeight - 1;
+
+	if (lineIndex < scrollTop) {
+		scrollBox.scrollTo({ x: 0, y: lineIndex });
+		return;
+	}
+
+	if (lineIndex > viewportBottom) {
+		scrollBox.scrollTo({ x: 0, y: lineIndex - viewportHeight + 1 });
+	}
+}
 
 interface SidebarHeaderRowProps {
 	readonly item: SidebarHeaderItem;
@@ -194,6 +249,8 @@ interface DiffPanelProps {
 	readonly syntaxStyle: SyntaxStyle;
 	readonly reviewModeLabel: string;
 	readonly diffViewMode: "split" | "unified";
+	readonly selectedDiffLineIndex: number;
+	readonly diffNavigationLines: ReadonlyArray<DiffNavigationLine>;
 	readonly isFocused: boolean;
 	readonly selectedFile: FileEntry | null;
 	readonly selectedFileDiff: string;
@@ -207,6 +264,13 @@ interface DiffPanelProps {
 }
 
 const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
+	const diffRef = useRef<DiffRenderable | null>(null);
+	const highlightedLineRef = useRef<DiffNavigationLine | null>(null);
+
+	const effectiveDiffViewMode: "split" | "unified" = props.isFocused
+		? "unified"
+		: props.diffViewMode;
+
 	const selectedFileDiffBlocks = useMemo(() => {
 		if (!props.selectedFileDiff.trim()) {
 			return [];
@@ -215,6 +279,57 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 			? [props.selectedFileDiff]
 			: splitDiffIntoHunkBlocks(props.selectedFileDiff);
 	}, [props.isFocused, props.selectedFileDiff]);
+
+	useEffect(() => {
+		highlightedLineRef.current = null;
+	}, [props.selectedFile?.path, props.selectedFileDiff]);
+
+	useEffect(() => {
+		if (!props.isFocused) {
+			highlightedLineRef.current = null;
+			return;
+		}
+
+		const selectedLine = props.diffNavigationLines[props.selectedDiffLineIndex];
+		if (!selectedLine) {
+			highlightedLineRef.current = null;
+			return;
+		}
+
+		const diffRenderable = diffRef.current;
+		if (!diffRenderable) {
+			return;
+		}
+
+		const previousHighlightedLine = highlightedLineRef.current;
+		if (
+			previousHighlightedLine &&
+			previousHighlightedLine.displayIndex !== selectedLine.displayIndex
+		) {
+			diffRenderable.setLineColor(
+				previousHighlightedLine.displayIndex,
+				getDiffLineBaseColor(previousHighlightedLine, props.theme),
+			);
+		}
+
+		diffRenderable.setLineColor(
+			selectedLine.displayIndex,
+			getSelectedDiffLineColor(props.theme),
+		);
+
+		const diffScroll = props.diffScrollRef.current;
+		if (diffScroll) {
+			ensureDiffLineVisible(diffScroll, selectedLine.displayIndex);
+		}
+
+		highlightedLineRef.current = selectedLine;
+	}, [
+		props.diffNavigationLines,
+		props.diffScrollRef,
+		props.isFocused,
+		props.selectedDiffLineIndex,
+		props.theme,
+	]);
 
 	return (
 		<box
@@ -285,11 +400,14 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 								>
 									<diff
 										diff={hunkDiff}
+										{...(props.isFocused && hunkIndex === 0
+											? { ref: diffRef }
+											: {})}
 										{...(props.selectedFile?.filetype
 											? { filetype: props.selectedFile.filetype }
 											: {})}
 										syntaxStyle={props.syntaxStyle}
-										view={props.diffViewMode}
+										view={effectiveDiffViewMode}
 										showLineNumbers
 										width="100%"
 										wrapMode="word"
@@ -334,6 +452,8 @@ export interface ReviewerProps {
 	readonly selectedFileDiff: string;
 	readonly selectedFileDiffNote: Option.Option<string>;
 	readonly selectedFileDiffLoading: boolean;
+	readonly selectedDiffLineIndex: number;
+	readonly diffNavigationLines: ReadonlyArray<DiffNavigationLine>;
 	readonly loading: boolean;
 	readonly diffViewMode: "split" | "unified";
 	readonly error: Option.Option<string>;
@@ -390,6 +510,8 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 				syntaxStyle={props.syntaxStyle}
 				reviewModeLabel={props.reviewModeLabel}
 				diffViewMode={props.diffViewMode}
+				selectedDiffLineIndex={props.selectedDiffLineIndex}
+				diffNavigationLines={props.diffNavigationLines}
 				isFocused={isDiffFocused}
 				selectedFile={props.selectedFile}
 				selectedFileDiff={props.selectedFileDiff}
