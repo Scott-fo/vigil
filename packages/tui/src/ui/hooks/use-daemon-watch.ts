@@ -55,10 +55,9 @@ class WatchUnsubscribeAllError extends Data.TaggedError(
 	readonly cause: unknown;
 }> {}
 
-const logParseErrorAndContinue = (error: ParseRepoChangedSseEventError) =>
-	Effect.logWarning(
-		`[daemon-watch] ignoring malformed event: ${error.message}`,
-	).pipe(Effect.as(Option.none()));
+const ignoreParseErrorAndContinue = (
+	_error: ParseRepoChangedSseEventError,
+) => Effect.succeed(Option.none());
 
 const consumeWatchEventStream = Effect.fn(
 	"useDaemonWatch.consumeWatchEventStream",
@@ -71,7 +70,7 @@ const consumeWatchEventStream = Effect.fn(
 		Stream.pipeThroughChannel(Sse.makeChannel()),
 		Stream.runForEach((sseEvent) =>
 			parseRepoChangedSseEvent(sseEvent).pipe(
-				Effect.catchAll(logParseErrorAndContinue),
+				Effect.catchAll(ignoreParseErrorAndContinue),
 				Effect.flatMap((parsedEvent) =>
 					Option.isSome(parsedEvent) ? onRefreshInstruction : Effect.void,
 				),
@@ -174,9 +173,7 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 						cause,
 					}),
 			),
-			Effect.catchAll((error) =>
-				Effect.logWarning(`[daemon-watch] ${error.message}`),
-			),
+			Effect.catchAll(() => Effect.void),
 			Effect.asVoid,
 		);
 
@@ -188,9 +185,7 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 		repoPath,
 		onRefreshInstruction,
 	).pipe(
-		Effect.tapError((error) =>
-			Effect.logWarning(`[daemon-watch] ${error.message}`),
-		),
+		Effect.tapError(() => Effect.void),
 		Effect.retry(Schedule.spaced(`${reconnectDelayMs} millis`)),
 		Effect.ensuring(unsubscribeAll),
 	);

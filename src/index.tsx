@@ -18,7 +18,6 @@ import { Data, Effect, Either, Option, pipe } from "effect";
 const DAEMON_POLL_INTERVAL_MS = 100;
 const DAEMON_POLL_ATTEMPTS = 50;
 const VIGIL_DAEMON_MANAGED_ENV_VAR = "VIGIL_DAEMON_MANAGED";
-const MIN_DAEMON_HEARTBEAT_MS = 500;
 
 class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;
@@ -52,12 +51,6 @@ interface DaemonConnectionOptions {
 	readonly host: string;
 	readonly port: number;
 	readonly daemonToken: string;
-}
-
-interface DaemonSessionLease {
-	readonly sessionId: string;
-	readonly ttlMs: number;
-	readonly heartbeatIntervalMs: number;
 }
 
 function vigilUsage(): string {
@@ -360,141 +353,6 @@ function ensureServer(
 	});
 }
 
-const openDaemonSession = Effect.fn("vigil.openDaemonSession")(function* (
-	options: DaemonConnectionOptions,
-) {
-	const daemonClient = yield* makeDaemonProbeClient(options);
-	const lease = yield* daemonClient.session.open().pipe(
-		Effect.mapError(
-			(cause) =>
-				new VigilDaemonEnsureError({
-					message: `Failed to open daemon session at ${daemonBaseUrl(options)}.`,
-					cause,
-				}),
-		),
-	);
-
-	return {
-		sessionId: lease.sessionId,
-		ttlMs: lease.ttlMs,
-		heartbeatIntervalMs: lease.heartbeatIntervalMs,
-	} satisfies DaemonSessionLease;
-});
-
-const heartbeatDaemonSession = Effect.fn("vigil.heartbeatDaemonSession")(
-	function* (options: DaemonConnectionOptions, sessionId: string) {
-		const daemonClient = yield* makeDaemonProbeClient(options);
-
-		yield* daemonClient.session
-			.heartbeat({
-				payload: {
-					sessionId,
-				},
-			})
-			.pipe(
-				Effect.mapError(
-					(cause) =>
-						new VigilDaemonEnsureError({
-							message: `Failed to heartbeat daemon session ${sessionId}.`,
-							cause,
-						}),
-				),
-			);
-	},
-);
-
-const closeDaemonSession = Effect.fn("vigil.closeDaemonSession")(function* (
-	options: DaemonConnectionOptions,
-	sessionId: string,
-) {
-	const daemonClient = yield* makeDaemonProbeClient(options);
-
-	yield* daemonClient.session
-		.close({
-			payload: {
-				sessionId,
-			},
-		})
-		.pipe(
-			Effect.mapError(
-				(cause) =>
-					new VigilDaemonEnsureError({
-						message: `Failed to close daemon session ${sessionId}.`,
-						cause,
-					}),
-			),
-		);
-});
-
-const runDaemonHeartbeatLoop = Effect.fn("vigil.runDaemonHeartbeatLoop")(
-	function* (options: DaemonConnectionOptions, lease: DaemonSessionLease) {
-		const heartbeatIntervalMs = Math.max(
-			MIN_DAEMON_HEARTBEAT_MS,
-			lease.heartbeatIntervalMs,
-		);
-
-		return yield* Effect.forever(
-			Effect.sleep(`${heartbeatIntervalMs} millis`).pipe(
-				Effect.zipRight(
-					heartbeatDaemonSession(options, lease.sessionId).pipe(
-						Effect.catchTag("VigilDaemonEnsureError", (error) =>
-							Effect.logWarning(
-								`[vigil] daemon heartbeat failed for session ${lease.sessionId}: ${error.message}`,
-							),
-						),
-					),
-				),
-			),
-		);
-	},
-);
-
-function withOptionalDaemonSession<A, E, R>(
-	options: DaemonConnectionOptions,
-	effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E | VigilDaemonEnsureError, R> {
-	return Effect.gen(function* () {
-		const maybeLease = yield* openDaemonSession(options).pipe(
-			Effect.tap((lease) =>
-				Effect.logInfo(
-					`[vigil] opened daemon session ${lease.sessionId} ttlMs=${lease.ttlMs} heartbeatMs=${lease.heartbeatIntervalMs}`,
-				),
-			),
-			Effect.map(Option.some),
-			Effect.catchTag("VigilDaemonEnsureError", (error) =>
-				Effect.logWarning(
-					`[vigil] daemon session unavailable; continuing without managed session: ${error.message}`,
-				).pipe(Effect.as(Option.none())),
-			),
-		);
-
-		if (Option.isNone(maybeLease)) {
-			return yield* effect;
-		}
-
-		return yield* Effect.acquireUseRelease(
-			Effect.succeed(maybeLease.value),
-			(lease) =>
-				Effect.scoped(
-					Effect.gen(function* () {
-						yield* runDaemonHeartbeatLoop(options, lease).pipe(
-							Effect.forkScoped,
-						);
-						return yield* effect;
-					}),
-				),
-			(lease) =>
-				closeDaemonSession(options, lease.sessionId).pipe(
-					Effect.catchTag("VigilDaemonEnsureError", (error) =>
-						Effect.logWarning(
-							`[vigil] daemon session close failed for ${lease.sessionId}: ${error.message}`,
-						),
-					),
-				),
-		);
-	});
-}
-
 function runCli(
 	argv: string[],
 ): Effect.Effect<
@@ -535,17 +393,14 @@ function runCli(
 
 		yield* ensureServer(connectionOptions);
 
-		yield* withOptionalDaemonSession(
-			connectionOptions,
-			startVigilTuiProgram({
-				chooserFilePath: args.chooserFilePath,
-				daemonConnection: {
-					host: args.serverHost,
-					port: args.serverPort,
-					token: daemonToken,
-				},
-			}),
-		);
+		yield* startVigilTuiProgram({
+			chooserFilePath: args.chooserFilePath,
+			daemonConnection: {
+				host: args.serverHost,
+				port: args.serverPort,
+				token: daemonToken,
+			},
+		});
 	});
 }
 

@@ -18,6 +18,7 @@ import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar.tsx";
 import { Splash } from "#ui/components/splash.tsx";
 import { ThemeModal } from "#ui/components/theme-modal.tsx";
 import { useAppSelectors } from "#ui/hooks/use-app-selectors.ts";
+import { useDaemonSession } from "#ui/hooks/use-daemon-session.ts";
 import { useDaemonWatch } from "#ui/hooks/use-daemon-watch.ts";
 import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state.ts";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh.ts";
@@ -224,6 +225,10 @@ export function App(props: AppProps) {
 			),
 		[refreshFilesEffect],
 	);
+
+	useDaemonSession({
+		enabled: true,
+	});
 
 	useDaemonWatch({
 		daemonConnection: props.daemonConnection,
