@@ -210,7 +210,6 @@ export function App(props: AppProps) {
 		updateUiStatus,
 		renderRepoActionError: formatRepoActionError,
 		reviewMode,
-		pollingEnabled: false,
 	});
 
 	const onRefreshInstruction = useCallback(async () => {
@@ -341,7 +340,6 @@ export function App(props: AppProps) {
 			selectedFile,
 			reviewMode,
 			externalRefreshVersion: refreshInstructionVersion,
-			pollingEnabled: false,
 		});
 
 	const diffNavigationModel = useMemo(

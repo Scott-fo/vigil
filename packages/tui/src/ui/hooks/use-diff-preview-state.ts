@@ -21,8 +21,6 @@ interface UseDiffPreviewStateOptions {
 	readonly selectedFile: FileEntry | null;
 	readonly reviewMode: ReviewMode;
 	readonly externalRefreshVersion?: number;
-	readonly pollMs?: number;
-	readonly pollingEnabled?: boolean;
 }
 
 interface UseDiffPreviewStateResult {
@@ -36,11 +34,8 @@ export function useDiffPreviewState(
 ): UseDiffPreviewStateResult {
 	const { files, selectedFile, reviewMode } = options;
 	const externalRefreshVersion = options.externalRefreshVersion ?? 0;
-	const pollMs = options.pollMs ?? 2000;
-	const pollingEnabled = options.pollingEnabled ?? true;
 	const [selectedFilePreview, setSelectedFilePreview] =
 		useState<SelectedFilePreview | null>(null);
-	const [refreshTick, setRefreshTick] = useState(0);
 	const filePreviewCacheRef = useRef(
 		new Map<
 			string,
@@ -55,18 +50,6 @@ export function useDiffPreviewState(
 		filePreviewCacheRef.current.clear();
 		setSelectedFilePreview(null);
 	}, [reviewMode]);
-
-	useEffect(() => {
-		if (!pollingEnabled) {
-			return;
-		}
-
-		const interval = setInterval(() => {
-			setRefreshTick((current) => current + 1);
-		}, pollMs);
-
-		return () => clearInterval(interval);
-	}, [pollMs, pollingEnabled]);
 
 	useEffect(() => {
 		if (!selectedFile) {
@@ -116,7 +99,7 @@ export function useDiffPreviewState(
 		return () => {
 			cancelled = true;
 		};
-	}, [externalRefreshVersion, reviewMode, selectedFile, refreshTick]);
+	}, [externalRefreshVersion, reviewMode, selectedFile]);
 
 	useEffect(() => {
 		const visiblePaths = new Set(files.map((file) => file.path));

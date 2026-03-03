@@ -18,8 +18,6 @@ interface UseFileRefreshOptions {
 	readonly updateUiStatus: UpdateUiStatus;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
 	readonly reviewMode: ReviewMode;
-	readonly pollMs?: number;
-	readonly pollingEnabled?: boolean;
 }
 
 export interface RefreshRequestState {
@@ -105,8 +103,6 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 	});
 	const reviewModeRef = useRef(reviewMode);
 	reviewModeRef.current = reviewMode;
-	const pollMs = options.pollMs ?? 2000;
-	const pollingEnabled = options.pollingEnabled ?? true;
 
 	const runRefresh = useCallback(
 		async (showLoading: boolean) => {
@@ -287,16 +283,6 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 	useEffect(() => {
 		void refreshFiles(true);
 	}, [refreshFiles, reviewMode]);
-
-	useEffect(() => {
-		if (!pollingEnabled) {
-			return;
-		}
-		const interval = setInterval(() => {
-			void refreshFiles(false);
-		}, pollMs);
-		return () => clearInterval(interval);
-	}, [pollMs, pollingEnabled, refreshFiles]);
 
 	return { refreshFiles };
 }
