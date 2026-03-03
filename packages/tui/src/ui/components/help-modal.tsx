@@ -14,16 +14,15 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	},
 	{
 		keys: "j / k, ↑ / ↓",
-		description: "Navigate files (sidebar) or diff lines (diff panel)",
+		description: "Navigate up / down",
 	},
 	{
 		keys: "space",
-		description: "Stage / unstage selected file (sidebar focus)",
+		description: "Stage / unstage selected file",
 	},
 	{
 		keys: "enter / e / o",
-		description:
-			"Open selected file (sidebar) or selected diff line (diff panel)",
+		description: "Open selected file or selected diff line",
 	},
 	{ keys: "d", description: "Open discard confirmation for selected file" },
 	{ keys: "tab", description: "Toggle split / unified diff" },
