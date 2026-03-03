@@ -4,6 +4,9 @@ import {
 	DaemonMetaResponse,
 	DaemonUnauthorizedError,
 	HealthResponse,
+	SessionBadRequestError,
+	SessionNotFoundError,
+	SessionOpenResponse,
 	VIGIL_DAEMON_PROTOCOL_VERSION,
 	VIGIL_DAEMON_TOKEN_ENV_VAR,
 	VIGIL_DAEMON_TOKEN_HEADER,
@@ -13,8 +16,17 @@ import {
 	WatchSubscribeResponse,
 	WatchSubscriptionNotFoundError,
 } from "@vigil/api";
-import { Cause, Data, Effect, Layer, Redacted, Stream, pipe } from "effect";
+import { Cause, Data, Deferred, Effect, Layer, Redacted, Stream, pipe } from "effect";
 import { DbService } from "./db/service.ts";
+import {
+	DaemonSession,
+	DaemonSessionIdError,
+	DaemonSessionNotFoundError,
+	DAEMON_MANAGED_IDLE_GRACE_MS,
+	DAEMON_SESSION_HEARTBEAT_INTERVAL_MS,
+	DAEMON_SESSION_SWEEP_INTERVAL_MS,
+	DAEMON_SESSION_TTL_MS,
+} from "./daemon-session.ts";
 import { RepoSubscription } from "./repo-subscription.ts";
 import { RepoWatcher } from "./repo-watcher.ts";
 export {
@@ -25,6 +37,18 @@ export {
 	RepoWatcherGitError,
 	RepoWatcherResolveError,
 } from "./repo-watcher.ts";
+export {
+	DaemonSession,
+	type DaemonSessionLease,
+	type DaemonSessionLayerOptions,
+	DaemonSessionIdError,
+	DaemonSessionNotFoundError,
+	DAEMON_MANAGED_IDLE_GRACE_MS,
+	DAEMON_SESSION_HEARTBEAT_INTERVAL_MS,
+	DAEMON_SESSION_SWEEP_INTERVAL_MS,
+	DAEMON_SESSION_TTL_MS,
+} from "./daemon-session.ts";
+
 export {
 	RepoSubscription,
 	type RepoSubscriptionEvent,
@@ -43,8 +67,14 @@ export {
 } from "./db/service.ts";
 
 export {
+	buildVigilDaemonBaseUrl,
+	DaemonUnauthorizedError,
 	DaemonMetaResponse,
 	HealthResponse,
+	makeVigilDaemonClient,
+	makeVigilDaemonHttpClientLayer,
+	type VigilDaemonClient,
+	type VigilDaemonConnection,
 	VIGIL_DAEMON_PROTOCOL_VERSION,
 	VIGIL_DAEMON_TOKEN_ENV_VAR,
 	VIGIL_DAEMON_TOKEN_HEADER,
@@ -92,6 +122,7 @@ export interface StartVigilServerOptions {
 	readonly host: string;
 	readonly port: number;
 	readonly daemonToken: string;
+	readonly lifecycle?: "persistent" | "managed";
 }
 
 export class VigilServerStartError extends Data.TaggedError(
@@ -100,6 +131,30 @@ export class VigilServerStartError extends Data.TaggedError(
 	readonly message: string;
 	readonly cause: Cause.Cause<unknown>;
 }> {}
+
+interface VigilServerRuntimeOptions {
+	readonly onManagedIdle: Effect.Effect<void, never, never>;
+}
+
+const defaultRuntimeOptions: VigilServerRuntimeOptions = {
+	onManagedIdle: Effect.void,
+};
+
+function makeDaemonSessionLayer(
+	options: StartVigilServerOptions,
+	runtimeOptions: VigilServerRuntimeOptions,
+) {
+	const managed = options.lifecycle === "managed";
+
+	return DaemonSession.layer({
+		sessionTtlMs: DAEMON_SESSION_TTL_MS,
+		heartbeatIntervalMs: DAEMON_SESSION_HEARTBEAT_INTERVAL_MS,
+		sweepIntervalMs: DAEMON_SESSION_SWEEP_INTERVAL_MS,
+		shutdownWhenIdle: managed,
+		idleGraceMs: DAEMON_MANAGED_IDLE_GRACE_MS,
+		onIdle: managed ? runtimeOptions.onManagedIdle : Effect.void,
+	});
+}
 
 function makeVigilDaemonAuthLayer(options: StartVigilServerOptions) {
 	return Layer.succeed(
@@ -117,7 +172,10 @@ function makeVigilDaemonAuthLayer(options: StartVigilServerOptions) {
 	);
 }
 
-export function makeVigilApiLayer(options: StartVigilServerOptions) {
+export function makeVigilApiLayer(
+	options: StartVigilServerOptions,
+	runtimeOptions: VigilServerRuntimeOptions = defaultRuntimeOptions,
+) {
 	const textEncoder = new TextEncoder();
 	const encodeSseChunk = (eventName: string, payload: unknown) =>
 		textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
@@ -244,20 +302,76 @@ export function makeVigilApiLayer(options: StartVigilServerOptions) {
 				),
 			),
 	);
+	const sessionApiLive = HttpApiBuilder.group(VigilApi, "session", (handlers) =>
+		handlers
+			.handle("open", () =>
+				pipe(
+					DaemonSession,
+					Effect.flatMap((session) => session.open()),
+					Effect.map((lease) =>
+						SessionOpenResponse.make({
+							sessionId: lease.sessionId,
+							heartbeatIntervalMs: lease.heartbeatIntervalMs,
+							ttlMs: lease.ttlMs,
+						}),
+					),
+				),
+			)
+			.handle("heartbeat", ({ payload }) =>
+				pipe(
+					DaemonSession,
+					Effect.flatMap((session) => session.heartbeat(payload.sessionId)),
+					Effect.asVoid,
+					Effect.catchTags({
+						DaemonSessionIdError: (error) =>
+							Effect.fail(
+								SessionBadRequestError.make({
+									message: error.message,
+								}),
+							),
+						DaemonSessionNotFoundError: (error) =>
+							Effect.fail(
+								SessionNotFoundError.make({
+									message: error.message,
+								}),
+							),
+					}),
+				),
+			)
+			.handle("close", ({ payload }) =>
+				pipe(
+					DaemonSession,
+					Effect.flatMap((session) => session.close(payload.sessionId)),
+					Effect.asVoid,
+					Effect.catchTag("DaemonSessionIdError", (error) =>
+						Effect.fail(
+							SessionBadRequestError.make({
+								message: error.message,
+							}),
+						),
+					),
+				),
+			),
+	);
 
 	return HttpApiBuilder.api(VigilApi).pipe(
 		Layer.provide(systemApiLive),
 		Layer.provide(watchApiLive),
+		Layer.provide(sessionApiLive),
 		Layer.provide(makeVigilDaemonAuthLayer(options)),
+		Layer.provide(makeDaemonSessionLayer(options, runtimeOptions)),
 		Layer.provide(RepoSubscription.layer),
 		Layer.provide(RepoWatcher.layer),
 	);
 }
 
-function makeServerLive(options: StartVigilServerOptions) {
+function makeServerLive(
+	options: StartVigilServerOptions,
+	runtimeOptions: VigilServerRuntimeOptions = defaultRuntimeOptions,
+) {
 	return pipe(
 		HttpApiBuilder.serve(HttpMiddleware.logger),
-		Layer.provide(makeVigilApiLayer(options)),
+		Layer.provide(makeVigilApiLayer(options, runtimeOptions)),
 		Layer.provide(
 			BunHttpServer.layer({
 				hostname: options.host,
@@ -270,17 +384,35 @@ function makeServerLive(options: StartVigilServerOptions) {
 
 export function startVigilServerProgram(
 	options: StartVigilServerOptions,
-): Effect.Effect<never, VigilServerStartError> {
+): Effect.Effect<void, VigilServerStartError> {
 	const initializeDatabase = Effect.gen(function* () {
 		yield* DbService;
 	}).pipe(Effect.provide(DbService.layer));
+
+	const startServer = Effect.gen(function* () {
+		if (options.lifecycle !== "managed") {
+			return yield* Layer.launch(makeServerLive(options));
+		}
+
+		const managedIdleSignal = yield* Deferred.make<void>();
+		const runtimeOptions: VigilServerRuntimeOptions = {
+			onManagedIdle: Deferred.succeed(managedIdleSignal, undefined).pipe(
+				Effect.asVoid,
+			),
+		};
+
+		yield* Effect.logInfo("[vigil-server] managed lifecycle enabled");
+		yield* Layer.launch(makeServerLive(options, runtimeOptions)).pipe(
+			Effect.raceFirst(Deferred.await(managedIdleSignal)),
+		);
+	});
 
 	return pipe(
 		Effect.logInfo(
 			`[vigil-server] starting host=${options.host} port=${options.port}`,
 		),
 		Effect.zipRight(Effect.scoped(initializeDatabase)),
-		Effect.zipRight(Layer.launch(makeServerLive(options))),
+		Effect.zipRight(startServer),
 		Effect.catchAllCause((cause) =>
 			Effect.fail(
 				new VigilServerStartError({
