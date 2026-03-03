@@ -11,6 +11,14 @@ import {
 	VigilDaemonAuth,
 } from "@vigil/api";
 import { Cause, Data, Effect, Layer, Redacted, pipe } from "effect";
+export {
+	RepoWatcher,
+	type RepoWatcherEvent,
+	type RepoWatcherLease,
+	type RepoWatcherRetainError,
+	RepoWatcherGitError,
+	RepoWatcherResolveError,
+} from "./repo-watcher.ts";
 
 export {
 	DaemonMetaResponse,
