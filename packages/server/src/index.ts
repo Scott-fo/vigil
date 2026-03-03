@@ -14,7 +14,7 @@ import {
 	WatchSubscriptionNotFoundError,
 } from "@vigil/api";
 import { Cause, Data, Effect, Layer, Redacted, Stream, pipe } from "effect";
-import { migrateReviewDatabase } from "./db/migrate.ts";
+import { DbService } from "./db/service.ts";
 import { RepoSubscription } from "./repo-subscription.ts";
 import { RepoWatcher } from "./repo-watcher.ts";
 export {
@@ -36,6 +36,13 @@ export {
 } from "./repo-subscription.ts";
 
 export {
+	DbError,
+	type Db,
+	DbService,
+	type DbServiceShape,
+} from "./db/service.ts";
+
+export {
 	DaemonMetaResponse,
 	HealthResponse,
 	VIGIL_DAEMON_PROTOCOL_VERSION,
@@ -44,10 +51,6 @@ export {
 } from "@vigil/api";
 
 export {
-	decodeReviewComment,
-	decodeReviewComments,
-	decodeReviewThread,
-	decodeReviewThreads,
 	ReviewComment,
 	ReviewLineSideSchema,
 	type ReviewLineSide,
@@ -55,6 +58,20 @@ export {
 	type ReviewScopeType,
 	ReviewThread,
 } from "./models/index.ts";
+
+export {
+	type CreateReviewCommentInput,
+	type CreateReviewThreadInput,
+	type ListReviewThreadsOptions,
+	ReviewCommentDecodeError,
+	ReviewCommentNotFoundError,
+	ReviewCommentRepository,
+	type ReviewCommentRepositoryError,
+	ReviewThreadDecodeError,
+	ReviewThreadNotFoundError,
+	ReviewThreadRepository,
+	type ReviewThreadRepositoryError,
+} from "./repositories/index.ts";
 
 export interface StartVigilServerOptions {
 	readonly host: string;
@@ -239,11 +256,15 @@ function makeServerLive(options: StartVigilServerOptions) {
 export function startVigilServerProgram(
 	options: StartVigilServerOptions,
 ): Effect.Effect<never, VigilServerStartError> {
+	const initializeDatabase = Effect.gen(function* () {
+		yield* DbService;
+	}).pipe(Effect.provide(DbService.layer));
+
 	return pipe(
 		Effect.logInfo(
 			`[vigil-server] starting host=${options.host} port=${options.port}`,
 		),
-		Effect.zipRight(Effect.scoped(migrateReviewDatabase())),
+		Effect.zipRight(Effect.scoped(initializeDatabase)),
 		Effect.zipRight(Layer.launch(makeServerLive(options))),
 		Effect.catchAllCause((cause) =>
 			Effect.fail(
