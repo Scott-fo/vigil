@@ -170,7 +170,6 @@ interface SidebarPanelProps {
 	readonly sidebarItems: SidebarItem[];
 	readonly isFocused: boolean;
 	readonly selectedFilePath: Option.Option<string>;
-	readonly onFocus: () => void;
 	readonly onToggleDirectory: (path: string) => void;
 	readonly onSelectFilePath: (path: string) => void;
 }
@@ -289,9 +288,6 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 			marginRight={1}
 			flexDirection="column"
 			backgroundColor={props.theme.backgroundPanel}
-			onMouseDown={() => {
-				props.onFocus();
-			}}
 		>
 			<box paddingX={1} marginBottom={1}>
 				<text fg={props.theme.text}>
@@ -377,7 +373,6 @@ interface DiffPanelProps {
 	readonly error: Option.Option<string>;
 	readonly isCommitModalOpen: boolean;
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
-	readonly onFocus: () => void;
 }
 
 const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
@@ -458,9 +453,6 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 			}
 			flexDirection="column"
 			backgroundColor={props.theme.backgroundPanel}
-			onMouseDown={() => {
-				props.onFocus();
-			}}
 		>
 			<box paddingX={1} marginBottom={1} flexDirection="column" width="100%">
 				{props.reviewModeLabel.length > 0 ? (
@@ -581,8 +573,6 @@ export interface ReviewerProps {
 	readonly sidebarOpen: boolean;
 	readonly activePane: FocusedPane;
 	readonly onToggleSidebar: () => void;
-	readonly onFocusSidebar: () => void;
-	readonly onFocusDiff: () => void;
 	readonly onCopySelection: () => void;
 }
 
@@ -609,7 +599,6 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 					sidebarItems={props.sidebarItems}
 					isFocused={isSidebarFocused}
 					selectedFilePath={selectedFilePath}
-					onFocus={props.onFocusSidebar}
 					onToggleDirectory={props.onToggleDirectory}
 					onSelectFilePath={props.onSelectFilePath}
 				/>
@@ -618,7 +607,6 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 					theme={props.theme}
 					onToggleSidebar={() => {
 						props.onToggleSidebar();
-						props.onFocusSidebar();
 					}}
 				/>
 			)}
@@ -638,7 +626,6 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 				error={props.error}
 				isCommitModalOpen={props.isCommitModalOpen}
 				diffScrollRef={props.diffScrollRef}
-				onFocus={props.onFocusDiff}
 			/>
 		</box>
 	);

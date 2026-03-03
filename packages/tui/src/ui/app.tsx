@@ -496,8 +496,6 @@ export function App(props: AppProps) {
 					sidebarOpen={sidebarOpen}
 					onToggleSidebar={onToggleSidebar}
 					activePane={activePane}
-					onFocusSidebar={() => setActivePane("sidebar")}
-					onFocusDiff={() => setActivePane("diff")}
 					onCopySelection={onCopySelection}
 				/>
 			)}
