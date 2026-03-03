@@ -83,6 +83,125 @@ export class SessionCloseRequest extends Schema.Class<SessionCloseRequest>(
 	sessionId: Schema.NonEmptyString,
 }) {}
 
+export class ReviewScopeRequest extends Schema.Class<ReviewScopeRequest>(
+	"ReviewScopeRequest",
+)({
+	repoRoot: Schema.NonEmptyString,
+	mode: Schema.Literal("working-tree", "branch-compare"),
+	sourceRef: Schema.NullOr(Schema.String),
+	destinationRef: Schema.NullOr(Schema.String),
+	scopeKey: Schema.NonEmptyString,
+}) {}
+
+export class ReviewOverallAnchorRequest extends Schema.Class<ReviewOverallAnchorRequest>(
+	"ReviewOverallAnchorRequest",
+)({
+	anchorType: Schema.Literal("overall"),
+}) {}
+
+export class ReviewLineAnchorRequest extends Schema.Class<ReviewLineAnchorRequest>(
+	"ReviewLineAnchorRequest",
+)({
+	anchorType: Schema.Literal("line"),
+	filePath: Schema.NonEmptyString,
+	lineSide: Schema.Literal("old", "new"),
+	lineNumber: Schema.Int,
+	hunkHeader: Schema.NullOr(Schema.String),
+	lineContentHash: Schema.NullOr(Schema.String),
+}) {}
+
+export const ReviewThreadAnchorRequest = Schema.Union(
+	ReviewOverallAnchorRequest,
+	ReviewLineAnchorRequest,
+);
+export type ReviewThreadAnchorRequest = typeof ReviewThreadAnchorRequest.Type;
+
+export class ReviewListThreadsRequest extends Schema.Class<ReviewListThreadsRequest>(
+	"ReviewListThreadsRequest",
+)({
+	scope: ReviewScopeRequest,
+	filePath: Schema.NullOr(Schema.String),
+	includeResolved: Schema.Boolean,
+	includeStale: Schema.Boolean,
+	activeAnchors: Schema.NullOr(Schema.Array(ReviewThreadAnchorRequest)),
+}) {}
+
+export class ReviewCreateOverallThreadRequest extends Schema.Class<ReviewCreateOverallThreadRequest>(
+	"ReviewCreateOverallThreadRequest",
+)({
+	scope: ReviewScopeRequest,
+	body: Schema.String,
+	author: Schema.NullOr(Schema.String),
+	threadId: Schema.NullOr(Schema.String),
+	commentId: Schema.NullOr(Schema.String),
+}) {}
+
+export class ReviewCreateLineThreadRequest extends Schema.Class<ReviewCreateLineThreadRequest>(
+	"ReviewCreateLineThreadRequest",
+)({
+	scope: ReviewScopeRequest,
+	anchor: ReviewLineAnchorRequest,
+	body: Schema.String,
+	author: Schema.NullOr(Schema.String),
+	threadId: Schema.NullOr(Schema.String),
+	commentId: Schema.NullOr(Schema.String),
+}) {}
+
+export class ReviewReplyToThreadRequest extends Schema.Class<ReviewReplyToThreadRequest>(
+	"ReviewReplyToThreadRequest",
+)({
+	scope: ReviewScopeRequest,
+	threadId: Schema.NonEmptyString,
+	body: Schema.String,
+	author: Schema.NullOr(Schema.String),
+	commentId: Schema.NullOr(Schema.String),
+}) {}
+
+export class ReviewUpdateThreadStateRequest extends Schema.Class<ReviewUpdateThreadStateRequest>(
+	"ReviewUpdateThreadStateRequest",
+)({
+	scope: ReviewScopeRequest,
+	threadId: Schema.NonEmptyString,
+}) {}
+
+export class ReviewCommentResponse extends Schema.Class<ReviewCommentResponse>(
+	"ReviewCommentResponse",
+)({
+	id: Schema.String,
+	threadId: Schema.String,
+	author: Schema.String,
+	body: Schema.String,
+	createdAtMs: Schema.Number,
+	updatedAtMs: Schema.Number,
+}) {}
+
+export class ReviewThreadResponse extends Schema.Class<ReviewThreadResponse>(
+	"ReviewThreadResponse",
+)({
+	id: Schema.String,
+	repoRoot: Schema.String,
+	scopeType: Schema.Literal("working-tree", "branch-compare"),
+	scopeKey: Schema.String,
+	sourceRef: Schema.NullOr(Schema.String),
+	destinationRef: Schema.NullOr(Schema.String),
+	filePath: Schema.NullOr(Schema.String),
+	lineSide: Schema.NullOr(Schema.Literal("old", "new")),
+	lineNumber: Schema.NullOr(Schema.Number),
+	hunkHeader: Schema.NullOr(Schema.String),
+	lineContentHash: Schema.NullOr(Schema.String),
+	isResolved: Schema.Boolean,
+	createdAtMs: Schema.Number,
+	updatedAtMs: Schema.Number,
+}) {}
+
+export class ReviewThreadWithCommentsResponse extends Schema.Class<ReviewThreadWithCommentsResponse>(
+	"ReviewThreadWithCommentsResponse",
+)({
+	thread: ReviewThreadResponse,
+	comments: Schema.Array(ReviewCommentResponse),
+	isStale: Schema.Boolean,
+}) {}
+
 export class DaemonUnauthorizedError extends Schema.TaggedError<DaemonUnauthorizedError>()(
 	"DaemonUnauthorizedError",
 	{
@@ -117,6 +236,22 @@ export class SessionBadRequestError extends Schema.TaggedError<SessionBadRequest
 
 export class SessionNotFoundError extends Schema.TaggedError<SessionNotFoundError>()(
 	"SessionNotFoundError",
+	{
+		message: Schema.String,
+	},
+	HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+export class ReviewBadRequestError extends Schema.TaggedError<ReviewBadRequestError>()(
+	"ReviewBadRequestError",
+	{
+		message: Schema.String,
+	},
+	HttpApiSchema.annotations({ status: 400 }),
+) {}
+
+export class ReviewNotFoundError extends Schema.TaggedError<ReviewNotFoundError>()(
+	"ReviewNotFoundError",
 	{
 		message: Schema.String,
 	},
@@ -197,10 +332,56 @@ export class SessionApi extends HttpApiGroup.make("session")
 	)
 	.middleware(VigilDaemonAuth) {}
 
+export class ReviewApi extends HttpApiGroup.make("review")
+	.add(
+		HttpApiEndpoint.post("listThreads")`/review/threads/list`
+			.setPayload(ReviewListThreadsRequest)
+			.addSuccess(Schema.Array(ReviewThreadWithCommentsResponse))
+			.addError(ReviewBadRequestError)
+			.addError(ReviewNotFoundError),
+	)
+	.add(
+		HttpApiEndpoint.post("createOverallThread")`/review/threads/overall`
+			.setPayload(ReviewCreateOverallThreadRequest)
+			.addSuccess(ReviewThreadWithCommentsResponse)
+			.addError(ReviewBadRequestError)
+			.addError(ReviewNotFoundError),
+	)
+	.add(
+		HttpApiEndpoint.post("createLineThread")`/review/threads/line`
+			.setPayload(ReviewCreateLineThreadRequest)
+			.addSuccess(ReviewThreadWithCommentsResponse)
+			.addError(ReviewBadRequestError)
+			.addError(ReviewNotFoundError),
+	)
+	.add(
+		HttpApiEndpoint.post("replyToThread")`/review/threads/reply`
+			.setPayload(ReviewReplyToThreadRequest)
+			.addSuccess(ReviewThreadWithCommentsResponse)
+			.addError(ReviewBadRequestError)
+			.addError(ReviewNotFoundError),
+	)
+	.add(
+		HttpApiEndpoint.post("resolveThread")`/review/threads/resolve`
+			.setPayload(ReviewUpdateThreadStateRequest)
+			.addSuccess(ReviewThreadResponse)
+			.addError(ReviewBadRequestError)
+			.addError(ReviewNotFoundError),
+	)
+	.add(
+		HttpApiEndpoint.post("reopenThread")`/review/threads/reopen`
+			.setPayload(ReviewUpdateThreadStateRequest)
+			.addSuccess(ReviewThreadResponse)
+			.addError(ReviewBadRequestError)
+			.addError(ReviewNotFoundError),
+	)
+	.middleware(VigilDaemonAuth) {}
+
 export class VigilApi extends HttpApi.make("vigil")
 	.add(SystemApi)
 	.add(WatchApi)
-	.add(SessionApi) {}
+	.add(SessionApi)
+	.add(ReviewApi) {}
 
 export interface VigilDaemonConnection {
 	readonly host: string;
