@@ -77,6 +77,10 @@ function ensureDiffLineVisible(
 	}
 }
 
+function getSidebarViewportHeight(scroll: ScrollBoxRenderable): number {
+	return Math.max(1, Math.floor(scroll.viewport.height));
+}
+
 interface SidebarHeaderRowProps {
 	readonly item: SidebarHeaderItem;
 	readonly theme: ResolvedTheme;
@@ -89,13 +93,14 @@ const SidebarHeaderRow = memo(function SidebarHeaderRow(
 	const headerPrefix = "  ".repeat(props.item.depth);
 	return (
 		<box
+			height={1}
 			paddingX={1}
 			onMouseDown={(event) => {
 				event.preventDefault();
 				props.onToggleDirectory(props.item.path);
 			}}
 		>
-			<text fg={props.theme.textMuted}>
+			<text fg={props.theme.textMuted} wrapMode="none" truncate>
 				<span fg={props.theme.borderActive}>
 					{headerPrefix}
 					{props.item.collapsed ? "▸ " : "▾ "}
@@ -138,6 +143,7 @@ const SidebarFileRow = memo(function SidebarFileRow(
 	return (
 		<box
 			id={props.rowId}
+			height={1}
 			paddingX={1}
 			backgroundColor={rowBackground}
 			onMouseDown={(event) => {
@@ -145,7 +151,7 @@ const SidebarFileRow = memo(function SidebarFileRow(
 				props.onSelectFilePath(file.path);
 			}}
 		>
-			<text>
+			<text wrapMode="none" truncate>
 				<span fg={props.theme.borderSubtle}>{filePrefix}</span>
 				<span fg={getStatusColor(file.status, props.theme)}>{file.status}</span>{" "}
 				<span
@@ -203,7 +209,7 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 		const syncScrollMetrics = () => {
 			const next = {
 				scrollTop: Math.max(0, Math.floor(scroll.scrollTop)),
-				viewportHeight: Math.max(1, Math.floor(scroll.height)),
+				viewportHeight: getSidebarViewportHeight(scroll),
 			};
 			setScrollMetrics((current) =>
 				current.scrollTop === next.scrollTop &&
@@ -235,18 +241,18 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 		const nextScrollTop = getScrollTopForVisibleRow(
 			selectedSidebarRowIndex,
 			scroll.scrollTop,
-			scroll.height,
+			getSidebarViewportHeight(scroll),
 		);
 
 		if (nextScrollTop !== Math.floor(scroll.scrollTop)) {
 			scroll.scrollTo({ x: 0, y: nextScrollTop });
 			setScrollMetrics((current) =>
 				current.scrollTop === nextScrollTop &&
-				current.viewportHeight === Math.max(1, Math.floor(scroll.height))
+				current.viewportHeight === getSidebarViewportHeight(scroll)
 					? current
 					: {
 							scrollTop: nextScrollTop,
-							viewportHeight: Math.max(1, Math.floor(scroll.height)),
+							viewportHeight: getSidebarViewportHeight(scroll),
 						},
 			);
 		}
