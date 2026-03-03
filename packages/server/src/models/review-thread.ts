@@ -25,9 +25,3 @@ export class ReviewThread extends Schema.Class<ReviewThread>("ReviewThread")({
 	createdAtMs: Schema.Number,
 	updatedAtMs: Schema.Number,
 }) {}
-
-export const decodeReviewThread = Schema.decodeUnknown(ReviewThread);
-
-export const decodeReviewThreads = Schema.decodeUnknown(
-	Schema.Array(ReviewThread),
-);
