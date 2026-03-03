@@ -8,6 +8,17 @@ export {
 	ReviewScopeValidationError,
 } from "./scope.ts";
 
+export {
+	type CreateLineThreadInput,
+	type CreateOverallThreadInput,
+	type ReplyToThreadInput,
+	ReviewService,
+	type ReviewServiceError,
+	ReviewServiceScopeMismatchError,
+	ReviewServiceValidationError,
+	type UpdateThreadStateInput,
+} from "./service.ts";
+
 export type {
 	LineThreadAnchor,
 	OverallThreadAnchor,

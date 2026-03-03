@@ -107,15 +107,23 @@ export {
 	buildBranchCompareScopeKey,
 	buildThreadAnchorKey,
 	buildWorkingTreeScopeKey,
+	type CreateLineThreadInput,
+	type CreateOverallThreadInput,
 	createBranchCompareScope,
 	createOverallAnchor,
 	createWorkingTreeScope,
+	type ReplyToThreadInput,
+	ReviewService,
+	type ReviewServiceError,
+	ReviewServiceScopeMismatchError,
+	ReviewServiceValidationError,
 	ReviewScopeValidationError,
 	type LineThreadAnchor,
 	type OverallThreadAnchor,
 	type ReviewScope,
 	type ThreadAnchor,
 	type ThreadWithComments,
+	type UpdateThreadStateInput,
 } from "./review/index.ts";
 
 export interface StartVigilServerOptions {
