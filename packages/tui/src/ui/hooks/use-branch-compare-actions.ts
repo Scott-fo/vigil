@@ -13,6 +13,7 @@ import {
 	isBranchCompareReviewMode,
 	openBranchCompareModalLoadingState,
 } from "#ui/state";
+import { searchBranchRefs } from "#ui/branch-ref-search";
 
 interface UseBranchCompareActionsOptions {
 	readonly branchCompareModal: BranchCompareModalState;
@@ -22,19 +23,6 @@ interface UseBranchCompareActionsOptions {
 	readonly clearUiError: () => void;
 	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
-}
-
-function filterComparableRefs(
-	refs: ReadonlyArray<string>,
-	query: string,
-): ReadonlyArray<string> {
-	const normalizedQuery = query.trim().toLowerCase();
-	if (normalizedQuery.length === 0) {
-		return refs;
-	}
-	return refs.filter((refName) =>
-		refName.toLowerCase().includes(normalizedQuery),
-	);
 }
 
 function resolveDestinationRef(
@@ -172,7 +160,7 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 				if (!current.isOpen) {
 					return current;
 				}
-				const filtered = filterComparableRefs(current.availableRefs, query);
+				const filtered = searchBranchRefs(current.availableRefs, query);
 				const currentRef =
 					field === "source" ? current.sourceRef : current.destinationRef;
 				const nextRef =
@@ -227,7 +215,7 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 					current.activeField === "source"
 						? current.sourceQuery
 						: current.destinationQuery;
-				const filtered = filterComparableRefs(current.availableRefs, activeQuery);
+				const filtered = searchBranchRefs(current.availableRefs, activeQuery);
 				const nextIndex = Math.max(filtered.indexOf(refName), 0);
 
 				return current.activeField === "source"
@@ -260,7 +248,7 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 					current.activeField === "source"
 						? current.sourceQuery
 						: current.destinationQuery;
-				const filtered = filterComparableRefs(current.availableRefs, activeQuery);
+				const filtered = searchBranchRefs(current.availableRefs, activeQuery);
 				if (filtered.length === 0) {
 					return current;
 				}

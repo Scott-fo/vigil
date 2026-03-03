@@ -9,6 +9,7 @@ import {
 } from "#theme/theme";
 import type { SidebarItem } from "#ui/sidebar";
 import { buildSidebarItems } from "#ui/sidebar";
+import { searchBranchRefs } from "#ui/branch-ref-search";
 import type {
 	BranchCompareField,
 	BranchCompareModalState,
@@ -21,19 +22,6 @@ import type {
 	UiStatus,
 } from "#ui/state";
 import { deriveModalVisibility, isWorkingTreeReviewMode } from "#ui/state";
-
-function filterBranchRefs(
-	refs: ReadonlyArray<string>,
-	query: string,
-): ReadonlyArray<string> {
-	const normalizedQuery = query.trim().toLowerCase();
-	if (normalizedQuery.length === 0) {
-		return refs;
-	}
-	return refs.filter((refName) =>
-		refName.toLowerCase().includes(normalizedQuery),
-	);
-}
 
 interface UseAppSelectorsOptions {
 	readonly fileView: FileViewState;
@@ -139,7 +127,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 				? branchCompareModal.sourceQuery
 				: branchCompareModal.destinationQuery;
 
-		return filterBranchRefs(branchCompareModal.availableRefs, query);
+		return searchBranchRefs(branchCompareModal.availableRefs, query);
 	}, [branchCompareModal]);
 
 	const branchSelectedActiveRef = useMemo(() => {
