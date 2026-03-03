@@ -8,7 +8,7 @@ import {
 	type ThemeMode,
 } from "#theme/theme";
 import type { SidebarItem } from "#ui/sidebar";
-import { buildSidebarItems } from "#ui/sidebar";
+import { buildSidebarTree, flattenSidebarTree } from "#ui/sidebar";
 import { searchBranchRefs } from "#ui/branch-ref-search";
 import type {
 	BranchCompareField,
@@ -96,6 +96,11 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 	const selectedThemeName = themeModal.isOpen
 		? themeModal.selectedThemeName
 		: themeName;
+
+	const fileByPath = useMemo(
+		() => new Map(files.map((file) => [file.path, file] as const)),
+		[files],
+	);
 
 	const branchSourceQuery = branchCompareModal.isOpen
 		? branchCompareModal.sourceQuery
@@ -198,7 +203,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		const selectedFileMatch = pipe(
 			selectedPath,
 			Option.flatMap((path) =>
-				Option.fromNullable(files.find((file) => file.path === path)),
+				Option.fromNullable(fileByPath.get(path)),
 			),
 		);
 
@@ -206,11 +211,13 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 			selectedFileMatch,
 			Option.getOrElse(() => files[0] ?? null),
 		);
-	}, [files, selectedPath]);
+	}, [fileByPath, files.length, selectedPath]);
+
+	const sidebarTree = useMemo(() => buildSidebarTree(files), [files]);
 
 	const sidebarItems = useMemo(
-		() => buildSidebarItems(files, collapsedDirectories),
-		[collapsedDirectories, files],
+		() => flattenSidebarTree(sidebarTree, collapsedDirectories),
+		[collapsedDirectories, sidebarTree],
 	);
 
 	const visibleFilePaths = useMemo(
@@ -224,13 +231,18 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		[sidebarItems],
 	);
 
+	const visibleFileIndexByPath = useMemo(
+		() => new Map(visibleFilePaths.map((path, index) => [path, index] as const)),
+		[visibleFilePaths],
+	);
+
 	const selectedVisibleIndex = useMemo(() => {
 		if (!selectedFile) {
 			return -1;
 		}
 
-		return visibleFilePaths.indexOf(selectedFile.path);
-	}, [selectedFile, visibleFilePaths]);
+		return visibleFileIndexByPath.get(selectedFile.path) ?? -1;
+	}, [selectedFile, visibleFileIndexByPath]);
 
 	const stagedFileCount = useMemo(
 		() => files.filter((file) => isFileStaged(file.status)).length,

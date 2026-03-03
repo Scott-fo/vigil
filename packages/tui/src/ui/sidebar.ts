@@ -25,6 +25,10 @@ interface FileTreeNode {
 	files: Array<{ file: FileEntry; name: string }>;
 }
 
+export interface SidebarTree {
+	readonly root: FileTreeNode;
+}
+
 export type SidebarItem =
 	| {
 			kind: "header";
@@ -87,10 +91,36 @@ function getSidebarFileLabel(file: FileEntry, leafName: string): string {
 	return leafName;
 }
 
-export function buildSidebarItems(
-	files: FileEntry[],
-	collapsedDirectories: Set<string>,
-): SidebarItem[] {
+function getSingleChildDirectory(node: FileTreeNode): Option.Option<FileTreeNode> {
+	if (node.directories.size !== 1) {
+		return Option.none();
+	}
+	return Option.fromNullable([...node.directories.values()][0]);
+}
+
+function compressDirectoryChain(start: FileTreeNode): {
+	node: FileTreeNode;
+	label: string;
+} {
+	let node = start;
+	const labelParts = [node.name];
+
+	while (node.files.length === 0) {
+		const nextDirectory = getSingleChildDirectory(node);
+		if (Option.isNone(nextDirectory)) {
+			break;
+		}
+		node = nextDirectory.value;
+		labelParts.push(nextDirectory.value.name);
+	}
+
+	return {
+		node,
+		label: labelParts.join("/"),
+	};
+}
+
+export function buildSidebarTree(files: FileEntry[]): SidebarTree {
 	const root = createTreeNode("", "");
 
 	for (const file of files) {
@@ -120,36 +150,14 @@ export function buildSidebarItems(
 		current.files.push({ file, name: sidebarLabel });
 	}
 
+	return { root };
+}
+
+export function flattenSidebarTree(
+	tree: SidebarTree,
+	collapsedDirectories: Set<string>,
+): SidebarItem[] {
 	const items: SidebarItem[] = [];
-
-	function getSingleChildDirectory(node: FileTreeNode): Option.Option<FileTreeNode> {
-		if (node.directories.size !== 1) {
-			return Option.none();
-		}
-		return Option.fromNullable([...node.directories.values()][0]);
-	}
-
-	function compressDirectoryChain(start: FileTreeNode): {
-		node: FileTreeNode;
-		label: string;
-	} {
-		let node = start;
-		const labelParts = [node.name];
-
-		while (node.files.length === 0) {
-			const nextDirectory = getSingleChildDirectory(node);
-			if (Option.isNone(nextDirectory)) {
-				break;
-			}
-			node = nextDirectory.value;
-			labelParts.push(nextDirectory.value.name);
-		}
-
-		return {
-			node,
-			label: labelParts.join("/"),
-		};
-	}
 
 	function visit(node: FileTreeNode, depth: number) {
 		const directories = [...node.directories.values()].sort((a, b) =>
@@ -186,6 +194,15 @@ export function buildSidebarItems(
 		}
 	}
 
-	visit(root, 0);
+	visit(tree.root, 0);
+	return items;
+}
+
+export function buildSidebarItems(
+	files: FileEntry[],
+	collapsedDirectories: Set<string>,
+): SidebarItem[] {
+	const tree = buildSidebarTree(files);
+	const items = flattenSidebarTree(tree, collapsedDirectories);
 	return items;
 }
