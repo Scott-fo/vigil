@@ -6,6 +6,7 @@
       "name": "vigil",
       "dependencies": {
         "@effect/workflow": "^0.16.0",
+        "@vigil/config": "workspace:*",
         "@vigil/server": "workspace:*",
         "@vigil/tui": "workspace:*",
         "effect": "^3.19.19",
@@ -21,6 +22,13 @@
     },
     "packages/api": {
       "name": "@vigil/api",
+      "dependencies": {
+        "@effect/platform": "^0.94.5",
+        "effect": "^3.19.19",
+      },
+    },
+    "packages/config": {
+      "name": "@vigil/config",
       "dependencies": {
         "@effect/platform": "^0.94.5",
         "effect": "^3.19.19",
@@ -43,6 +51,7 @@
         "@effect/platform-bun": "^0.87.1",
         "@opentui/core": "^0.1.84",
         "@opentui/react": "^0.1.84",
+        "@vigil/config": "workspace:*",
         "effect": "^3.19.19",
         "fuzzysort": "^3.1.0",
         "opentui-spinner": "^0.0.6",
@@ -199,6 +208,8 @@
     "@types/react": ["@types/react@19.2.14", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w=="],
 
     "@vigil/api": ["@vigil/api@workspace:packages/api"],
+
+    "@vigil/config": ["@vigil/config@workspace:packages/config"],
 
     "@vigil/server": ["@vigil/server@workspace:packages/server"],
 

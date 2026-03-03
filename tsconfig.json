@@ -1,4 +1,10 @@
 {
   "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@vigil/config": ["./packages/config/src/index.ts"],
+      "@vigil/config/*": ["./packages/config/src/*"]
+    }
+  },
   "include": ["src/**/*"]
 }

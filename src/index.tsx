@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import * as FileSystem from "@effect/platform/FileSystem";
-import os from "node:os";
-import path from "node:path";
 import { parseArgs } from "node:util";
+import {
+	loadOrCreateDaemonTokenFromTuiConfig,
+} from "@vigil/config";
 import {
 	DaemonMetaResponse,
 	HealthResponse,
@@ -18,28 +17,9 @@ import { Data, Effect, Option, Schema, pipe } from "effect";
 
 const DAEMON_POLL_INTERVAL_MS = 100;
 const DAEMON_POLL_ATTEMPTS = 50;
-const TUI_CONFIG_FILE = "tui.json";
-const DAEMON_TOKEN_CONFIG_KEY = "daemon_token";
 
 const decodeDaemonMetaResponse = Schema.decodeUnknownSync(DaemonMetaResponse);
 const decodeHealthResponse = Schema.decodeUnknownSync(HealthResponse);
-const decodeJsonObject = Schema.decodeUnknown(
-	Schema.parseJson(
-		Schema.Record({
-			key: Schema.String,
-			value: Schema.Unknown,
-		}),
-	),
-);
-const encodeJsonObject = Schema.encode(
-	Schema.parseJson(
-		Schema.Record({
-			key: Schema.String,
-			value: Schema.Unknown,
-		}),
-		{ space: 2 },
-	),
-);
 
 class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;
@@ -204,152 +184,21 @@ function parseVigilArgs(
 	);
 }
 
-function generateDaemonToken(): string {
-	return randomBytes(32).toString("hex");
-}
-
-function resolveVigilDataDirectory(): string {
-	return process.env.XDG_DATA_HOME
-		? path.join(process.env.XDG_DATA_HOME, "vigil")
-		: path.join(os.homedir(), ".local", "share", "vigil");
-}
-
-function resolveTuiConfigPath(): string {
-	return path.join(resolveVigilDataDirectory(), TUI_CONFIG_FILE);
-}
-
-function readTuiConfigObject(
-	filePath: string,
-): Effect.Effect<Record<string, unknown>, VigilDaemonEnsureError, FileSystem.FileSystem> {
-	return Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem;
-		const raw = yield* pipe(
-			fs.readFileString(filePath),
-			Effect.catchTag("SystemError", (cause) =>
-				cause.reason === "NotFound"
-					? Effect.succeed("")
-					: Effect.fail(
-							new VigilDaemonEnsureError({
-								message: `Unable to read ${filePath}.`,
-								cause,
-							}),
-						),
-			),
-			Effect.catchTag("BadArgument", (cause) =>
-				Effect.fail(
-					new VigilDaemonEnsureError({
-						message: `Unable to read ${filePath}.`,
-						cause,
-					}),
-				),
-			),
-		);
-
-		if (raw.trim().length === 0) {
-			return {} as Record<string, unknown>;
-		}
-
-		return yield* pipe(
-			decodeJsonObject(raw),
-			Effect.mapError(
-				(cause) =>
-					new VigilDaemonEnsureError({
-						message: `Invalid ${TUI_CONFIG_FILE}.`,
-						cause,
-					}),
-			),
-		);
-	});
-}
-
-function writeTuiConfigObject(
-	filePath: string,
-	config: Record<string, unknown>,
-): Effect.Effect<void, VigilDaemonEnsureError, FileSystem.FileSystem> {
-	return Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem;
-		const encoded = yield* pipe(
-			encodeJsonObject(config),
-			Effect.mapError(
-				(cause) =>
-					new VigilDaemonEnsureError({
-						message: `Unable to encode ${TUI_CONFIG_FILE}.`,
-						cause,
-					}),
-			),
-		);
-
-		yield* pipe(
-			fs.writeFileString(filePath, `${encoded}\n`),
-			Effect.catchTag("SystemError", (cause) =>
-				Effect.fail(
-					new VigilDaemonEnsureError({
-						message: `Unable to write ${filePath}.`,
-						cause,
-					}),
-				),
-			),
-			Effect.catchTag("BadArgument", (cause) =>
-				Effect.fail(
-					new VigilDaemonEnsureError({
-						message: `Unable to write ${filePath}.`,
-						cause,
-					}),
-				),
-			),
-		);
-	});
-}
-
-function loadOrCreateDaemonToken(): Effect.Effect<
-	string,
-	VigilDaemonEnsureError,
-	FileSystem.FileSystem
-> {
-	return Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem;
-		const configPath = resolveTuiConfigPath();
-
-		yield* pipe(
-			fs.makeDirectory(path.dirname(configPath), { recursive: true }),
-			Effect.catchTag("SystemError", (cause) =>
-				Effect.fail(
-					new VigilDaemonEnsureError({
-						message: `Unable to create config directory for ${configPath}.`,
-						cause,
-					}),
-				),
-			),
-			Effect.catchTag("BadArgument", (cause) =>
-				Effect.fail(
-					new VigilDaemonEnsureError({
-						message: `Unable to create config directory for ${configPath}.`,
-						cause,
-					}),
-				),
-			),
-		);
-
-		const config = yield* readTuiConfigObject(configPath);
-		const existing = config[DAEMON_TOKEN_CONFIG_KEY];
-		if (typeof existing === "string" && existing.trim().length > 0) {
-			return existing.trim();
-		}
-
-		const daemonToken = generateDaemonToken();
-		yield* writeTuiConfigObject(configPath, {
-			...config,
-			[DAEMON_TOKEN_CONFIG_KEY]: daemonToken,
-		});
-		return daemonToken;
-	});
-}
-
 function resolveDaemonToken(): Effect.Effect<string, VigilDaemonEnsureError> {
 	const tokenFromEnv = process.env[VIGIL_DAEMON_TOKEN_ENV_VAR]?.trim();
 	return tokenFromEnv && tokenFromEnv.length > 0
 		? Effect.succeed(tokenFromEnv)
-		: pipe(loadOrCreateDaemonToken(), Effect.provide(BunFileSystem.layer));
+		: pipe(
+				loadOrCreateDaemonTokenFromTuiConfig(),
+				Effect.provide(BunFileSystem.layer),
+				Effect.mapError(
+					(cause) =>
+						new VigilDaemonEnsureError({
+							message: cause.message,
+							cause,
+						}),
+				),
+			);
 }
 
 function daemonBaseUrl(options: Pick<DaemonConnectionOptions, "host" | "port">) {

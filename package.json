@@ -15,7 +15,7 @@
 		"install:global": "bun install && bun link",
 		"test": "bun run --filter '*' test",
 		"test:watch": "bun run --filter '*' test:watch",
-		"typecheck": "tsgo --noEmit -p packages/api/ && tsgo --noEmit -p packages/server/ && tsgo --noEmit -p packages/tui/",
+		"typecheck": "tsgo --noEmit -p packages/api/ && tsgo --noEmit -p packages/config/ && tsgo --noEmit -p packages/server/ && tsgo --noEmit -p packages/tui/",
 		"prepare": "effect-language-service patch"
 	},
 	"devDependencies": {
@@ -27,6 +27,7 @@
 		"typescript": "^5"
 	},
 	"dependencies": {
+		"@vigil/config": "workspace:*",
 		"@vigil/server": "workspace:*",
 		"@vigil/tui": "workspace:*",
 		"effect": "^3.19.19",
