@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { Match, Option } from "effect";
-import type { ResolvedTheme } from "#theme/theme";
+import type { ResolvedTheme } from "#theme/theme.ts";
 
 export interface SplashProps {
 	readonly theme: ResolvedTheme;

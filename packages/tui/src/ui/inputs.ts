@@ -2,7 +2,7 @@ import type { KeyEvent } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import { Option, pipe } from "effect";
 import { useRef } from "react";
-import type { FileEntry } from "#tui/types";
+import type { FileEntry } from "#tui/types.ts";
 
 export type FocusedPane = "sidebar" | "diff";
 

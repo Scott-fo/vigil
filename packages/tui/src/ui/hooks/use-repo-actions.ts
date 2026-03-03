@@ -6,13 +6,13 @@ import {
 	type SetStateAction,
 	useCallback,
 } from "react";
-import type { RepoActionError } from "#data/git";
-import type { ThemeCatalog, ThemeMode } from "#theme/theme";
-import { routeKeyboardIntent } from "#ui/hooks/keyboard-intent-router";
-import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions";
-import { useGitActions } from "#ui/hooks/use-git-actions";
-import { useThemeActions } from "#ui/hooks/use-theme-actions";
-import type { AppKeyboardIntent, FocusedPane } from "#ui/inputs";
+import type { RepoActionError } from "#data/git.ts";
+import type { ThemeCatalog, ThemeMode } from "#theme/theme.ts";
+import { routeKeyboardIntent } from "#ui/hooks/keyboard-intent-router.ts";
+import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions.ts";
+import { useGitActions } from "#ui/hooks/use-git-actions.ts";
+import { useThemeActions } from "#ui/hooks/use-theme-actions.ts";
+import type { AppKeyboardIntent, FocusedPane } from "#ui/inputs.ts";
 import type {
 	BranchCompareModalState,
 	CommitModalState,
@@ -29,8 +29,8 @@ import type {
 	UpdateReviewMode,
 	UpdateThemeModal,
 	UpdateUiStatus,
-} from "#ui/state";
-import { closeHelpModalState, openHelpModalState } from "#ui/state";
+} from "#ui/state.ts";
+import { closeHelpModalState, openHelpModalState } from "#ui/state.ts";
 
 interface RendererControls {
 	readonly height: number;

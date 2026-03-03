@@ -10,24 +10,12 @@
 	"workspaces": [
 		"packages/*"
 	],
-	"imports": {
-		"#api": "./packages/api/src/index.ts",
-		"#api/*": "./packages/api/src/*",
-		"#server": "./packages/server/src/index.ts",
-		"#server/*": "./packages/server/src/*",
-		"#tui": "./packages/tui/src/index.ts",
-		"#tui/*": "./packages/tui/src/*",
-		"#ui/*": "./packages/tui/src/ui/*",
-		"#data/*": "./packages/tui/src/data/*",
-		"#diff/*": "./packages/tui/src/diff/*",
-		"#theme/*": "./packages/tui/src/theme/*",
-		"#syntax/*": "./packages/tui/src/syntax/*",
-		"#config/*": "./packages/tui/src/config/*"
-	},
 	"scripts": {
 		"dev": "bun run --watch src/index.tsx",
 		"install:global": "bun install && bun link",
-		"typecheck": "tsgo --noEmit",
+		"test": "bun run --filter '*' test",
+		"test:watch": "bun run --filter '*' test:watch",
+		"typecheck": "tsgo --noEmit -p packages/api/ && tsgo --noEmit -p packages/server/ && tsgo --noEmit -p packages/tui/",
 		"prepare": "effect-language-service patch"
 	},
 	"devDependencies": {
@@ -39,16 +27,9 @@
 		"typescript": "^5"
 	},
 	"dependencies": {
-		"@effect-atom/atom-react": "^0.5.0",
-		"@effect/platform": "^0.94.5",
-		"@effect/platform-bun": "^0.87.1",
-		"@effect/workflow": "^0.16.0",
-		"@opentui/core": "^0.1.84",
-		"@opentui/react": "^0.1.84",
+		"@vigil/server": "workspace:*",
+		"@vigil/tui": "workspace:*",
 		"effect": "^3.19.19",
-		"fuzzysort": "^3.1.0",
-		"opentui-spinner": "^0.0.6",
-		"react": "^19.2.4",
-		"web-tree-sitter": "0.25.10"
+		"@effect/workflow": "^0.16.0"
 	}
 }

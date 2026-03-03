@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { searchBranchRefs } from "#ui/branch-ref-search";
+import { searchBranchRefs } from "#ui/branch-ref-search.ts";
 
 describe("searchBranchRefs", () => {
 	test("returns refs unchanged when query is blank", () => {

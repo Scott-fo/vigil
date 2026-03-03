@@ -3,8 +3,8 @@ import { Data, Effect, Option, pipe } from "effect";
 import {
 	type VigilServerStartError,
 	startVigilServerProgram,
-} from "#server";
-import { type StartVigilTuiError, startVigilTuiProgram } from "#tui";
+} from "@vigil/server";
+import { type StartVigilTuiError, startVigilTuiProgram } from "@vigil/tui";
 
 class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;

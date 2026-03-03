@@ -2,11 +2,15 @@
 	"name": "@vigil/api",
 	"private": true,
 	"type": "module",
-	"imports": {
-		"#api": "./src/index.ts",
-		"#api/*": "./src/*"
+	"scripts": {
+		"test": "bun test --pass-with-no-tests",
+		"test:watch": "bun test --watch --pass-with-no-tests"
 	},
 	"exports": {
 		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@effect/platform": "^0.94.5",
+		"effect": "^3.19.19"
 	}
 }

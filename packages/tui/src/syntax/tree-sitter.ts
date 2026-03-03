@@ -6,7 +6,7 @@ import {
 	type TreeSitterClient,
 } from "@opentui/core";
 import { Data, Effect, Match, Option, pipe, Schema } from "effect";
-import parserConfig from "#config/parsers";
+import parserConfig from "#config/parsers.ts";
 
 const ParserConfigSchema = Schema.Struct({
 	parsers: Schema.optional(Schema.Array(Schema.Unknown)),

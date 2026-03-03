@@ -1,6 +1,6 @@
 import { Option } from "effect";
 import { memo } from "react";
-import type { ResolvedTheme } from "#theme/theme";
+import type { ResolvedTheme } from "#theme/theme.ts";
 
 export type SnackbarNotice = {
 	readonly message: string;
@@ -19,7 +19,9 @@ export const Snackbar = memo(function Snackbar(props: SnackbarProps) {
 	}
 
 	const borderColor =
-		props.notice.value.variant === "error" ? props.theme.error : props.theme.info;
+		props.notice.value.variant === "error"
+			? props.theme.error
+			: props.theme.info;
 
 	return (
 		<box

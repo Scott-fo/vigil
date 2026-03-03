@@ -3,8 +3,8 @@ import { RGBA } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
 import { Option } from "effect";
 import { act } from "react";
-import type { ResolvedTheme } from "#theme/theme";
-import { Splash } from "#ui/components/splash";
+import type { ResolvedTheme } from "#theme/theme.ts";
+import { Splash } from "#ui/components/splash.tsx";
 
 const theme = {
 	text: RGBA.fromInts(255, 255, 255),
@@ -13,15 +13,20 @@ const theme = {
 
 describe("Splash", () => {
 	test("renders clean working tree message by default", async () => {
-		const setup = await testRender(<Splash theme={theme} error={Option.none()} />, {
-			width: 120,
-			height: 30,
-		});
+		const setup = await testRender(
+			<Splash theme={theme} error={Option.none()} />,
+			{
+				width: 120,
+				height: 30,
+			},
+		);
 		try {
 			await act(async () => {
 				await setup.renderOnce();
 			});
-			expect(setup.captureCharFrame()).toContain("No changed files in working tree");
+			expect(setup.captureCharFrame()).toContain(
+				"No changed files in working tree",
+			);
 		} finally {
 			await act(async () => {
 				setup.renderer.destroy();

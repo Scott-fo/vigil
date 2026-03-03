@@ -1,5 +1,5 @@
 import { Schema, type Option } from "effect";
-import type { ThemeCatalog, ThemeMode } from "#theme/theme";
+import type { ThemeCatalog, ThemeMode } from "#theme/theme.ts";
 
 export interface StatusEntry {
 	readonly status: string;

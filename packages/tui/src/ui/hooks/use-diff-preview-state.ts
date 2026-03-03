@@ -4,10 +4,10 @@ import {
 	loadBranchFilePreview,
 	loadFilePreview,
 	type FileDiffPreview,
-} from "#data/git";
-import type { FileEntry } from "#tui/types";
-import type { ReviewMode } from "#ui/state";
-import { isWorkingTreeReviewMode } from "#ui/state";
+} from "#data/git.ts";
+import type { FileEntry } from "#tui/types.ts";
+import type { ReviewMode } from "#ui/state.ts";
+import { isWorkingTreeReviewMode } from "#ui/state.ts";
 
 interface SelectedFilePreview {
 	readonly path: string;
@@ -74,10 +74,9 @@ export function useDiffPreviewState(
 		});
 
 		let cancelled = false;
-		const previewEffect =
-			isWorkingTreeReviewMode(reviewMode)
-				? loadFilePreview(selectedFile)
-				: loadBranchFilePreview(selectedFile.path, reviewMode.selection);
+		const previewEffect = isWorkingTreeReviewMode(reviewMode)
+			? loadFilePreview(selectedFile)
+			: loadBranchFilePreview(selectedFile.path, reviewMode.selection);
 
 		void Effect.runPromise(previewEffect).then((preview) => {
 			if (cancelled) {

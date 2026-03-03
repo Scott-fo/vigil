@@ -1,13 +1,13 @@
 import { Effect, pipe } from "effect";
-import type { FileEntry } from "#tui/types";
 import {
 	CommitMessageRequiredError,
 	type GitCommandError,
 	type RepoActionError,
 	runGitEffect,
 	runGitEffectAsync,
-} from "#data/git/core";
-import { parseStatusEntries, toFileEntry } from "#data/git/parsers";
+} from "#data/git/core.ts";
+import { parseStatusEntries, toFileEntry } from "#data/git/parsers.ts";
+import type { FileEntry } from "#tui/types.ts";
 
 export function isFileStaged(status: string): boolean {
 	if (status === "??") {

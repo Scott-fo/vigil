@@ -2,13 +2,17 @@
 	"name": "@vigil/server",
 	"private": true,
 	"type": "module",
-	"imports": {
-		"#server": "./src/index.ts",
-		"#server/*": "./src/*",
-		"#api": "../api/src/index.ts",
-		"#api/*": "../api/src/*"
+	"scripts": {
+		"test": "bun test --pass-with-no-tests",
+		"test:watch": "bun test --watch --pass-with-no-tests"
 	},
 	"exports": {
 		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@effect/platform": "^0.94.5",
+		"@effect/platform-bun": "^0.87.1",
+		"@vigil/api": "workspace:*",
+		"effect": "^3.19.19"
 	}
 }

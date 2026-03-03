@@ -1,18 +1,18 @@
 export {
+	listComparableRefs,
+	loadFilesWithBranchDiffs,
+} from "#data/git/compare.ts";
+export {
 	type BranchDiffSelection,
 	CommitMessageRequiredError,
 	GitCommandError,
 	type RepoActionError,
-} from "#data/git/core";
-export {
-	listComparableRefs,
-	loadFilesWithBranchDiffs,
-} from "#data/git/compare";
+} from "#data/git/core.ts";
 export {
 	type FileDiffPreview,
 	loadBranchFilePreview,
 	loadFilePreview,
-} from "#data/git/preview";
+} from "#data/git/preview.ts";
 export {
 	commitStagedChanges,
 	discardFileChanges,
@@ -22,4 +22,4 @@ export {
 	pullFromRemote,
 	pushToRemote,
 	toggleFileStage,
-} from "#data/git/status";
+} from "#data/git/status.ts";

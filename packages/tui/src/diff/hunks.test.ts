@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { splitDiffIntoHunkBlocks } from "#diff/hunks";
+import { splitDiffIntoHunkBlocks } from "#diff/hunks.ts";
 
 describe("splitDiffIntoHunkBlocks", () => {
 	test("returns original diff when there are no hunk headers", () => {

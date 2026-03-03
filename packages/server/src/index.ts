@@ -1,7 +1,7 @@
 import { HttpApiBuilder } from "@effect/platform";
 import { BunHttpServer } from "@effect/platform-bun";
+import { HealthResponse, VigilApi } from "@vigil/api";
 import { Cause, Data, Effect, Layer, pipe } from "effect";
-import { HealthResponse, VigilApi } from "#api";
 
 export interface StartVigilServerOptions {
 	readonly host: string;

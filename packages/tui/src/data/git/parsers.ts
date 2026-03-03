@@ -1,6 +1,6 @@
 import { Option } from "effect";
-import { resolveDiffFiletype } from "#syntax/tree-sitter";
-import { FileEntry, type StatusEntry } from "#tui/types";
+import { resolveDiffFiletype } from "#syntax/tree-sitter.ts";
+import { FileEntry, type StatusEntry } from "#tui/types.ts";
 
 function normalizeStatusCode(raw: string, fallback: string): string {
 	const trimmed = raw.trim();

@@ -1,7 +1,7 @@
-import { RGBA } from "@opentui/core";
+import type { RGBA } from "@opentui/core";
 import { memo } from "react";
-import type { ResolvedTheme } from "#theme/theme";
-import type { FileEntry } from "#tui/types";
+import type { ResolvedTheme } from "#theme/theme.ts";
+import type { FileEntry } from "#tui/types.ts";
 
 export interface DiscardModalProps {
 	readonly theme: ResolvedTheme;
@@ -11,7 +11,9 @@ export interface DiscardModalProps {
 	readonly onConfirm: () => void;
 }
 
-export const DiscardModal = memo(function DiscardModal(props: DiscardModalProps) {
+export const DiscardModal = memo(function DiscardModal(
+	props: DiscardModalProps,
+) {
 	return (
 		<box
 			position="absolute"

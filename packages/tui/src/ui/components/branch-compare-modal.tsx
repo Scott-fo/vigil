@@ -1,9 +1,9 @@
-import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
+import type { RGBA, ScrollBoxRenderable } from "@opentui/core";
 import { Option } from "effect";
 import { memo, useRef } from "react";
-import type { ResolvedTheme } from "#theme/theme";
-import type { BranchCompareField } from "#ui/state";
-import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection";
+import type { ResolvedTheme } from "#theme/theme.ts";
+import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection.ts";
+import type { BranchCompareField } from "#ui/state.ts";
 
 export interface BranchCompareModalProps {
 	readonly theme: ResolvedTheme;

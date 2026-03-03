@@ -1,7 +1,7 @@
 import { memo } from "react";
 import "opentui-spinner/react";
-import type { ResolvedTheme } from "#theme/theme";
-import type { RemoteSyncState } from "#ui/state";
+import type { ResolvedTheme } from "#theme/theme.ts";
+import type { RemoteSyncState } from "#ui/state.ts";
 
 interface RemoteSyncStatusProps {
 	readonly theme: ResolvedTheme;

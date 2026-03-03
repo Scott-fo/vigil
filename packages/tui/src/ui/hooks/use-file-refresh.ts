@@ -5,9 +5,13 @@ import {
 	loadFilesWithBranchDiffs,
 	loadFilesWithStatus,
 	type RepoActionError,
-} from "#data/git";
-import type { ReviewMode, UpdateFileViewState, UpdateUiStatus } from "#ui/state";
-import { isWorkingTreeReviewMode } from "#ui/state";
+} from "#data/git.ts";
+import type {
+	ReviewMode,
+	UpdateFileViewState,
+	UpdateUiStatus,
+} from "#ui/state.ts";
+import { isWorkingTreeReviewMode } from "#ui/state.ts";
 
 interface UseFileRefreshOptions {
 	readonly updateFileView: UpdateFileViewState;
@@ -47,9 +51,7 @@ export function registerRefreshRequest(
 	};
 }
 
-export function consumeQueuedRefresh(
-	state: RefreshRequestState,
-): {
+export function consumeQueuedRefresh(state: RefreshRequestState): {
 	readonly nextState: RefreshRequestState;
 	readonly queuedShowLoading: Option.Option<boolean>;
 } {
@@ -154,7 +156,10 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 
 				if (!result.ok) {
 					updateFileView((current) => {
-						if (current.files.length === 0 && Option.isNone(current.selectedPath)) {
+						if (
+							current.files.length === 0 &&
+							Option.isNone(current.selectedPath)
+						) {
 							return current;
 						}
 						return {

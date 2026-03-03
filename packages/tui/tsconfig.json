@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "#tui": ["./src/index.ts"],
+      "#tui/*": ["./src/*"],
+      "#ui/*": ["./src/ui/*"],
+      "#data/*": ["./src/data/*"],
+      "#diff/*": ["./src/diff/*"],
+      "#theme/*": ["./src/theme/*"],
+      "#syntax/*": ["./src/syntax/*"],
+      "#config/*": ["./src/config/*"]
+    }
+  },
+  "include": ["src/**/*"]
+}

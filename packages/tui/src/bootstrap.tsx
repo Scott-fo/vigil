@@ -1,13 +1,13 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { Data, Effect, type Option, pipe } from "effect";
-import { initializeTreeSitterClient } from "#syntax/tree-sitter";
+import { initializeTreeSitterClient } from "#syntax/tree-sitter.ts";
 import {
 	loadThemeCatalog,
 	readThemePreferenceFromTuiConfig,
 	type ThemeCatalog,
-} from "#theme/theme";
-import { App } from "#ui/app";
+} from "#theme/theme.ts";
+import { App } from "#ui/app.tsx";
 
 export interface StartVigilTuiOptions {
 	readonly chooserFilePath: Option.Option<string>;

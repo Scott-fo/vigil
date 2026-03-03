@@ -3,26 +3,26 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { Effect, Match, Option, pipe } from "effect";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { copyTextToClipboard } from "#data/clipboard";
-import type { RepoActionError } from "#data/git";
-import { buildDiffNavigationModel } from "#diff/navigation";
-import type { ThemeMode } from "#theme/theme";
-import type { AppProps } from "#tui/types";
-import { BranchCompareModal } from "#ui/components/branch-compare-modal";
-import { CommitModal } from "#ui/components/commit-modal";
-import { DiscardModal } from "#ui/components/discard-modal";
-import { HelpModal } from "#ui/components/help-modal";
-import { RemoteSyncStatus } from "#ui/components/remote-sync-status";
-import { Reviewer } from "#ui/components/reviewer";
-import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar";
-import { Splash } from "#ui/components/splash";
-import { ThemeModal } from "#ui/components/theme-modal";
-import { useAppSelectors } from "#ui/hooks/use-app-selectors";
-import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state";
-import { useFileRefresh } from "#ui/hooks/use-file-refresh";
-import { useRepoActions } from "#ui/hooks/use-repo-actions";
-import type { FocusedPane } from "#ui/inputs";
-import { useAppKeyboardInput } from "#ui/inputs";
+import { copyTextToClipboard } from "#data/clipboard.ts";
+import type { RepoActionError } from "#data/git.ts";
+import { buildDiffNavigationModel } from "#diff/navigation.ts";
+import type { ThemeMode } from "#theme/theme.ts";
+import type { AppProps } from "#tui/types.ts";
+import { BranchCompareModal } from "#ui/components/branch-compare-modal.tsx";
+import { CommitModal } from "#ui/components/commit-modal.tsx";
+import { DiscardModal } from "#ui/components/discard-modal.tsx";
+import { HelpModal } from "#ui/components/help-modal.tsx";
+import { RemoteSyncStatus } from "#ui/components/remote-sync-status.tsx";
+import { Reviewer } from "#ui/components/reviewer.tsx";
+import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar.tsx";
+import { Splash } from "#ui/components/splash.tsx";
+import { ThemeModal } from "#ui/components/theme-modal.tsx";
+import { useAppSelectors } from "#ui/hooks/use-app-selectors.ts";
+import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state.ts";
+import { useFileRefresh } from "#ui/hooks/use-file-refresh.ts";
+import { useRepoActions } from "#ui/hooks/use-repo-actions.ts";
+import type { FocusedPane } from "#ui/inputs.ts";
+import { useAppKeyboardInput } from "#ui/inputs.ts";
 import {
 	branchCompareModalAtom,
 	commitModalAtom,
@@ -43,7 +43,7 @@ import {
 	type UpdateThemeModal,
 	type UpdateUiStatus,
 	uiStatusAtom,
-} from "#ui/state";
+} from "#ui/state.ts";
 
 function formatRepoActionError(error: RepoActionError): string {
 	return pipe(
@@ -330,7 +330,8 @@ export function App(props: AppProps) {
 	);
 
 	const diffLineCount = diffNavigationModel.lines.length;
-	const selectedDiffLine = diffNavigationModel.lines[selectedDiffLineIndex] ?? null;
+	const selectedDiffLine =
+		diffNavigationModel.lines[selectedDiffLineIndex] ?? null;
 	const selectedDiffLineNumber =
 		selectedDiffLine?.newLine ?? selectedDiffLine?.oldLine ?? null;
 	const selectedDiffFilePath = selectedFile?.path ?? null;

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	calculateSidebarVirtualWindow,
 	getScrollTopForVisibleRow,
-} from "#ui/sidebar-virtualization";
+} from "#ui/sidebar-virtualization.ts";
 
 describe("calculateSidebarVirtualWindow", () => {
 	test("returns empty window when there are no rows", () => {

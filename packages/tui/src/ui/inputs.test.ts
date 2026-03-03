@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { KeyEvent } from "@opentui/core";
 import { Option } from "effect";
-import { FileEntry } from "#tui/types";
+import { FileEntry } from "#tui/types.ts";
 import {
 	decodeKeyboardIntent,
 	decodePaneFocusIntent,
 	type KeyboardIntentContext,
-} from "#ui/inputs";
+} from "#ui/inputs.ts";
 
 function keyEvent(input: Partial<KeyEvent>): KeyEvent {
 	return {

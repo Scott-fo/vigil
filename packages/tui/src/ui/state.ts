@@ -1,16 +1,14 @@
 import { Atom } from "@effect-atom/atom-react";
 import { Option } from "effect";
-import type { BranchDiffSelection } from "#data/git";
-import type { FileEntry } from "#tui/types";
+import type { BranchDiffSelection } from "#data/git.ts";
+import type { FileEntry } from "#tui/types.ts";
 
 export type UiStatus = {
 	readonly showSplash: boolean;
 	readonly error: Option.Option<string>;
 };
 
-export type UpdateUiStatus = (
-	update: (current: UiStatus) => UiStatus,
-) => void;
+export type UpdateUiStatus = (update: (current: UiStatus) => UiStatus) => void;
 
 export const uiStatusAtom = Atom.make<UiStatus>({
 	showSplash: true,

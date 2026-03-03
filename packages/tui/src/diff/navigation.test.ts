@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { buildDiffNavigationModel } from "#diff/navigation";
+import { buildDiffNavigationModel } from "#diff/navigation.ts";
 
 describe("buildDiffNavigationModel", () => {
 	test("returns empty navigation for diffs without hunks", () => {
 		const model = buildDiffNavigationModel(
-			["diff --git a/readme.md b/readme.md", "--- a/readme.md", "+++ b/readme.md"].join(
-				"\n",
-			),
+			[
+				"diff --git a/readme.md b/readme.md",
+				"--- a/readme.md",
+				"+++ b/readme.md",
+			].join("\n"),
 		);
 
 		expect(model.lines).toEqual([]);
@@ -96,12 +98,9 @@ describe("buildDiffNavigationModel", () => {
 
 	test("ignores no-newline metadata rows", () => {
 		const model = buildDiffNavigationModel(
-			[
-				"@@ -1,1 +1,1 @@",
-				"-old",
-				"\\ No newline at end of file",
-				"+new",
-			].join("\n"),
+			["@@ -1,1 +1,1 @@", "-old", "\\ No newline at end of file", "+new"].join(
+				"\n",
+			),
 		);
 
 		expect(model.lines).toHaveLength(2);

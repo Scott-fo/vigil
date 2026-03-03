@@ -1,7 +1,7 @@
-import { RGBA } from "@opentui/core";
+import type { RGBA } from "@opentui/core";
 import { Option } from "effect";
 import { memo } from "react";
-import type { ResolvedTheme } from "#theme/theme";
+import type { ResolvedTheme } from "#theme/theme.ts";
 
 export interface CommitModalProps {
 	readonly theme: ResolvedTheme;

@@ -1,6 +1,6 @@
 import { Match } from "effect";
-import type { FileEntry } from "#tui/types";
-import type { AppKeyboardIntent } from "#ui/inputs";
+import type { FileEntry } from "#tui/types.ts";
+import type { AppKeyboardIntent } from "#ui/inputs.ts";
 
 interface KeyboardIntentRouterActions {
 	readonly destroyRenderer: () => void;

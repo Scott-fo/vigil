@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { FileEntry } from "#tui/types";
+import { FileEntry } from "#tui/types.ts";
 
 describe("FileEntry.equals", () => {
 	test("returns true for identical entries", () => {

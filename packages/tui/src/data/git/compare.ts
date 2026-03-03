@@ -1,13 +1,13 @@
 import { Effect, pipe } from "effect";
-import type { FileEntry } from "#tui/types";
 import {
-	buildBranchDiffRange,
 	type BranchDiffSelection,
+	buildBranchDiffRange,
 	type GitCommandError,
 	normalizeBranchDiffSelection,
 	runGitEffectAsync,
-} from "#data/git/core";
-import { parseDiffNameStatusEntries, toFileEntry } from "#data/git/parsers";
+} from "#data/git/core.ts";
+import { parseDiffNameStatusEntries, toFileEntry } from "#data/git/parsers.ts";
+import type { FileEntry } from "#tui/types.ts";
 
 export function listComparableRefs(): Effect.Effect<
 	readonly string[],
@@ -40,8 +40,7 @@ export function listComparableRefs(): Effect.Effect<
 						ref.shortRef !== "HEAD" &&
 						!(
 							ref.fullRef.startsWith("refs/remotes/") &&
-							(!ref.shortRef.includes("/") ||
-								ref.shortRef.endsWith("/HEAD"))
+							(!ref.shortRef.includes("/") || ref.shortRef.endsWith("/HEAD"))
 						),
 				)
 				.map((ref) => ref.shortRef);
@@ -68,9 +67,9 @@ export function loadFilesWithBranchDiffs(
 			"Unable to load branch comparison file list.",
 		);
 
-		const statusEntries = parseDiffNameStatusEntries(statusResult.stdout).filter(
-			(entry) => entry.status !== "!!",
-		);
+		const statusEntries = parseDiffNameStatusEntries(
+			statusResult.stdout,
+		).filter((entry) => entry.status !== "!!");
 		return statusEntries.map(toFileEntry);
 	});
 }

@@ -1,6 +1,6 @@
 import type { RGBA } from "@opentui/core";
 import { memo } from "react";
-import type { ResolvedTheme } from "#theme/theme";
+import type { ResolvedTheme } from "#theme/theme.ts";
 
 interface KeybindRow {
 	readonly keys: string;
@@ -22,7 +22,8 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	},
 	{
 		keys: "enter / e / o",
-		description: "Open selected file (sidebar) or selected diff line (diff panel)",
+		description:
+			"Open selected file (sidebar) or selected diff line (diff panel)",
 	},
 	{ keys: "d", description: "Open discard confirmation for selected file" },
 	{ keys: "tab", description: "Toggle split / unified diff" },

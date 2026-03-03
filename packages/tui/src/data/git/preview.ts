@@ -1,14 +1,14 @@
-import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as FileSystem from "@effect/platform/FileSystem";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, Option, pipe } from "effect";
-import type { FileEntry } from "#tui/types";
 import {
-	buildBranchDiffRange,
 	type BranchDiffSelection,
+	buildBranchDiffRange,
 	normalizeBranchDiffSelection,
 	renderGitCommandError,
 	runGitEffectAsync,
-} from "#data/git/core";
+} from "#data/git/core.ts";
+import type { FileEntry } from "#tui/types.ts";
 
 const TEXT_DECODER = new TextDecoder();
 

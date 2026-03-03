@@ -1,15 +1,15 @@
 import { RGBA } from "@opentui/core";
 import { Option, pipe } from "effect";
 import { useMemo } from "react";
-import { isFileStaged } from "#data/git";
+import { isFileStaged } from "#data/git.ts";
 import {
 	resolveThemeBundle,
 	type ThemeCatalog,
 	type ThemeMode,
-} from "#theme/theme";
-import type { SidebarItem } from "#ui/sidebar";
-import { buildSidebarTree, flattenSidebarTree } from "#ui/sidebar";
-import { searchBranchRefs } from "#ui/branch-ref-search";
+} from "#theme/theme.ts";
+import type { SidebarItem } from "#ui/sidebar.ts";
+import { buildSidebarTree, flattenSidebarTree } from "#ui/sidebar.ts";
+import { searchBranchRefs } from "#ui/branch-ref-search.ts";
 import type {
 	BranchCompareField,
 	BranchCompareModalState,
@@ -20,8 +20,8 @@ import type {
 	ReviewMode,
 	ThemeModalState,
 	UiStatus,
-} from "#ui/state";
-import { deriveModalVisibility, isWorkingTreeReviewMode } from "#ui/state";
+} from "#ui/state.ts";
+import { deriveModalVisibility, isWorkingTreeReviewMode } from "#ui/state.ts";
 
 interface UseAppSelectorsOptions {
 	readonly fileView: FileViewState;
@@ -202,9 +202,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 
 		const selectedFileMatch = pipe(
 			selectedPath,
-			Option.flatMap((path) =>
-				Option.fromNullable(fileByPath.get(path)),
-			),
+			Option.flatMap((path) => Option.fromNullable(fileByPath.get(path))),
 		);
 
 		return pipe(
@@ -232,7 +230,8 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 	);
 
 	const visibleFileIndexByPath = useMemo(
-		() => new Map(visibleFilePaths.map((path, index) => [path, index] as const)),
+		() =>
+			new Map(visibleFilePaths.map((path, index) => [path, index] as const)),
 		[visibleFilePaths],
 	);
 

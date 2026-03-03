@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Option } from "effect";
-import { FileEntry } from "#tui/types";
+import { FileEntry } from "#tui/types.ts";
 import {
 	buildFilesLoadEffect,
 	consumeQueuedRefresh,
 	registerRefreshRequest,
 	type RefreshRequestState,
-} from "#ui/hooks/use-file-refresh";
-import type { ReviewMode } from "#ui/state";
+} from "#ui/hooks/use-file-refresh.ts";
+import type { ReviewMode } from "#ui/state.ts";
 
 function entry(path: string): FileEntry {
 	return FileEntry.make({

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildSidebarItems } from "#ui/sidebar";
-import { FileEntry } from "#tui/types";
+import { buildSidebarItems } from "#ui/sidebar.ts";
+import { FileEntry } from "#tui/types.ts";
 
 function file(path: string, label = path): FileEntry {
 	return FileEntry.make({
@@ -33,8 +33,9 @@ describe("buildSidebarItems", () => {
 		expect(header.depth).toBe(0);
 
 		const fileLabels = items
-			.filter((item): item is Extract<(typeof items)[number], { kind: "file" }> =>
-				item.kind === "file",
+			.filter(
+				(item): item is Extract<(typeof items)[number], { kind: "file" }> =>
+					item.kind === "file",
 			)
 			.map((item) => item.label);
 
@@ -45,10 +46,7 @@ describe("buildSidebarItems", () => {
 
 	test("omits children for collapsed directories", () => {
 		const items = buildSidebarItems(
-			[
-				file("src/packages/app.tsx"),
-				file("src/packages/utils.ts"),
-			],
+			[file("src/packages/app.tsx"), file("src/packages/utils.ts")],
 			new Set(["src/packages"]),
 		);
 
@@ -72,9 +70,7 @@ describe("buildSidebarItems", () => {
 
 	test("uses renamed leaf label for rename entries", () => {
 		const items = buildSidebarItems(
-			[
-				file("src/new-name.ts", "src/old-name.ts -> src/new-name.ts"),
-			],
+			[file("src/new-name.ts", "src/old-name.ts -> src/new-name.ts")],
 			new Set(),
 		);
 

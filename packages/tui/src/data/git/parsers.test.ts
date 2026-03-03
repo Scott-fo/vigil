@@ -3,7 +3,7 @@ import {
 	parseDiffNameStatusEntries,
 	parseStatusEntries,
 	toFileEntry,
-} from "#data/git/parsers";
+} from "#data/git/parsers.ts";
 
 describe("parseStatusEntries", () => {
 	test("parses tracked, untracked, and rename entries", () => {
@@ -24,7 +24,8 @@ describe("parseStatusEntries", () => {
 
 describe("parseDiffNameStatusEntries", () => {
 	test("parses inline and nul-separated diff status entries", () => {
-		const raw = "M\tsrc/app.ts\0A\0src/new.ts\0R100\tsrc/old.ts\0src/new-name.ts\0";
+		const raw =
+			"M\tsrc/app.ts\0A\0src/new.ts\0R100\tsrc/old.ts\0src/new-name.ts\0";
 		const entries = parseDiffNameStatusEntries(raw);
 
 		expect(entries).toEqual([

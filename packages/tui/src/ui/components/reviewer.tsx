@@ -13,17 +13,17 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { isFileStaged } from "#data/git";
-import { splitDiffIntoHunkBlocks } from "#diff/hunks";
-import type { DiffNavigationLine } from "#diff/navigation";
-import type { ResolvedTheme } from "#theme/theme";
-import type { FileEntry } from "#tui/types";
-import type { FocusedPane } from "#ui/inputs";
-import { getStatusColor, type SidebarItem } from "#ui/sidebar";
+import { isFileStaged } from "#data/git.ts";
+import { splitDiffIntoHunkBlocks } from "#diff/hunks.ts";
+import type { DiffNavigationLine } from "#diff/navigation.ts";
+import type { ResolvedTheme } from "#theme/theme.ts";
+import type { FileEntry } from "#tui/types.ts";
+import type { FocusedPane } from "#ui/inputs.ts";
+import { getStatusColor, type SidebarItem } from "#ui/sidebar.ts";
 import {
 	calculateSidebarVirtualWindow,
 	getScrollTopForVisibleRow,
-} from "#ui/sidebar-virtualization";
+} from "#ui/sidebar-virtualization.ts";
 
 type SidebarHeaderItem = Extract<SidebarItem, { kind: "header" }>;
 type SidebarFileItem = Extract<SidebarItem, { kind: "file" }>;

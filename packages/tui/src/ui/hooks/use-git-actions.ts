@@ -5,7 +5,7 @@ import {
 	openFileInEditor,
 	renderOpenFileError,
 	writeChooserSelection,
-} from "#data/editor";
+} from "#data/editor.ts";
 import {
 	commitStagedChanges,
 	discardFileChanges,
@@ -14,8 +14,8 @@ import {
 	pushToRemote,
 	type RepoActionError,
 	toggleFileStage,
-} from "#data/git";
-import type { FileEntry } from "#tui/types";
+} from "#data/git.ts";
+import type { FileEntry } from "#tui/types.ts";
 import type {
 	CommitModalState,
 	DiscardModalState,
@@ -25,7 +25,7 @@ import type {
 	UpdateDiscardModal,
 	UpdateRemoteSyncState,
 	UpdateReviewMode,
-} from "#ui/state";
+} from "#ui/state.ts";
 import {
 	closeCommitModalState,
 	closeDiscardModalState,
@@ -34,7 +34,7 @@ import {
 	openDiscardModalState,
 	setCommitModalErrorState,
 	setCommitModalMessageState,
-} from "#ui/state";
+} from "#ui/state.ts";
 
 interface RendererControls {
 	readonly height: number;
@@ -120,7 +120,9 @@ export function useGitActions(options: UseGitActionsOptions) {
 
 	const onCommitMessageChange = useCallback(
 		(value: string) => {
-			updateCommitModal((current) => setCommitModalMessageState(current, value));
+			updateCommitModal((current) =>
+				setCommitModalMessageState(current, value),
+			);
 		},
 		[updateCommitModal],
 	);
@@ -173,15 +175,11 @@ export function useGitActions(options: UseGitActionsOptions) {
 		if (!discardModal.isOpen) {
 			return;
 		}
-		runAction(
-			discardFileChanges(discardModal.file),
-			renderRepoActionError,
-			{
-				onSuccess: () => {
-					updateDiscardModal(closeDiscardModalState);
-				},
+		runAction(discardFileChanges(discardModal.file), renderRepoActionError, {
+			onSuccess: () => {
+				updateDiscardModal(closeDiscardModalState);
 			},
-		);
+		});
 	}, [discardModal, renderRepoActionError, runAction, updateDiscardModal]);
 
 	const openSelectedFile = useCallback(

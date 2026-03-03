@@ -6,13 +6,13 @@ import {
 	setThemeModalSelectionState,
 	type ThemeModalState,
 	type UpdateThemeModal,
-} from "#ui/state";
+} from "#ui/state.ts";
 import {
 	persistThemePreferenceToTuiConfig,
 	type ThemeCatalog,
 	type ThemeMode,
 	type ThemePreferencePersistError,
-} from "#theme/theme";
+} from "#theme/theme.ts";
 
 interface UseThemeActionsOptions {
 	readonly themeModal: ThemeModalState;
@@ -34,7 +34,10 @@ function renderThemePreferencePersistError(
 			"ThemePreferenceConfigParseError",
 			() => "Invalid theme config. Fix it and try again.",
 		),
-		Match.tag("ThemePreferenceConfigReadError", (typedError) => typedError.message),
+		Match.tag(
+			"ThemePreferenceConfigReadError",
+			(typedError) => typedError.message,
+		),
 		Match.tag(
 			"ThemePreferenceConfigWriteError",
 			(typedError) => typedError.message,

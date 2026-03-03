@@ -1,19 +1,19 @@
 import { Effect, Option, pipe } from "effect";
 import { useCallback } from "react";
-import { listComparableRefs, type RepoActionError } from "#data/git";
+import { listComparableRefs, type RepoActionError } from "#data/git.ts";
 import type {
 	BranchCompareField,
 	BranchCompareModalState,
 	ReviewMode,
 	UpdateBranchCompareModal,
 	UpdateReviewMode,
-} from "#ui/state";
+} from "#ui/state.ts";
 import {
 	closeBranchCompareModalState,
 	isBranchCompareReviewMode,
 	openBranchCompareModalLoadingState,
-} from "#ui/state";
-import { searchBranchRefs } from "#ui/branch-ref-search";
+} from "#ui/state.ts";
+import { searchBranchRefs } from "#ui/branch-ref-search.ts";
 
 interface UseBranchCompareActionsOptions {
 	readonly branchCompareModal: BranchCompareModalState;
@@ -47,7 +47,9 @@ function resolveDestinationRef(
 	return Option.fromNullable(refs[0]);
 }
 
-export function useBranchCompareActions(options: UseBranchCompareActionsOptions) {
+export function useBranchCompareActions(
+	options: UseBranchCompareActionsOptions,
+) {
 	const {
 		branchCompareModal,
 		reviewMode,
@@ -63,14 +65,12 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 			return;
 		}
 
-		const seededSourceRef =
-			isBranchCompareReviewMode(reviewMode)
-				? Option.some(reviewMode.selection.sourceRef)
-				: Option.none<string>();
-		const seededDestinationRef =
-			isBranchCompareReviewMode(reviewMode)
-				? Option.some(reviewMode.selection.destinationRef)
-				: Option.none<string>();
+		const seededSourceRef = isBranchCompareReviewMode(reviewMode)
+			? Option.some(reviewMode.selection.sourceRef)
+			: Option.none<string>();
+		const seededDestinationRef = isBranchCompareReviewMode(reviewMode)
+			? Option.some(reviewMode.selection.destinationRef)
+			: Option.none<string>();
 
 		updateBranchCompareModal(() =>
 			openBranchCompareModalLoadingState({
@@ -260,7 +260,8 @@ export function useBranchCompareActions(options: UseBranchCompareActionsOptions)
 					Math.max(selectedIndex, 0),
 					filtered.length - 1,
 				);
-				const nextIndex = (baseIndex + direction + filtered.length) % filtered.length;
+				const nextIndex =
+					(baseIndex + direction + filtered.length) % filtered.length;
 				const nextRef = filtered[nextIndex];
 				if (!nextRef) {
 					return current;

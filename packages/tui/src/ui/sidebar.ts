@@ -1,6 +1,6 @@
 import { Option, pipe } from "effect";
-import type { FileEntry } from "#tui/types";
-import type { ResolvedTheme } from "#theme/theme";
+import type { FileEntry } from "#tui/types.ts";
+import type { ResolvedTheme } from "#theme/theme.ts";
 
 export function getStatusColor(status: string, theme: ResolvedTheme) {
 	if (status === "??" || status.includes("A")) {
@@ -91,7 +91,9 @@ function getSidebarFileLabel(file: FileEntry, leafName: string): string {
 	return leafName;
 }
 
-function getSingleChildDirectory(node: FileTreeNode): Option.Option<FileTreeNode> {
+function getSingleChildDirectory(
+	node: FileTreeNode,
+): Option.Option<FileTreeNode> {
 	if (node.directories.size !== 1) {
 		return Option.none();
 	}

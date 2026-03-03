@@ -1,7 +1,7 @@
-import { RGBA, type ScrollBoxRenderable } from "@opentui/core";
+import type { RGBA, ScrollBoxRenderable } from "@opentui/core";
 import { memo, useRef } from "react";
-import type { ResolvedTheme } from "#theme/theme";
-import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection";
+import type { ResolvedTheme } from "#theme/theme.ts";
+import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection.ts";
 
 export interface ThemeModalProps {
 	readonly theme: ResolvedTheme;
