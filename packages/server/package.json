@@ -1,0 +1,14 @@
+{
+	"name": "@vigil/server",
+	"private": true,
+	"type": "module",
+	"imports": {
+		"#server": "./src/index.ts",
+		"#server/*": "./src/*",
+		"#api": "../api/src/index.ts",
+		"#api/*": "../api/src/*"
+	},
+	"exports": {
+		".": "./src/index.ts"
+	}
+}

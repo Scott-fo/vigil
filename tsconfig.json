@@ -12,6 +12,10 @@
     // Bundler mode
     "moduleResolution": "bundler",
     "paths": {
+      "#api": ["./packages/api/src/index.ts"],
+      "#api/*": ["./packages/api/src/*"],
+      "#server": ["./packages/server/src/index.ts"],
+      "#server/*": ["./packages/server/src/*"],
       "#tui": ["./packages/tui/src/index.ts"],
       "#tui/*": ["./packages/tui/src/*"],
       "#ui/*": ["./packages/tui/src/ui/*"],

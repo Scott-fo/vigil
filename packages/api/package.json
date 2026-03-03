@@ -1,0 +1,12 @@
+{
+	"name": "@vigil/api",
+	"private": true,
+	"type": "module",
+	"imports": {
+		"#api": "./src/index.ts",
+		"#api/*": "./src/*"
+	},
+	"exports": {
+		".": "./src/index.ts"
+	}
+}
