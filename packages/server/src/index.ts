@@ -43,6 +43,19 @@ export {
 	VIGIL_DAEMON_TOKEN_HEADER,
 } from "@vigil/api";
 
+export {
+	decodeReviewComment,
+	decodeReviewComments,
+	decodeReviewThread,
+	decodeReviewThreads,
+	ReviewComment,
+	ReviewLineSideSchema,
+	type ReviewLineSide,
+	ReviewScopeTypeSchema,
+	type ReviewScopeType,
+	ReviewThread,
+} from "./models/index.ts";
+
 export interface StartVigilServerOptions {
 	readonly host: string;
 	readonly port: number;
