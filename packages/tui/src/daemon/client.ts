@@ -1,27 +1,18 @@
-import { HttpApiClient } from "@effect/platform";
-import { VigilApi } from "@vigil/api";
-import { Effect } from "effect";
+import {
+	buildVigilDaemonBaseUrl,
+	makeVigilDaemonClient,
+	type VigilDaemonClient,
+	type VigilDaemonConnection,
+} from "@vigil/api";
+import { Context, Layer } from "effect";
 
-export interface VigilDaemonConnection {
-	readonly host: string;
-	readonly port: number;
-	readonly token: string;
+export { buildVigilDaemonBaseUrl, makeVigilDaemonClient };
+export type { VigilDaemonClient, VigilDaemonConnection };
+
+export class VigilDaemonClientContext extends Context.Tag(
+	"@vigil/tui/VigilDaemonClient",
+)<VigilDaemonClientContext, VigilDaemonClient>() {}
+
+export function makeVigilDaemonClientLayer(connection: VigilDaemonConnection) {
+	return Layer.effect(VigilDaemonClientContext, makeVigilDaemonClient(connection));
 }
-
-export function buildVigilDaemonBaseUrl(
-	connection: Pick<VigilDaemonConnection, "host" | "port">,
-) {
-	const host = connection.host.includes(":")
-		? `[${connection.host.replace(/^\[(.*)\]$/, "$1")}]`
-		: connection.host;
-	return `http://${host}:${connection.port}`;
-}
-
-export const makeVigilDaemonClient = (connection: VigilDaemonConnection) =>
-	HttpApiClient.make(VigilApi, {
-		baseUrl: buildVigilDaemonBaseUrl(connection),
-	});
-
-export type VigilDaemonClient = Effect.Effect.Success<
-	ReturnType<typeof makeVigilDaemonClient>
->;
