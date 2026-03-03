@@ -1,14 +1,17 @@
 import {
+	FetchHttpClient,
 	HttpApi,
+	HttpApiClient,
 	HttpApiEndpoint,
 	HttpApiGroup,
 	HttpApiMiddleware,
+	type HttpClient,
 	HttpApiSchema,
 	HttpApiSecurity,
 } from "@effect/platform";
-import { Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 
-export const VIGIL_DAEMON_PROTOCOL_VERSION = 1 as const;
+export const VIGIL_DAEMON_PROTOCOL_VERSION = 2 as const;
 export const VIGIL_DAEMON_TOKEN_HEADER = "x-vigil-token" as const;
 export const VIGIL_DAEMON_TOKEN_ENV_VAR = "VIGIL_DAEMON_TOKEN" as const;
 
@@ -60,6 +63,26 @@ export class WatchEventsUrlParams extends Schema.Class<WatchEventsUrlParams>(
 	clientId: Schema.NonEmptyString,
 }) {}
 
+export class SessionOpenResponse extends Schema.Class<SessionOpenResponse>(
+	"SessionOpenResponse",
+)({
+	sessionId: Schema.NonEmptyString,
+	heartbeatIntervalMs: Schema.Number,
+	ttlMs: Schema.Number,
+}) {}
+
+export class SessionHeartbeatRequest extends Schema.Class<SessionHeartbeatRequest>(
+	"SessionHeartbeatRequest",
+)({
+	sessionId: Schema.NonEmptyString,
+}) {}
+
+export class SessionCloseRequest extends Schema.Class<SessionCloseRequest>(
+	"SessionCloseRequest",
+)({
+	sessionId: Schema.NonEmptyString,
+}) {}
+
 export class DaemonUnauthorizedError extends Schema.TaggedError<DaemonUnauthorizedError>()(
 	"DaemonUnauthorizedError",
 	{
@@ -78,6 +101,22 @@ export class WatchBadRequestError extends Schema.TaggedError<WatchBadRequestErro
 
 export class WatchSubscriptionNotFoundError extends Schema.TaggedError<WatchSubscriptionNotFoundError>()(
 	"WatchSubscriptionNotFoundError",
+	{
+		message: Schema.String,
+	},
+	HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+export class SessionBadRequestError extends Schema.TaggedError<SessionBadRequestError>()(
+	"SessionBadRequestError",
+	{
+		message: Schema.String,
+	},
+	HttpApiSchema.annotations({ status: 400 }),
+) {}
+
+export class SessionNotFoundError extends Schema.TaggedError<SessionNotFoundError>()(
+	"SessionNotFoundError",
 	{
 		message: Schema.String,
 	},
@@ -137,6 +176,66 @@ export class WatchApi extends HttpApiGroup.make("watch")
 	)
 	.middleware(VigilDaemonAuth) {}
 
+export class SessionApi extends HttpApiGroup.make("session")
+	.add(
+		HttpApiEndpoint.post("open")`/session/open`
+			.addSuccess(SessionOpenResponse)
+			.addError(SessionBadRequestError),
+	)
+	.add(
+		HttpApiEndpoint.post("heartbeat")`/session/heartbeat`
+			.setPayload(SessionHeartbeatRequest)
+			.addSuccess(HttpApiSchema.NoContent)
+			.addError(SessionBadRequestError)
+			.addError(SessionNotFoundError),
+	)
+	.add(
+		HttpApiEndpoint.post("close")`/session/close`
+			.setPayload(SessionCloseRequest)
+			.addSuccess(HttpApiSchema.NoContent)
+			.addError(SessionBadRequestError),
+	)
+	.middleware(VigilDaemonAuth) {}
+
 export class VigilApi extends HttpApi.make("vigil")
 	.add(SystemApi)
-	.add(WatchApi) {}
+	.add(WatchApi)
+	.add(SessionApi) {}
+
+export interface VigilDaemonConnection {
+	readonly host: string;
+	readonly port: number;
+	readonly token: string;
+}
+
+export function buildVigilDaemonBaseUrl(
+	connection: Pick<VigilDaemonConnection, "host" | "port">,
+) {
+	const host = connection.host.includes(":")
+		? `[${connection.host.replace(/^\[(.*)\]$/, "$1")}]`
+		: connection.host;
+	return `http://${host}:${connection.port}`;
+}
+
+export function makeVigilDaemonHttpClientLayer(
+	connection: VigilDaemonConnection,
+): Layer.Layer<HttpClient.HttpClient> {
+	return FetchHttpClient.layer.pipe(
+		Layer.provide(
+			Layer.succeed(FetchHttpClient.RequestInit, {
+				headers: {
+					[VIGIL_DAEMON_TOKEN_HEADER]: connection.token,
+				},
+			}),
+		),
+	);
+}
+
+export const makeVigilDaemonClient = (connection: VigilDaemonConnection) =>
+	HttpApiClient.make(VigilApi, {
+		baseUrl: buildVigilDaemonBaseUrl(connection),
+	});
+
+export type VigilDaemonClient = Effect.Effect.Success<
+	ReturnType<typeof makeVigilDaemonClient>
+>;
