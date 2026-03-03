@@ -1,19 +1,20 @@
-import { FetchHttpClient, HttpClient } from "@effect/platform";
-import { VIGIL_DAEMON_TOKEN_HEADER } from "@vigil/api";
+import { HttpClient } from "@effect/platform";
+import { makeVigilDaemonHttpClientLayer } from "@vigil/api";
 import { Layer, ManagedRuntime } from "effect";
 import { createContext, useContext, type ReactNode } from "react";
-import type { VigilDaemonConnection } from "#daemon/client.ts";
+import {
+	makeVigilDaemonClientLayer,
+	VigilDaemonClientContext,
+	type VigilDaemonConnection,
+} from "#daemon/client.ts";
 
-function makeFrontendHttpLayer(connection: VigilDaemonConnection) {
-	return FetchHttpClient.layer.pipe(
-		Layer.provide(
-			Layer.succeed(FetchHttpClient.RequestInit, {
-				headers: {
-					[VIGIL_DAEMON_TOKEN_HEADER]: connection.token,
-				},
-			}),
-		),
+function makeFrontendLayer(connection: VigilDaemonConnection) {
+	const daemonHttpClientLayer = makeVigilDaemonHttpClientLayer(connection);
+	const daemonApiClientLayer = makeVigilDaemonClientLayer(connection).pipe(
+		Layer.provide(daemonHttpClientLayer),
 	);
+
+	return Layer.merge(daemonHttpClientLayer, daemonApiClientLayer);
 }
 
 export type FrontendRuntime = ReturnType<typeof makeFrontendRuntime>;
@@ -27,8 +28,11 @@ interface FrontendRuntimeProviderProps {
 
 export function makeFrontendRuntime(
 	connection: VigilDaemonConnection,
-): ManagedRuntime.ManagedRuntime<HttpClient.HttpClient, never> {
-	return ManagedRuntime.make(makeFrontendHttpLayer(connection));
+): ManagedRuntime.ManagedRuntime<
+	HttpClient.HttpClient | VigilDaemonClientContext,
+	never
+> {
+	return ManagedRuntime.make(makeFrontendLayer(connection));
 }
 
 export function FrontendRuntimeProvider(props: FrontendRuntimeProviderProps) {
