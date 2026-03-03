@@ -51,7 +51,9 @@ export const BranchCompareModal = memo(function BranchCompareModal(
 		>
 			<box
 				width={82}
-				height={24}
+				height="90%"
+				maxHeight={24}
+				minHeight={12}
 				padding={1}
 				gap={1}
 				border
@@ -70,6 +72,7 @@ export const BranchCompareModal = memo(function BranchCompareModal(
 					paddingX={1}
 					flexDirection="column"
 					width="100%"
+					flexShrink={0}
 					gap={1}
 					onMouseDown={(event) => {
 						event.preventDefault();
@@ -105,6 +108,7 @@ export const BranchCompareModal = memo(function BranchCompareModal(
 					paddingX={1}
 					flexDirection="column"
 					width="100%"
+					flexShrink={0}
 					gap={1}
 					onMouseDown={(event) => {
 						event.preventDefault();
@@ -136,8 +140,14 @@ export const BranchCompareModal = memo(function BranchCompareModal(
 						placeholderColor={props.theme.textMuted}
 					/>
 				</box>
-				<box flexGrow={1} border borderStyle="rounded" borderColor={props.theme.border}>
-					<scrollbox ref={refsScrollRef} flexGrow={1}>
+				<box
+					flexGrow={1}
+					minHeight={0}
+					border
+					borderStyle="rounded"
+					borderColor={props.theme.border}
+				>
+					<scrollbox ref={refsScrollRef} flexGrow={1} height="100%">
 						{props.loading ? (
 							<box paddingX={1}>
 								<text fg={props.theme.textMuted}>Loading refs...</text>
