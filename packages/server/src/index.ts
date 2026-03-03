@@ -1,4 +1,4 @@
-import { HttpApiBuilder, HttpServerResponse } from "@effect/platform";
+import { HttpApiBuilder, HttpMiddleware, HttpServerResponse } from "@effect/platform";
 import { BunHttpServer } from "@effect/platform-bun";
 import {
 	DaemonMetaResponse,
@@ -77,6 +77,9 @@ export function makeVigilApiLayer(options: StartVigilServerOptions) {
 		textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
 	const encodeSseComment = (message: string) =>
 		textEncoder.encode(`: ${message}\n\n`);
+	const keepaliveStream = Stream.repeatEffect(
+		Effect.sleep("5 seconds").pipe(Effect.as(encodeSseComment("keepalive"))),
+	);
 
 	const systemApiLive = HttpApiBuilder.group(VigilApi, "system", (handlers) =>
 		handlers
@@ -161,15 +164,18 @@ export function makeVigilApiLayer(options: StartVigilServerOptions) {
 						HttpServerResponse.stream(
 							Stream.concat(
 								Stream.fromIterable([encodeSseComment("connected")]),
-								events.pipe(
-									Stream.map((event) =>
-										encodeSseChunk("repo-changed", {
-											subscriptionId: event.subscriptionId,
-											repoRoot: event.repoRoot,
-											version: event.version,
-											changedAt: event.changedAt.toISOString(),
-										}),
+								Stream.merge(
+									events.pipe(
+										Stream.map((event) =>
+											encodeSseChunk("repo-changed", {
+												subscriptionId: event.subscriptionId,
+												repoRoot: event.repoRoot,
+												version: event.version,
+												changedAt: event.changedAt.toISOString(),
+											}),
+										),
 									),
+									keepaliveStream,
 								),
 							),
 							{
@@ -204,12 +210,13 @@ export function makeVigilApiLayer(options: StartVigilServerOptions) {
 
 function makeServerLive(options: StartVigilServerOptions) {
 	return pipe(
-		HttpApiBuilder.serve(),
+		HttpApiBuilder.serve(HttpMiddleware.logger),
 		Layer.provide(makeVigilApiLayer(options)),
 		Layer.provide(
 			BunHttpServer.layer({
 				hostname: options.host,
 				port: options.port,
+				idleTimeout: 255,
 			}),
 		),
 	);
@@ -219,7 +226,10 @@ export function startVigilServerProgram(
 	options: StartVigilServerOptions,
 ): Effect.Effect<never, VigilServerStartError> {
 	return pipe(
-		Layer.launch(makeServerLive(options)),
+		Effect.logInfo(
+			`[vigil-server] starting host=${options.host} port=${options.port}`,
+		),
+		Effect.zipRight(Layer.launch(makeServerLive(options))),
 		Effect.catchAllCause((cause) =>
 			Effect.fail(
 				new VigilServerStartError({

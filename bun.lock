@@ -5,6 +5,8 @@
     "": {
       "name": "vigil",
       "dependencies": {
+        "@effect/platform": "^0.94.5",
+        "@effect/platform-bun": "^0.87.1",
         "@effect/workflow": "^0.16.0",
         "@vigil/config": "workspace:*",
         "@vigil/server": "workspace:*",

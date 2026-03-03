@@ -16,7 +16,6 @@ interface UseDaemonWatchOptions {
 	readonly daemonConnection: VigilDaemonConnection;
 	readonly repoPath: string;
 	readonly enabled: boolean;
-	readonly onConnectionChange: (connected: boolean) => void;
 	readonly onRefreshInstruction: () => Promise<void>;
 	readonly reconnectDelayMs?: number;
 }
@@ -67,7 +66,6 @@ export function useDaemonWatch(options: UseDaemonWatchOptions) {
 		daemonConnection,
 		repoPath,
 		enabled,
-		onConnectionChange,
 		onRefreshInstruction,
 	} = options;
 	const reconnectDelayMs = options.reconnectDelayMs ?? 1_500;
@@ -75,25 +73,18 @@ export function useDaemonWatch(options: UseDaemonWatchOptions) {
 
 	useEffect(() => {
 		if (!enabled) {
-			onConnectionChange(false);
 			return;
 		}
 
 		let cancelled = false;
 		let streamController: AbortController | null = null;
 		let didUnsubscribe = false;
-		const setConnected = (connected: boolean) => {
-			if (!cancelled) {
-				onConnectionChange(connected);
-			}
-		};
 
 		const unsubscribeAll = async () => {
 			if (didUnsubscribe) {
 				return;
 			}
 			didUnsubscribe = true;
-			setConnected(false);
 			try {
 				await daemonApiCall((client) =>
 					client.watch.unsubscribeAll({
@@ -116,6 +107,9 @@ export function useDaemonWatch(options: UseDaemonWatchOptions) {
 							},
 						}),
 					);
+					try {
+						await onRefreshInstruction();
+					} catch {}
 
 					streamController = new AbortController();
 					const response = await fetch(
@@ -134,15 +128,12 @@ export function useDaemonWatch(options: UseDaemonWatchOptions) {
 						);
 					}
 
-					setConnected(true);
 					await consumeWatchEventStream(response, onRefreshInstruction);
-					setConnected(false);
 				} catch (error) {
 					if (cancelled || isAbortError(error)) {
 						break;
 					}
 
-					setConnected(false);
 					await Bun.sleep(reconnectDelayMs);
 				}
 			}
@@ -162,7 +153,6 @@ export function useDaemonWatch(options: UseDaemonWatchOptions) {
 		daemonApiCall,
 		daemonConnection,
 		enabled,
-		onConnectionChange,
 		onRefreshInstruction,
 		reconnectDelayMs,
 		repoPath,

@@ -152,6 +152,9 @@ export class RepoSubscription extends Context.Tag(
 					if (deliveries.length === 0) {
 						return;
 					}
+					yield* Effect.logInfo(
+						`[repo-subscription] delivering repoRoot=${event.repoRoot} version=${event.version} subscribers=${deliveries.length}`,
+					);
 
 					yield* Effect.all(
 						deliveries.map((delivery) =>
@@ -167,6 +170,7 @@ export class RepoSubscription extends Context.Tag(
 			const routerFiber = yield* watcher
 				.events()
 				.pipe(Stream.runForEach((event) => routeWatcherEvent(event)), Effect.forkDaemon);
+			yield* Effect.logInfo("[repo-subscription] router started");
 
 			yield* Effect.addFinalizer(() =>
 				Effect.gen(function* () {
@@ -187,6 +191,9 @@ export class RepoSubscription extends Context.Tag(
 							clients.clear();
 							return { pubsubs, repoRoots };
 						}),
+					);
+					yield* Effect.logInfo(
+						`[repo-subscription] shutting down clients=${cleanupPlan.pubsubs.length} subscriptions=${cleanupPlan.repoRoots.length}`,
 					);
 
 					yield* Effect.all(
@@ -210,11 +217,14 @@ export class RepoSubscription extends Context.Tag(
 						message: "clientId must not be empty.",
 					});
 				}
+				yield* Effect.logInfo(
+					`[repo-subscription] subscribe requested clientId=${normalizedClientId} repoPath=${repoPath}`,
+				);
 
 				const watcherLease = yield* watcher.retain(repoPath);
 				const releaseWatcherLease = watcher.release(watcherLease.repoRoot);
 
-				return yield* Effect.uninterruptibleMask((restore) =>
+				const subscriptionResult = yield* Effect.uninterruptibleMask((restore) =>
 					restore(
 						withLock(
 							Effect.gen(function* () {
@@ -241,10 +251,13 @@ export class RepoSubscription extends Context.Tag(
 									if (existingSubscription) {
 										yield* releaseWatcherLease;
 										return {
-											clientId: normalizedClientId,
-											subscriptionId: existingSubscription.subscriptionId,
-											repoRoot: existingSubscription.repoRoot,
-											version: existingSubscription.version,
+											reused: true as const,
+											lease: {
+												clientId: normalizedClientId,
+												subscriptionId: existingSubscription.subscriptionId,
+												repoRoot: existingSubscription.repoRoot,
+												version: existingSubscription.version,
+											},
 										};
 									}
 									client.repoIndex.delete(watcherLease.repoRoot);
@@ -265,15 +278,24 @@ export class RepoSubscription extends Context.Tag(
 								);
 
 								return {
-									clientId: normalizedClientId,
-									subscriptionId: nextSubscription.subscriptionId,
-									repoRoot: nextSubscription.repoRoot,
-									version: nextSubscription.version,
+									reused: false as const,
+									lease: {
+										clientId: normalizedClientId,
+										subscriptionId: nextSubscription.subscriptionId,
+										repoRoot: nextSubscription.repoRoot,
+										version: nextSubscription.version,
+									},
 								};
 							}),
 						),
 					).pipe(Effect.catchAllCause((cause) => releaseWatcherLease.pipe(Effect.zipRight(Effect.failCause(cause))))),
 				);
+				yield* Effect.logInfo(
+					`[repo-subscription] ${
+						subscriptionResult.reused ? "reused" : "created"
+					} subscription clientId=${normalizedClientId} subscriptionId=${subscriptionResult.lease.subscriptionId} repoRoot=${subscriptionResult.lease.repoRoot} version=${subscriptionResult.lease.version}`,
+				);
+				return subscriptionResult.lease;
 			});
 
 			const unsubscribe = Effect.fn("RepoSubscription.unsubscribe")(function* (
@@ -317,12 +339,18 @@ export class RepoSubscription extends Context.Tag(
 				);
 
 				if (!removed) {
+					yield* Effect.logWarning(
+						`[repo-subscription] unsubscribe missed clientId=${normalizedClientId} subscriptionId=${normalizedSubscriptionId}`,
+					);
 					return yield* new RepoSubscriptionNotFoundError({
 						clientId: normalizedClientId,
 						subscriptionId: normalizedSubscriptionId,
 						message: "Subscription not found for this client.",
 					});
 				}
+				yield* Effect.logInfo(
+					`[repo-subscription] unsubscribed clientId=${normalizedClientId} subscriptionId=${normalizedSubscriptionId} repoRoot=${removed.repoRoot}`,
+				);
 
 				yield* watcher.release(removed.repoRoot);
 				if (removed.clientPubSub) {
@@ -357,8 +385,14 @@ export class RepoSubscription extends Context.Tag(
 				);
 
 				if (!removed) {
+					yield* Effect.logInfo(
+						`[repo-subscription] unsubscribe-all no-op clientId=${normalizedClientId}`,
+					);
 					return;
 				}
+				yield* Effect.logInfo(
+					`[repo-subscription] unsubscribe-all clientId=${normalizedClientId} count=${removed.repoRoots.length}`,
+				);
 
 				yield* Effect.all(
 					removed.repoRoots.map((repoRoot) => watcher.release(repoRoot)),
@@ -377,11 +411,14 @@ export class RepoSubscription extends Context.Tag(
 					});
 				}
 
-				const pubsub = yield* withLock(
+				const eventStream = yield* withLock(
 					Effect.gen(function* () {
 						const existingClient = clients.get(normalizedClientId);
 						if (existingClient) {
-							return existingClient.pubsub;
+							return {
+								createdClient: false as const,
+								pubsub: existingClient.pubsub,
+							};
 						}
 
 						const nextPubSub = yield* PubSub.unbounded<RepoSubscriptionEvent>();
@@ -390,11 +427,19 @@ export class RepoSubscription extends Context.Tag(
 							subscriptions: new Map<string, ClientSubscriptionState>(),
 							repoIndex: new Map<string, string>(),
 						});
-						return nextPubSub;
+						return {
+							createdClient: true as const,
+							pubsub: nextPubSub,
+						};
 					}),
 				);
+				yield* Effect.logInfo(
+					`[repo-subscription] events stream ${
+						eventStream.createdClient ? "created" : "reused"
+					} clientId=${normalizedClientId}`,
+				);
 
-				return Stream.fromPubSub(pubsub);
+				return Stream.fromPubSub(eventStream.pubsub);
 			});
 
 			return RepoSubscription.of({

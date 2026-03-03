@@ -60,9 +60,7 @@ export class WatchEventsUrlParams extends Schema.Class<WatchEventsUrlParams>(
 	clientId: Schema.NonEmptyString,
 }) {}
 
-export class DaemonUnauthorizedError extends Schema.TaggedError<
-	DaemonUnauthorizedError
->()(
+export class DaemonUnauthorizedError extends Schema.TaggedError<DaemonUnauthorizedError>()(
 	"DaemonUnauthorizedError",
 	{
 		message: Schema.String,
@@ -70,9 +68,7 @@ export class DaemonUnauthorizedError extends Schema.TaggedError<
 	HttpApiSchema.annotations({ status: 401 }),
 ) {}
 
-export class WatchBadRequestError extends Schema.TaggedError<
-	WatchBadRequestError
->()(
+export class WatchBadRequestError extends Schema.TaggedError<WatchBadRequestError>()(
 	"WatchBadRequestError",
 	{
 		message: Schema.String,
@@ -80,9 +76,7 @@ export class WatchBadRequestError extends Schema.TaggedError<
 	HttpApiSchema.annotations({ status: 400 }),
 ) {}
 
-export class WatchSubscriptionNotFoundError extends Schema.TaggedError<
-	WatchSubscriptionNotFoundError
->()(
+export class WatchSubscriptionNotFoundError extends Schema.TaggedError<WatchSubscriptionNotFoundError>()(
 	"WatchSubscriptionNotFoundError",
 	{
 		message: Schema.String,
@@ -136,4 +130,6 @@ export class WatchApi extends HttpApiGroup.make("watch")
 	)
 	.middleware(VigilDaemonAuth) {}
 
-export class VigilApi extends HttpApi.make("vigil").add(SystemApi).add(WatchApi) {}
+export class VigilApi extends HttpApi.make("vigil")
+	.add(SystemApi)
+	.add(WatchApi) {}

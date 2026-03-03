@@ -82,7 +82,6 @@ export function App(props: AppProps) {
 	);
 	const [remoteSync, setRemoteSync] = useAtom(remoteSyncAtom);
 	const [reviewMode, setReviewMode] = useAtom(reviewModeAtom);
-	const [watchConnected, setWatchConnected] = useState(false);
 	const [refreshInstructionVersion, setRefreshInstructionVersion] = useState(0);
 	const [snackbarNotice, setSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
@@ -205,16 +204,13 @@ export function App(props: AppProps) {
 
 	const watchRepoPath = useMemo(() => process.cwd(), []);
 	const isWorkingTreeMode = isWorkingTreeReviewMode(reviewMode);
-	const shouldPollFromClient =
-		remoteSync._tag !== "running" && (!isWorkingTreeMode || !watchConnected);
 
 	const { refreshFiles } = useFileRefresh({
 		updateFileView,
 		updateUiStatus,
 		renderRepoActionError: formatRepoActionError,
 		reviewMode,
-		pollMs: 5000,
-		pollingEnabled: shouldPollFromClient,
+		pollingEnabled: false,
 	});
 
 	const onRefreshInstruction = useCallback(async () => {
@@ -227,7 +223,6 @@ export function App(props: AppProps) {
 		daemonConnection: props.daemonConnection,
 		repoPath: watchRepoPath,
 		enabled: isWorkingTreeMode,
-		onConnectionChange: setWatchConnected,
 		onRefreshInstruction,
 	});
 
@@ -346,8 +341,7 @@ export function App(props: AppProps) {
 			selectedFile,
 			reviewMode,
 			externalRefreshVersion: refreshInstructionVersion,
-			pollMs: 5000,
-			pollingEnabled: shouldPollFromClient,
+			pollingEnabled: false,
 		});
 
 	const diffNavigationModel = useMemo(
