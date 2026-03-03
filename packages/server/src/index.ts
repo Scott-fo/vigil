@@ -1,4 +1,4 @@
-import { HttpApiBuilder } from "@effect/platform";
+import { HttpApiBuilder, HttpServerResponse } from "@effect/platform";
 import { BunHttpServer } from "@effect/platform-bun";
 import {
 	DaemonMetaResponse,
@@ -9,8 +9,13 @@ import {
 	VIGIL_DAEMON_TOKEN_HEADER,
 	VigilApi,
 	VigilDaemonAuth,
+	WatchBadRequestError,
+	WatchSubscribeResponse,
+	WatchSubscriptionNotFoundError,
 } from "@vigil/api";
-import { Cause, Data, Effect, Layer, Redacted, pipe } from "effect";
+import { Cause, Data, Effect, Layer, Redacted, Stream, pipe } from "effect";
+import { RepoSubscription } from "./repo-subscription.ts";
+import { RepoWatcher } from "./repo-watcher.ts";
 export {
 	RepoWatcher,
 	type RepoWatcherEvent,
@@ -67,6 +72,12 @@ function makeVigilDaemonAuthLayer(options: StartVigilServerOptions) {
 }
 
 function makeVigilApiLive(options: StartVigilServerOptions) {
+	const textEncoder = new TextEncoder();
+	const encodeSseChunk = (eventName: string, payload: unknown) =>
+		textEncoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+	const encodeSseComment = (message: string) =>
+		textEncoder.encode(`: ${message}\n\n`);
+
 	const systemApiLive = HttpApiBuilder.group(VigilApi, "system", (handlers) =>
 		handlers
 			.handle("health", () =>
@@ -86,10 +97,108 @@ function makeVigilApiLive(options: StartVigilServerOptions) {
 				),
 			),
 	);
+	const watchApiLive = HttpApiBuilder.group(VigilApi, "watch", (handlers) =>
+		handlers
+			.handle("subscribe", ({ payload }) =>
+				pipe(
+					RepoSubscription,
+					Effect.flatMap((subscription) =>
+						subscription.subscribe(payload.clientId, payload.repoPath),
+					),
+					Effect.map((lease) =>
+						WatchSubscribeResponse.make({
+							subscriptionId: lease.subscriptionId,
+							repoRoot: lease.repoRoot,
+							version: lease.version,
+						}),
+					),
+					Effect.catchAll((error) =>
+						Effect.fail(
+							WatchBadRequestError.make({
+								message: error.message,
+							}),
+						),
+					),
+				),
+			)
+			.handle("unsubscribe", ({ payload }) =>
+				pipe(
+					RepoSubscription,
+					Effect.flatMap((subscription) =>
+						subscription.unsubscribe(payload.clientId, payload.subscriptionId),
+					),
+					Effect.asVoid,
+					Effect.catchTag("RepoSubscriptionNotFoundError", (error) =>
+						Effect.fail(
+							WatchSubscriptionNotFoundError.make({
+								message: error.message,
+							}),
+						),
+					),
+					Effect.catchAll((error) =>
+						Effect.fail(
+							WatchBadRequestError.make({
+								message: error.message,
+							}),
+						),
+					),
+				),
+			)
+			.handle("unsubscribeAll", ({ payload }) =>
+				pipe(
+					RepoSubscription,
+					Effect.flatMap((subscription) =>
+						subscription.unsubscribeAll(payload.clientId),
+					),
+					Effect.asVoid,
+				),
+			)
+			.handle("events", ({ urlParams }) =>
+				pipe(
+					RepoSubscription,
+					Effect.flatMap((subscription) => subscription.events(urlParams.clientId)),
+					Effect.map((events) =>
+						HttpServerResponse.stream(
+							Stream.concat(
+								Stream.fromIterable([encodeSseComment("connected")]),
+								events.pipe(
+									Stream.map((event) =>
+										encodeSseChunk("repo-changed", {
+											subscriptionId: event.subscriptionId,
+											repoRoot: event.repoRoot,
+											version: event.version,
+											changedAt: event.changedAt.toISOString(),
+										}),
+									),
+								),
+							),
+							{
+								contentType: "text/event-stream",
+								headers: {
+									"cache-control": "no-cache",
+									connection: "keep-alive",
+									"x-accel-buffering": "no",
+								},
+							},
+						),
+					),
+					Effect.catchAll((error) =>
+						Effect.fail(
+							WatchBadRequestError.make({
+								message: error.message,
+							}),
+						),
+					),
+				),
+			),
+	);
 
 	return HttpApiBuilder.api(VigilApi).pipe(
 		Layer.provide(systemApiLive),
+		Layer.provide(watchApiLive),
 		Layer.provide(makeVigilDaemonAuthLayer(options)),
+		Layer.provide(RepoSubscription.layer),
+		Layer.provide(RepoWatcher.layer),
 	);
 }
 
