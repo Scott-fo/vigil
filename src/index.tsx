@@ -63,7 +63,9 @@ function parseCommand(
 	);
 }
 
-function parseServerPort(rawPort: string): Effect.Effect<number, CliArgumentError> {
+function parseServerPort(
+	rawPort: string,
+): Effect.Effect<number, CliArgumentError> {
 	const port = Number(rawPort);
 
 	return Number.isInteger(port) && port >= 0 && port <= 65_535
@@ -106,43 +108,41 @@ function parseVigilArgs(
 					message: error instanceof Error ? error.message : String(error),
 				}),
 		}),
-			Effect.flatMap((parsed) =>
-				Effect.gen(function* () {
-					const command = yield* parseCommand(parsed.positionals);
-					const chooserFilePath = pipe(
-						Option.fromNullable(parsed.values["chooser-file"]),
-						Option.filter((value): value is string => typeof value === "string"),
-					);
+		Effect.flatMap((parsed) =>
+			Effect.gen(function* () {
+				const command = yield* parseCommand(parsed.positionals);
+				const chooserFilePath = pipe(
+					Option.fromNullable(parsed.values["chooser-file"]),
+					Option.filter((value): value is string => typeof value === "string"),
+				);
 
-					if (command === "serve" && Option.isSome(chooserFilePath)) {
-						return yield* Effect.fail(
-							new CliArgumentError({
-								message: "`--chooser-file` can only be used in TUI mode.",
-							}),
-						);
-					}
+				if (command === "serve" && Option.isSome(chooserFilePath)) {
+					return yield* new CliArgumentError({
+						message: "`--chooser-file` can only be used in TUI mode.",
+					});
+				}
 
-					const serverHost = pipe(
-						Option.fromNullable(parsed.values.host),
-						Option.filter((value): value is string => typeof value === "string"),
-						Option.getOrElse(() => "127.0.0.1"),
-					);
-					const rawPort = pipe(
-						Option.fromNullable(parsed.values.port),
-						Option.filter((value): value is string => typeof value === "string"),
-						Option.getOrElse(() => "4096"),
-					);
-					const serverPort = yield* parseServerPort(rawPort);
+				const serverHost = pipe(
+					Option.fromNullable(parsed.values.host),
+					Option.filter((value): value is string => typeof value === "string"),
+					Option.getOrElse(() => "127.0.0.1"),
+				);
+				const rawPort = pipe(
+					Option.fromNullable(parsed.values.port),
+					Option.filter((value): value is string => typeof value === "string"),
+					Option.getOrElse(() => "4096"),
+				);
+				const serverPort = yield* parseServerPort(rawPort);
 
-					return {
-						command,
-						help: parsed.values.help === true,
-						chooserFilePath,
-						serverHost,
-						serverPort,
-					};
-				}),
-			),
+				return {
+					command,
+					help: parsed.values.help === true,
+					chooserFilePath,
+					serverHost,
+					serverPort,
+				};
+			}),
+		),
 	);
 }
 
