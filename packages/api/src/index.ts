@@ -125,7 +125,14 @@ export class WatchApi extends HttpApiGroup.make("watch")
 	.add(
 		HttpApiEndpoint.get("events")`/watch/events`
 			.setUrlParams(WatchEventsUrlParams)
-			.addSuccess(HttpApiSchema.Text({ contentType: "text/event-stream" }))
+			.addSuccess(
+				Schema.String.pipe(
+					HttpApiSchema.withEncoding({
+						kind: "Text",
+						contentType: "text/event-stream",
+					}),
+				),
+			)
 			.addError(WatchBadRequestError),
 	)
 	.middleware(VigilDaemonAuth) {}

@@ -1,5 +1,6 @@
-import { VIGIL_DAEMON_TOKEN_HEADER } from "@vigil/api";
-import { Data, Effect, Fiber, Option, Schedule } from "effect";
+import * as Sse from "@effect/experimental/Sse";
+import { HttpClient, type HttpClientResponse } from "@effect/platform";
+import { Data, Effect, Fiber, Option, Schedule, Stream } from "effect";
 import { useEffect, useMemo } from "react";
 import {
 	buildVigilDaemonBaseUrl,
@@ -8,10 +9,8 @@ import {
 	type VigilDaemonConnection,
 } from "#daemon/client.ts";
 import {
-	appendSseChunk,
-	drainSseBlocks,
-	parseRepoChangedEventBlock,
-	type ParseRepoChangedEventBlockError,
+	parseRepoChangedSseEvent,
+	type ParseRepoChangedSseEventError,
 } from "#daemon/watch-events.ts";
 import { useFrontendRuntime } from "#runtime/frontend-runtime.tsx";
 
@@ -42,12 +41,6 @@ class WatchEventsStreamStatusError extends Data.TaggedError(
 	readonly status: number;
 }> {}
 
-class WatchEventsResponseBodyMissingError extends Data.TaggedError(
-	"WatchEventsResponseBodyMissingError",
-)<{
-	readonly message: string;
-}> {}
-
 class WatchEventsStreamReadError extends Data.TaggedError(
 	"WatchEventsStreamReadError",
 )<{
@@ -69,14 +62,14 @@ class WatchUnsubscribeAllError extends Data.TaggedError(
 	readonly cause: unknown;
 }> {}
 
-type WatchLoopError =
-	| WatchSubscribeError
-	| WatchEventsRequestError
-	| WatchEventsStreamStatusError
-	| WatchEventsResponseBodyMissingError
-	| WatchEventsStreamReadError;
+function isAbortException(cause: unknown): boolean {
+	return (
+		(cause instanceof DOMException || cause instanceof Error) &&
+		cause.name === "AbortError"
+	);
+}
 
-const logParseErrorAndContinue = (error: ParseRepoChangedEventBlockError) =>
+const logParseErrorAndContinue = (error: ParseRepoChangedSseEventError) =>
 	Effect.logWarning(
 		`[daemon-watch] ignoring malformed event: ${error.message}`,
 	).pipe(Effect.as(Option.none()));
@@ -84,59 +77,37 @@ const logParseErrorAndContinue = (error: ParseRepoChangedEventBlockError) =>
 const consumeWatchEventStream = Effect.fn(
 	"useDaemonWatch.consumeWatchEventStream",
 )(function* (
-	response: Response,
+	response: HttpClientResponse.HttpClientResponse,
 	onRefreshInstruction: Effect.Effect<void, never, never>,
 ) {
-	const body = response.body;
-	if (!body) {
-		return yield* new WatchEventsResponseBodyMissingError({
-			message: "Watch events response body is missing.",
-		});
-	}
-
-	const reader = body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-
-	while (true) {
-		const { done, value } = yield* Effect.tryPromise({
-			try: () => reader.read(),
-			catch: (cause) =>
-				cause instanceof DOMException && cause.name === "AbortError"
-					? new WatchEventsAbortedError({
-							message: "Watch events stream read aborted.",
-							cause,
-						})
-					: new WatchEventsStreamReadError({
-							message: "Failed while reading watch events stream.",
-							cause,
-						}),
-		});
-
-		if (done) {
-			return;
-		}
-
-		buffer = appendSseChunk(buffer, decoder.decode(value, { stream: true }));
-		const drained = drainSseBlocks(buffer);
-		buffer = drained.remaining;
-
-		for (const block of drained.blocks) {
-			const parsedEvent = yield* parseRepoChangedEventBlock(block).pipe(
+	yield* response.stream.pipe(
+		Stream.decodeText(),
+		Stream.pipeThroughChannel(Sse.makeChannel()),
+		Stream.runForEach((sseEvent) =>
+			parseRepoChangedSseEvent(sseEvent).pipe(
 				Effect.catchAll(logParseErrorAndContinue),
-			);
-
-			if (Option.isNone(parsedEvent)) {
-				continue;
-			}
-
-			yield* onRefreshInstruction;
-		}
-	}
+				Effect.flatMap((parsedEvent) =>
+					Option.isSome(parsedEvent) ? onRefreshInstruction : Effect.void,
+				),
+			),
+		),
+		Effect.mapError((error) =>
+			error.reason === "Decode" && isAbortException(error.cause)
+				? new WatchEventsAbortedError({
+						message: "Watch events stream read aborted.",
+						cause: error,
+					})
+				: new WatchEventsStreamReadError({
+						message: "Failed while reading watch events stream.",
+						cause: error,
+					}),
+		),
+	);
 });
 
 const runWatchAttempt = Effect.fn("useDaemonWatch.runWatchAttempt")(function* (
 	daemonClient: VigilDaemonClient,
+	daemonHttpClient: HttpClient.HttpClient,
 	clientId: string,
 	daemonConnection: VigilDaemonConnection,
 	repoPath: string,
@@ -161,40 +132,32 @@ const runWatchAttempt = Effect.fn("useDaemonWatch.runWatchAttempt")(function* (
 
 	yield* onRefreshInstruction;
 
-	const controller = new AbortController();
-	yield* Effect.gen(function* () {
-		const response = yield* Effect.tryPromise({
-			try: () =>
-				fetch(
-					`${buildVigilDaemonBaseUrl(daemonConnection)}/watch/events?clientId=${encodeURIComponent(clientId)}`,
-					{
-						headers: {
-							[VIGIL_DAEMON_TOKEN_HEADER]: daemonConnection.token,
-						},
-						signal: controller.signal,
-					},
-				),
-			catch: (cause) =>
-				cause instanceof DOMException && cause.name === "AbortError"
+	const response = yield* daemonHttpClient
+		.get(
+			`${buildVigilDaemonBaseUrl(daemonConnection)}/watch/events?clientId=${encodeURIComponent(clientId)}`,
+		)
+		.pipe(
+			Effect.mapError((error) =>
+				error.reason === "Transport" && isAbortException(error.cause)
 					? new WatchEventsAbortedError({
 							message: "Watch events stream connection aborted.",
-							cause,
+							cause: error,
 						})
 					: new WatchEventsRequestError({
 							message: "Failed to open watch events stream.",
-							cause,
+							cause: error,
 						}),
+			),
+		);
+
+	if (response.status < 200 || response.status >= 300) {
+		return yield* new WatchEventsStreamStatusError({
+			message: `Watch events stream failed with status ${response.status}.`,
+			status: response.status,
 		});
+	}
 
-		if (!response.ok) {
-			return yield* new WatchEventsStreamStatusError({
-				message: `Watch events stream failed with status ${response.status}.`,
-				status: response.status,
-			});
-		}
-
-		yield* consumeWatchEventStream(response, onRefreshInstruction);
-	}).pipe(Effect.ensuring(Effect.sync(() => controller.abort())));
+	yield* consumeWatchEventStream(response, onRefreshInstruction);
 });
 
 const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
@@ -205,6 +168,8 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 	reconnectDelayMs: number,
 ) {
 	const daemonClient = yield* makeVigilDaemonClient(daemonConnection);
+	const daemonHttpClient = yield* HttpClient.HttpClient;
+
 	const unsubscribeAll = daemonClient.watch
 		.unsubscribeAll({
 			payload: { clientId },
@@ -225,13 +190,14 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 
 	yield* runWatchAttempt(
 		daemonClient,
+		daemonHttpClient,
 		clientId,
 		daemonConnection,
 		repoPath,
 		onRefreshInstruction,
 	).pipe(
 		Effect.catchTag("WatchEventsAbortedError", () => Effect.interrupt),
-		Effect.tapError((error: WatchLoopError) =>
+		Effect.tapError((error) =>
 			Effect.logWarning(`[daemon-watch] ${error.message}`),
 		),
 		Effect.retry(Schedule.spaced(`${reconnectDelayMs} millis`)),

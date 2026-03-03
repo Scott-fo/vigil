@@ -104,7 +104,7 @@ export function startVigilTuiProgram(
 			themeCatalog,
 			themePreference,
 		);
-		const frontendRuntime = makeFrontendRuntime();
+		const frontendRuntime = makeFrontendRuntime(options.daemonConnection);
 
 		const renderer = yield* Effect.tryPromise({
 			try: () => createCliRenderer({ useMouse: true }),

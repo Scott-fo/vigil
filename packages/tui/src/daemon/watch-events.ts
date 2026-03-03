@@ -1,3 +1,4 @@
+import type * as Sse from "@effect/experimental/Sse";
 import { Data, Effect, Option, Schema } from "effect";
 
 export interface RepoChangedEvent {
@@ -5,11 +6,6 @@ export interface RepoChangedEvent {
 	readonly repoRoot: string;
 	readonly version: number;
 	readonly changedAt: string;
-}
-
-interface DrainedSseBlocks {
-	readonly blocks: ReadonlyArray<string>;
-	readonly remaining: string;
 }
 
 const RepoChangedEventSchema = Schema.Struct({
@@ -26,14 +22,14 @@ export class RepoChangedEventDataMissingError extends Data.TaggedError(
 	"RepoChangedEventDataMissingError",
 )<{
 	readonly message: string;
-	readonly block: string;
+	readonly event: Sse.Event;
 }> {}
 
 export class RepoChangedEventJsonParseError extends Data.TaggedError(
 	"RepoChangedEventJsonParseError",
 )<{
 	readonly message: string;
-	readonly block: string;
+	readonly event: Sse.Event;
 	readonly cause: unknown;
 }> {}
 
@@ -41,92 +37,52 @@ export class RepoChangedEventPayloadDecodeError extends Data.TaggedError(
 	"RepoChangedEventPayloadDecodeError",
 )<{
 	readonly message: string;
-	readonly block: string;
+	readonly event: Sse.Event;
 	readonly cause: unknown;
 }> {}
 
-export type ParseRepoChangedEventBlockError =
+export type ParseRepoChangedSseEventError =
 	| RepoChangedEventDataMissingError
 	| RepoChangedEventJsonParseError
 	| RepoChangedEventPayloadDecodeError;
 
-export function appendSseChunk(buffer: string, chunk: string): string {
-	return `${buffer}${chunk.replace(/\r\n/g, "\n")}`;
-}
-
-export function drainSseBlocks(buffer: string): DrainedSseBlocks {
-	const blocks: Array<string> = [];
-	let remaining = buffer;
-
-	while (true) {
-		const separatorIndex = remaining.indexOf("\n\n");
-		if (separatorIndex < 0) {
-			break;
-		}
-
-		blocks.push(remaining.slice(0, separatorIndex));
-		remaining = remaining.slice(separatorIndex + 2);
-	}
-
-	return { blocks, remaining };
-}
-
-export const parseRepoChangedEventBlock = Effect.fn(
-	"watchEvents.parseRepoChangedEventBlock",
+export const parseRepoChangedSseEvent = Effect.fn(
+	"watchEvents.parseRepoChangedSseEvent",
 )(function* (
-	block: string,
+	event: Sse.Event,
 ) {
-	let eventName = "message";
-	const dataLines: Array<string> = [];
-
-	for (const rawLine of block.split("\n")) {
-		const line = rawLine.trimEnd();
-		if (!line || line.startsWith(":")) {
-			continue;
-		}
-
-		if (line.startsWith("event:")) {
-			eventName = line.slice("event:".length).trim();
-			continue;
-		}
-
-		if (line.startsWith("data:")) {
-			dataLines.push(line.slice("data:".length).trimStart());
-		}
-	}
-
-	if (eventName !== "repo-changed") {
+	if (event.event !== "repo-changed") {
 		return Option.none();
 	}
 
-	if (dataLines.length === 0) {
+	if (event.data.length === 0) {
 		return yield* new RepoChangedEventDataMissingError({
 			message: "repo-changed event did not include a data payload.",
-			block,
+			event,
 		});
 	}
 
-	const decoded = yield* decodeJsonString(dataLines.join("\n")).pipe(
+	const decoded = yield* decodeJsonString(event.data).pipe(
 		Effect.mapError(
 			(cause) =>
 				new RepoChangedEventJsonParseError({
 					message: "repo-changed event payload is not valid JSON.",
-					block,
+					event,
 					cause,
 				}),
 		),
 	);
 
-	const event = yield* decodeRepoChangedEvent(decoded).pipe(
+	const repoChangedEvent = yield* decodeRepoChangedEvent(decoded).pipe(
 		Effect.mapError(
 			(cause) =>
 				new RepoChangedEventPayloadDecodeError({
 					message: "repo-changed event payload does not match expected shape.",
-					block,
+					event,
 					cause,
 				}),
 		),
 	);
 
-	return Option.some(event);
+	return Option.some(repoChangedEvent);
 });
