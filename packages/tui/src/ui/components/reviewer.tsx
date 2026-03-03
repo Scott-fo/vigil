@@ -5,15 +5,25 @@ import type {
 	SyntaxStyle,
 } from "@opentui/core";
 import { Option, pipe } from "effect";
-import { memo, type RefObject, useEffect, useMemo, useRef } from "react";
+import {
+	memo,
+	type RefObject,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { isFileStaged } from "#data/git";
 import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import type { DiffNavigationLine } from "#diff/navigation";
 import type { ResolvedTheme } from "#theme/theme";
 import type { FileEntry } from "#tui/types";
-import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection";
 import type { FocusedPane } from "#ui/inputs";
 import { getStatusColor, type SidebarItem } from "#ui/sidebar";
+import {
+	calculateSidebarVirtualWindow,
+	getScrollTopForVisibleRow,
+} from "#ui/sidebar-virtualization";
 
 type SidebarHeaderItem = Extract<SidebarItem, { kind: "header" }>;
 type SidebarFileItem = Extract<SidebarItem, { kind: "file" }>;
@@ -159,18 +169,108 @@ interface SidebarPanelProps {
 	readonly onSelectFilePath: (path: string) => void;
 }
 
+const SIDEBAR_OVERSCAN_ROWS = 100;
+const SIDEBAR_SCROLL_POLL_MS = 33;
+
 const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 	const sidebarScrollRef = useRef<ScrollBoxRenderable | null>(null);
-	const selectedRowId = pipe(
-		props.selectedFilePath,
-		Option.map((selectedPath) => `sidebar-row:${selectedPath}`),
-		Option.getOrElse(() => null),
+	const [scrollMetrics, setScrollMetrics] = useState({
+		scrollTop: 0,
+		viewportHeight: 1,
+	});
+
+	const selectedSidebarRowIndex = useMemo(
+		() =>
+			pipe(
+				props.selectedFilePath,
+				Option.match({
+					onNone: () => -1,
+					onSome: (selectedPath) =>
+						props.sidebarItems.findIndex(
+							(item) => item.kind === "file" && item.file.path === selectedPath,
+						),
+				}),
+			),
+		[props.selectedFilePath, props.sidebarItems],
 	);
 
-	useScrollFollowSelection({
-		scrollRef: sidebarScrollRef,
-		selectedRowId,
-	});
+	useEffect(() => {
+		const scroll = sidebarScrollRef.current;
+		if (!scroll) {
+			return;
+		}
+
+		const syncScrollMetrics = () => {
+			const next = {
+				scrollTop: Math.max(0, Math.floor(scroll.scrollTop)),
+				viewportHeight: Math.max(1, Math.floor(scroll.height)),
+			};
+			setScrollMetrics((current) =>
+				current.scrollTop === next.scrollTop &&
+				current.viewportHeight === next.viewportHeight
+					? current
+					: next,
+			);
+		};
+
+		syncScrollMetrics();
+		const interval = setInterval(syncScrollMetrics, SIDEBAR_SCROLL_POLL_MS);
+		interval.unref?.();
+
+		return () => {
+			clearInterval(interval);
+		};
+	}, [props.sidebarItems.length]);
+
+	useEffect(() => {
+		if (selectedSidebarRowIndex < 0) {
+			return;
+		}
+
+		const scroll = sidebarScrollRef.current;
+		if (!scroll) {
+			return;
+		}
+
+		const nextScrollTop = getScrollTopForVisibleRow(
+			selectedSidebarRowIndex,
+			scroll.scrollTop,
+			scroll.height,
+		);
+
+		if (nextScrollTop !== Math.floor(scroll.scrollTop)) {
+			scroll.scrollTo({ x: 0, y: nextScrollTop });
+			setScrollMetrics((current) =>
+				current.scrollTop === nextScrollTop &&
+				current.viewportHeight === Math.max(1, Math.floor(scroll.height))
+					? current
+					: {
+							scrollTop: nextScrollTop,
+							viewportHeight: Math.max(1, Math.floor(scroll.height)),
+						},
+			);
+		}
+	}, [selectedSidebarRowIndex]);
+
+	const virtualWindow = useMemo(
+		() =>
+			calculateSidebarVirtualWindow({
+				totalRows: props.sidebarItems.length,
+				scrollTop: scrollMetrics.scrollTop,
+				viewportHeight: scrollMetrics.viewportHeight,
+				overscan: SIDEBAR_OVERSCAN_ROWS,
+			}),
+		[
+			props.sidebarItems.length,
+			scrollMetrics.scrollTop,
+			scrollMetrics.viewportHeight,
+		],
+	);
+
+	const visibleSidebarItems = useMemo(
+		() => props.sidebarItems.slice(virtualWindow.start, virtualWindow.end),
+		[props.sidebarItems, virtualWindow.end, virtualWindow.start],
+	);
 
 	return (
 		<box
@@ -193,8 +293,16 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 				</text>
 			</box>
 
-			<scrollbox ref={sidebarScrollRef} flexGrow={1} focused={props.isFocused}>
-				{props.sidebarItems.map((item) =>
+			<scrollbox
+				ref={sidebarScrollRef}
+				flexGrow={1}
+				focused={props.isFocused}
+				viewportCulling
+			>
+				{virtualWindow.topPadding > 0 ? (
+					<box height={virtualWindow.topPadding} />
+				) : null}
+				{visibleSidebarItems.map((item) =>
 					item.kind === "header" ? (
 						<SidebarHeaderRow
 							key={item.key}
@@ -213,6 +321,9 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 						/>
 					),
 				)}
+				{virtualWindow.bottomPadding > 0 ? (
+					<box height={virtualWindow.bottomPadding} />
+				) : null}
 			</scrollbox>
 		</box>
 	);
