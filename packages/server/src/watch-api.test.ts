@@ -28,6 +28,21 @@ interface RepoChangedEventBody {
 
 type WebHandler = ReturnType<typeof HttpApiBuilder.toWebHandler>["handler"];
 
+function createSseReaderState(response: Response) {
+	const reader = response.body?.getReader();
+	if (!reader) {
+		throw new Error("SSE response does not have a readable body.");
+	}
+
+	return {
+		reader,
+		buffer: "",
+	};
+}
+
+type SseReaderState = ReturnType<typeof createSseReaderState>;
+const sseReaderStates = new WeakMap<Response, SseReaderState>();
+
 async function runCommand(
 	command: ReadonlyArray<string>,
 	options: {
@@ -139,19 +154,20 @@ async function readNextRepoChangedEvent(
 	response: Response,
 	timeoutMs = 6_000,
 ): Promise<RepoChangedEventBody> {
-	const reader = response.body?.getReader();
-	if (!reader) {
-		throw new Error("SSE response does not have a readable body.");
+	let state = sseReaderStates.get(response);
+	if (!state) {
+		state = createSseReaderState(response);
+		sseReaderStates.set(response, state);
 	}
+	const activeState = state;
 
 	const decoder = new TextDecoder();
-	let buffer = "";
 	const deadline = Date.now() + timeoutMs;
 
 	while (Date.now() < deadline) {
 		const remainingMs = Math.max(1, deadline - Date.now());
 		const readResult = await Promise.race([
-			reader.read(),
+			activeState.reader.read(),
 			new Promise<never>((_, reject) =>
 				setTimeout(() => reject(new Error("Timed out waiting for SSE data.")), remainingMs),
 			),
@@ -161,16 +177,16 @@ async function readNextRepoChangedEvent(
 			throw new Error("SSE stream closed before receiving a repo-changed event.");
 		}
 
-		buffer += decoder.decode(readResult.value, { stream: true });
+		activeState.buffer += decoder.decode(readResult.value, { stream: true });
 
 		while (true) {
-			const separatorIndex = buffer.indexOf("\n\n");
+			const separatorIndex = activeState.buffer.indexOf("\n\n");
 			if (separatorIndex === -1) {
 				break;
 			}
 
-			const block = buffer.slice(0, separatorIndex);
-			buffer = buffer.slice(separatorIndex + 2);
+			const block = activeState.buffer.slice(0, separatorIndex);
+			activeState.buffer = activeState.buffer.slice(separatorIndex + 2);
 
 			if (!block.includes("event: repo-changed")) {
 				continue;
@@ -296,6 +312,52 @@ describe("watch api", () => {
 				pathname: "/watch/unsubscribe-all",
 				body: {
 					clientId: "watch-client-b",
+				},
+			});
+			expect(unsubscribeAllResponse.status).toBe(204);
+		} finally {
+			await dispose();
+		}
+	});
+
+	test("events emits again when editing an already-modified file", async () => {
+		const repo = await repoPromise;
+		const { handler, dispose } = makeTestHandler(daemonToken);
+
+		try {
+			const subscription = await subscribeWatch(handler, daemonToken, {
+				clientId: "watch-client-c",
+				repoPath: repo.repoPath,
+			});
+
+			const eventsResponse = await request(handler, {
+				daemonToken,
+				method: "GET",
+				pathname: "/watch/events?clientId=watch-client-c",
+			});
+			expect(eventsResponse.status).toBe(200);
+
+			await Bun.sleep(400);
+
+			const base = await readFile(repo.trackedFilePath, "utf8");
+			const firstContent = `${base}content-change-a-${Date.now()}\n`;
+			await writeFile(repo.trackedFilePath, firstContent, "utf8");
+			const firstEvent = await readNextRepoChangedEvent(eventsResponse);
+			expect(firstEvent.subscriptionId).toBe(subscription.subscriptionId);
+			expect(firstEvent.version).toBeGreaterThan(subscription.version);
+
+			const secondContent = `${firstContent}content-change-b-${Date.now()}\n`;
+			await writeFile(repo.trackedFilePath, secondContent, "utf8");
+			const secondEvent = await readNextRepoChangedEvent(eventsResponse);
+			expect(secondEvent.subscriptionId).toBe(subscription.subscriptionId);
+			expect(secondEvent.version).toBeGreaterThan(firstEvent.version);
+
+			const unsubscribeAllResponse = await request(handler, {
+				daemonToken,
+				method: "POST",
+				pathname: "/watch/unsubscribe-all",
+				body: {
+					clientId: "watch-client-c",
 				},
 			});
 			expect(unsubscribeAllResponse.status).toBe(204);

@@ -49,7 +49,9 @@ export class RepoWatcherResolveError extends Data.TaggedError(
 	readonly cause?: unknown;
 }> {}
 
-export class RepoWatcherGitError extends Data.TaggedError("RepoWatcherGitError")<{
+export class RepoWatcherGitError extends Data.TaggedError(
+	"RepoWatcherGitError",
+)<{
 	readonly repoRoot: string;
 	readonly args: ReadonlyArray<string>;
 	readonly message: string;
@@ -148,16 +150,33 @@ const runGitInRepo = Effect.fn("RepoWatcher.runGitInRepo")(function* (
 	};
 });
 
-const computeRepoSnapshot = Effect.fn("RepoWatcher.computeRepoSnapshot")(function* (
-	repoRoot: string,
-) {
-	const result = yield* runGitInRepo(
-		repoRoot,
-		["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-		`Unable to compute repository snapshot for ${repoRoot}.`,
-	);
-	return result.stdout;
-});
+const computeRepoSnapshot = Effect.fn("RepoWatcher.computeRepoSnapshot")(
+	function* (repoRoot: string) {
+		const statusResult = yield* runGitInRepo(
+			repoRoot,
+			["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+			`Unable to compute repository snapshot for ${repoRoot}.`,
+		);
+		const workingTreeDiff = yield* runGitInRepo(
+			repoRoot,
+			["diff", "--no-color", "--no-ext-diff", "--binary"],
+			`Unable to compute working tree diff snapshot for ${repoRoot}.`,
+		);
+		const stagedDiff = yield* runGitInRepo(
+			repoRoot,
+			["diff", "--no-color", "--no-ext-diff", "--binary", "--cached"],
+			`Unable to compute staged diff snapshot for ${repoRoot}.`,
+		);
+
+		return [
+			statusResult.stdout,
+			"\n--working-tree-diff--\n",
+			workingTreeDiff.stdout,
+			"\n--staged-diff--\n",
+			stagedDiff.stdout,
+		].join("");
+	},
+);
 
 const resolveRepoRoot = Effect.fn("RepoWatcher.resolveRepoRoot")(function* (
 	fs: FileSystem.FileSystem,
@@ -219,7 +238,9 @@ function makeRepoWatcherLoop(options: {
 }): Effect.Effect<void, never> {
 	return Effect.gen(function* () {
 		const triggerQueue = yield* Queue.sliding<void>(1);
-		const triggerRefresh = Queue.offer(triggerQueue, undefined).pipe(Effect.asVoid);
+		const triggerRefresh = Queue.offer(triggerQueue, undefined).pipe(
+			Effect.asVoid,
+		);
 		yield* Effect.logInfo(`[repo-watcher] watching ${options.repoRoot}`);
 
 		const maybeFsWatcher = yield* Effect.try({
@@ -339,7 +360,9 @@ function makeRepoWatcherLoop(options: {
 					{ discard: true },
 				).pipe(
 					Effect.zipRight(
-						Effect.logInfo(`[repo-watcher] stopped watching ${options.repoRoot}`),
+						Effect.logInfo(
+							`[repo-watcher] stopped watching ${options.repoRoot}`,
+						),
 					),
 				),
 			),
@@ -494,7 +517,9 @@ export class RepoWatcher extends Context.Tag("@vigil/server/RepoWatcher")<
 					return;
 				}
 
-				yield* Effect.logInfo(`[repo-watcher] stopping watcher repoRoot=${repoRoot}`);
+				yield* Effect.logInfo(
+					`[repo-watcher] stopping watcher repoRoot=${repoRoot}`,
+				);
 				yield* Fiber.interrupt(releaseResult.fiber);
 			});
 
