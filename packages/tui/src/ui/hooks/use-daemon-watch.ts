@@ -4,13 +4,13 @@ import { Data, Effect, Fiber, Option, Schedule, Stream } from "effect";
 import { useEffect, useMemo } from "react";
 import {
 	buildVigilDaemonBaseUrl,
-	makeVigilDaemonClient,
 	type VigilDaemonClient,
+	VigilDaemonClientContext,
 	type VigilDaemonConnection,
 } from "#daemon/client.ts";
 import {
-	parseRepoChangedSseEvent,
 	type ParseRepoChangedSseEventError,
+	parseRepoChangedSseEvent,
 } from "#daemon/watch-events.ts";
 import { useFrontendRuntime } from "#runtime/frontend-runtime.tsx";
 
@@ -48,26 +48,12 @@ class WatchEventsStreamReadError extends Data.TaggedError(
 	readonly cause: unknown;
 }> {}
 
-class WatchEventsAbortedError extends Data.TaggedError(
-	"WatchEventsAbortedError",
-)<{
-	readonly message: string;
-	readonly cause: unknown;
-}> {}
-
 class WatchUnsubscribeAllError extends Data.TaggedError(
 	"WatchUnsubscribeAllError",
 )<{
 	readonly message: string;
 	readonly cause: unknown;
 }> {}
-
-function isAbortException(cause: unknown): boolean {
-	return (
-		(cause instanceof DOMException || cause instanceof Error) &&
-		cause.name === "AbortError"
-	);
-}
 
 const logParseErrorAndContinue = (error: ParseRepoChangedSseEventError) =>
 	Effect.logWarning(
@@ -92,17 +78,36 @@ const consumeWatchEventStream = Effect.fn(
 			),
 		),
 		Effect.mapError((error) =>
-			error.reason === "Decode" && isAbortException(error.cause)
-				? new WatchEventsAbortedError({
-						message: "Watch events stream read aborted.",
-						cause: error,
-					})
-				: new WatchEventsStreamReadError({
-						message: "Failed while reading watch events stream.",
-						cause: error,
-					}),
+			Effect.fail(
+				new WatchEventsStreamReadError({
+					message: "Failed while reading watch events stream.",
+					cause: error,
+				}),
+			),
 		),
 	);
+});
+
+const openWatchEventsResponse = Effect.fn(
+	"useDaemonWatch.openWatchEventsResponse",
+)(function* (
+	daemonHttpClient: HttpClient.HttpClient,
+	daemonConnection: VigilDaemonConnection,
+	clientId: string,
+) {
+	return yield* daemonHttpClient
+		.get(
+			`${buildVigilDaemonBaseUrl(daemonConnection)}/watch/events?clientId=${encodeURIComponent(clientId)}`,
+		)
+		.pipe(
+			Effect.mapError(
+				(error) =>
+					new WatchEventsRequestError({
+						message: "Failed to open watch events stream.",
+						cause: error,
+					}),
+			),
+		);
 });
 
 const runWatchAttempt = Effect.fn("useDaemonWatch.runWatchAttempt")(function* (
@@ -132,23 +137,11 @@ const runWatchAttempt = Effect.fn("useDaemonWatch.runWatchAttempt")(function* (
 
 	yield* onRefreshInstruction;
 
-	const response = yield* daemonHttpClient
-		.get(
-			`${buildVigilDaemonBaseUrl(daemonConnection)}/watch/events?clientId=${encodeURIComponent(clientId)}`,
-		)
-		.pipe(
-			Effect.mapError((error) =>
-				error.reason === "Transport" && isAbortException(error.cause)
-					? new WatchEventsAbortedError({
-							message: "Watch events stream connection aborted.",
-							cause: error,
-						})
-					: new WatchEventsRequestError({
-							message: "Failed to open watch events stream.",
-							cause: error,
-						}),
-			),
-		);
+	const response = yield* openWatchEventsResponse(
+		daemonHttpClient,
+		daemonConnection,
+		clientId,
+	);
 
 	if (response.status < 200 || response.status >= 300) {
 		return yield* new WatchEventsStreamStatusError({
@@ -167,7 +160,7 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 	onRefreshInstruction: Effect.Effect<void, never, never>,
 	reconnectDelayMs: number,
 ) {
-	const daemonClient = yield* makeVigilDaemonClient(daemonConnection);
+	const daemonClient = yield* VigilDaemonClientContext;
 	const daemonHttpClient = yield* HttpClient.HttpClient;
 
 	const unsubscribeAll = daemonClient.watch
@@ -196,7 +189,6 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 		repoPath,
 		onRefreshInstruction,
 	).pipe(
-		Effect.catchTag("WatchEventsAbortedError", () => Effect.interrupt),
 		Effect.tapError((error) =>
 			Effect.logWarning(`[daemon-watch] ${error.message}`),
 		),
