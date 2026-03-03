@@ -94,6 +94,8 @@ async function createGitRepository(): Promise<TestRepo> {
 }
 
 function makeTestHandler(daemonToken: string) {
+	process.env.XDG_DATA_HOME = tmpdir();
+
 	const layer = Layer.mergeAll(
 		makeVigilApiLayer({
 			host: "127.0.0.1",
