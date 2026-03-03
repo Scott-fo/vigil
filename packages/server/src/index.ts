@@ -19,6 +19,15 @@ export {
 	RepoWatcherGitError,
 	RepoWatcherResolveError,
 } from "./repo-watcher.ts";
+export {
+	RepoSubscription,
+	type RepoSubscriptionEvent,
+	type RepoSubscriptionLease,
+	type RepoSubscriptionSubscribeError,
+	type RepoSubscriptionUnsubscribeError,
+	RepoSubscriptionClientIdError,
+	RepoSubscriptionNotFoundError,
+} from "./repo-subscription.ts";
 
 export {
 	DaemonMetaResponse,
