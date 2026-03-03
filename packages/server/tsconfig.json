@@ -2,7 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "paths": {
-      "@vigil/api": ["../api"]
+      "@vigil/api": ["../api"],
+      "@vigil/config": ["../config"]
     }
   },
   "include": ["src/**/*"]

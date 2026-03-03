@@ -14,6 +14,7 @@ import {
 	WatchSubscriptionNotFoundError,
 } from "@vigil/api";
 import { Cause, Data, Effect, Layer, Redacted, Stream, pipe } from "effect";
+import { migrateReviewDatabase } from "./db/migrate.ts";
 import { RepoSubscription } from "./repo-subscription.ts";
 import { RepoWatcher } from "./repo-watcher.ts";
 export {
@@ -229,6 +230,7 @@ export function startVigilServerProgram(
 		Effect.logInfo(
 			`[vigil-server] starting host=${options.host} port=${options.port}`,
 		),
+		Effect.zipRight(Effect.scoped(migrateReviewDatabase())),
 		Effect.zipRight(Layer.launch(makeServerLive(options))),
 		Effect.catchAllCause((cause) =>
 			Effect.fail(

@@ -17,6 +17,7 @@ const encodeTuiConfigObject = Schema.encode(TuiConfigObjectFromStringSchema);
 
 export const TUI_CONFIG_FILE = "tui.json";
 export const DAEMON_TOKEN_CONFIG_KEY = "daemon_token";
+export const REVIEWS_DB_FILE = "reviews.sqlite";
 
 export class TuiConfigReadError extends Data.TaggedError("TuiConfigReadError")<{
 	readonly filePath: string;
@@ -53,6 +54,10 @@ export function resolveVigilDataDirectory(): string {
 
 export function resolveTuiConfigPath(): string {
 	return path.join(resolveVigilDataDirectory(), TUI_CONFIG_FILE);
+}
+
+export function resolveReviewsDatabasePath(): string {
+	return path.join(resolveVigilDataDirectory(), REVIEWS_DB_FILE);
 }
 
 export function readTuiConfigObject(
