@@ -322,6 +322,8 @@ export function App(props: AppProps) {
 			files,
 			selectedFile,
 			reviewMode,
+			pollMs: 5000,
+			pollingEnabled: remoteSync._tag !== "running",
 		});
 
 	const diffNavigationModel = useMemo(

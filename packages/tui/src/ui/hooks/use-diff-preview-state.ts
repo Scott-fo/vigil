@@ -20,6 +20,8 @@ interface UseDiffPreviewStateOptions {
 	readonly files: ReadonlyArray<FileEntry>;
 	readonly selectedFile: FileEntry | null;
 	readonly reviewMode: ReviewMode;
+	readonly pollMs?: number;
+	readonly pollingEnabled?: boolean;
 }
 
 interface UseDiffPreviewStateResult {
@@ -32,8 +34,11 @@ export function useDiffPreviewState(
 	options: UseDiffPreviewStateOptions,
 ): UseDiffPreviewStateResult {
 	const { files, selectedFile, reviewMode } = options;
+	const pollMs = options.pollMs ?? 2000;
+	const pollingEnabled = options.pollingEnabled ?? true;
 	const [selectedFilePreview, setSelectedFilePreview] =
 		useState<SelectedFilePreview | null>(null);
+	const [refreshTick, setRefreshTick] = useState(0);
 	const filePreviewCacheRef = useRef(
 		new Map<
 			string,
@@ -50,12 +55,25 @@ export function useDiffPreviewState(
 	}, [reviewMode]);
 
 	useEffect(() => {
+		if (!pollingEnabled) {
+			return;
+		}
+
+		const interval = setInterval(() => {
+			setRefreshTick((current) => current + 1);
+		}, pollMs);
+
+		return () => clearInterval(interval);
+	}, [pollMs, pollingEnabled]);
+
+	useEffect(() => {
 		if (!selectedFile) {
 			setSelectedFilePreview(null);
 			return;
 		}
 
 		const cachedPreview = filePreviewCacheRef.current.get(selectedFile.path);
+
 		if (cachedPreview && cachedPreview.status === selectedFile.status) {
 			setSelectedFilePreview({
 				path: selectedFile.path,
@@ -63,15 +81,14 @@ export function useDiffPreviewState(
 				loading: false,
 				preview: cachedPreview.preview,
 			});
-			return;
+		} else {
+			setSelectedFilePreview({
+				path: selectedFile.path,
+				status: selectedFile.status,
+				loading: true,
+				preview: { diff: "", note: Option.none() },
+			});
 		}
-
-		setSelectedFilePreview({
-			path: selectedFile.path,
-			status: selectedFile.status,
-			loading: true,
-			preview: { diff: "", note: Option.none() },
-		});
 
 		let cancelled = false;
 		const previewEffect = isWorkingTreeReviewMode(reviewMode)
@@ -97,7 +114,7 @@ export function useDiffPreviewState(
 		return () => {
 			cancelled = true;
 		};
-	}, [reviewMode, selectedFile]);
+	}, [reviewMode, selectedFile, refreshTick]);
 
 	useEffect(() => {
 		const visiblePaths = new Set(files.map((file) => file.path));
