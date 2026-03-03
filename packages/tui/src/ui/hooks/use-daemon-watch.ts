@@ -77,13 +77,12 @@ const consumeWatchEventStream = Effect.fn(
 				),
 			),
 		),
-		Effect.mapError((error) =>
-			Effect.fail(
+		Effect.mapError(
+			(error) =>
 				new WatchEventsStreamReadError({
 					message: "Failed while reading watch events stream.",
 					cause: error,
 				}),
-			),
 		),
 	);
 });
