@@ -13,6 +13,7 @@
 		"#data/*": "./src/data/*",
 		"#diff/*": "./src/diff/*",
 		"#daemon/*": "./src/daemon/*",
+		"#runtime/*": "./src/runtime/*",
 		"#theme/*": "./src/theme/*",
 		"#syntax/*": "./src/syntax/*",
 		"#config/*": "./src/config/*"

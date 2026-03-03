@@ -269,6 +269,7 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 				showLoading,
 			);
 			requestStateRef.current = request.nextState;
+
 			if (!request.shouldRunNow) {
 				queuedRefreshRef.current = true;
 				queuedShowLoadingRef.current = request.nextState.queuedShowLoading;

@@ -5,6 +5,10 @@ import {
 	makeVigilDaemonApiCall,
 	type VigilDaemonConnection,
 } from "#daemon/client.ts";
+import {
+	FrontendRuntimeProvider,
+	makeFrontendRuntime,
+} from "#runtime/frontend-runtime.tsx";
 import { initializeTreeSitterClient } from "#syntax/tree-sitter.ts";
 import {
 	loadThemeCatalog,
@@ -103,7 +107,11 @@ export function startVigilTuiProgram(
 			themeCatalog,
 			themePreference,
 		);
-		const daemonApiCall = makeVigilDaemonApiCall(options.daemonConnection);
+		const frontendRuntime = makeFrontendRuntime();
+		const daemonApiCall = makeVigilDaemonApiCall(
+			options.daemonConnection,
+			frontendRuntime,
+		);
 
 		const renderer = yield* Effect.tryPromise({
 			try: () => createCliRenderer({ useMouse: true }),
@@ -117,14 +125,16 @@ export function startVigilTuiProgram(
 		yield* Effect.try({
 			try: () =>
 				createRoot(renderer).render(
-					<App
-						themeCatalog={themeCatalog}
-						initialThemeName={initialThemeName}
-						initialThemeMode={themePreference.mode ?? "dark"}
-						chooserFilePath={options.chooserFilePath}
-						daemonApiCall={daemonApiCall}
-						daemonConnection={options.daemonConnection}
-					/>,
+					<FrontendRuntimeProvider runtime={frontendRuntime}>
+						<App
+							themeCatalog={themeCatalog}
+							initialThemeName={initialThemeName}
+							initialThemeMode={themePreference.mode ?? "dark"}
+							chooserFilePath={options.chooserFilePath}
+							daemonApiCall={daemonApiCall}
+							daemonConnection={options.daemonConnection}
+						/>
+					</FrontendRuntimeProvider>,
 				),
 			catch: (cause) =>
 				new AppRenderError({
