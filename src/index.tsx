@@ -13,7 +13,7 @@ import {
 	type VigilServerStartError,
 } from "@vigil/server";
 import { type StartVigilTuiError, startVigilTuiProgram } from "@vigil/tui";
-import { Data, Effect, Either, Option, pipe } from "effect";
+import { Data, Effect, Either, Option, Schedule, pipe } from "effect";
 
 const DAEMON_POLL_INTERVAL_MS = 100;
 const DAEMON_POLL_ATTEMPTS = 50;
@@ -324,32 +324,34 @@ function ensureServer(
 
 		yield* spawnDaemonProcess(connectionOptions);
 
-		let lastProbeDetail = firstProbeDetail.value;
-		for (let attempt = 0; attempt < DAEMON_POLL_ATTEMPTS; attempt += 1) {
-			const probeDetail = yield* probeDaemon(connectionOptions).pipe(
-				Effect.as(Option.none<string>()),
-				Effect.catchTag("DaemonUnauthorizedError", () =>
-					Effect.fail(
-						new VigilDaemonEnsureError({
-							message: `Daemon at ${daemonBaseUrl(connectionOptions)} rejected this daemon token after startup.`,
-						}),
-					),
-				),
-				Effect.catchTag("DaemonProbeUnreachableError", (error) =>
-					Effect.succeed(Option.some(error.message)),
-				),
-			);
-			if (Option.isNone(probeDetail)) {
-				return;
-			}
+		const startupRetrySchedule = Schedule.spaced(
+			`${DAEMON_POLL_INTERVAL_MS} millis`,
+		).pipe(
+			Schedule.compose(Schedule.recurs(DAEMON_POLL_ATTEMPTS - 1)),
+			Schedule.whileInput(
+				(error: DaemonUnauthorizedError | DaemonProbeUnreachableError) =>
+					error._tag === "DaemonProbeUnreachableError",
+			),
+		);
 
-			lastProbeDetail = probeDetail.value;
-			yield* Effect.sleep(DAEMON_POLL_INTERVAL_MS);
-		}
-
-		return yield* new VigilDaemonEnsureError({
-			message: `Unable to connect to daemon at ${daemonBaseUrl(connectionOptions)} after auto-start. Last check: ${lastProbeDetail}`,
-		});
+		yield* probeDaemon(connectionOptions).pipe(
+			Effect.retry(startupRetrySchedule),
+			Effect.catchTag(
+				"DaemonUnauthorizedError",
+				() =>
+					new VigilDaemonEnsureError({
+						message: `Daemon at ${daemonBaseUrl(connectionOptions)} rejected this daemon token after startup.`,
+					}),
+			),
+			Effect.catchTag(
+				"DaemonProbeUnreachableError",
+				(error) =>
+					new VigilDaemonEnsureError({
+						message: `Unable to connect to daemon at ${daemonBaseUrl(connectionOptions)} after auto-start. Last check: ${error.message}`,
+						cause: error,
+					}),
+			),
+		);
 	});
 }
 
