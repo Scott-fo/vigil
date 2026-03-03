@@ -73,6 +73,21 @@ export {
 	type ReviewThreadRepositoryError,
 } from "./repositories/index.ts";
 
+export {
+	buildBranchCompareScopeKey,
+	buildThreadAnchorKey,
+	buildWorkingTreeScopeKey,
+	createBranchCompareScope,
+	createOverallAnchor,
+	createWorkingTreeScope,
+	ReviewScopeValidationError,
+	type LineThreadAnchor,
+	type OverallThreadAnchor,
+	type ReviewScope,
+	type ThreadAnchor,
+	type ThreadWithComments,
+} from "./review/index.ts";
+
 export interface StartVigilServerOptions {
 	readonly host: string;
 	readonly port: number;
