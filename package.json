@@ -22,7 +22,7 @@
 	},
 	"scripts": {
 		"dev": "bun run --watch src/index.tsx",
-		"install:global": "bun link",
+		"install:global": "bun install && bun link",
 		"typecheck": "tsgo --noEmit",
 		"prepare": "effect-language-service patch"
 	},
