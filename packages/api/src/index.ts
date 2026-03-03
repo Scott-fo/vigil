@@ -5,11 +5,11 @@ import {
 	HttpApiEndpoint,
 	HttpApiGroup,
 	HttpApiMiddleware,
-	type HttpClient,
 	HttpApiSchema,
 	HttpApiSecurity,
+	type HttpClient,
 } from "@effect/platform";
-import { Effect, Layer, Schema } from "effect";
+import { type Effect, Layer, Schema } from "effect";
 
 export const VIGIL_DAEMON_PROTOCOL_VERSION = 2 as const;
 export const VIGIL_DAEMON_TOKEN_HEADER = "x-vigil-token" as const;
