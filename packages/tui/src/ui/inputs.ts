@@ -1,7 +1,10 @@
 import type { KeyEvent } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import { Option, pipe } from "effect";
+import { useRef } from "react";
 import type { FileEntry } from "#tui/types";
+
+export type FocusedPane = "sidebar" | "diff";
 
 interface UseAppKeyboardInputOptions {
 	isCommitModalOpen: boolean;
@@ -10,6 +13,7 @@ interface UseAppKeyboardInputOptions {
 	isThemeModalOpen: boolean;
 	isBranchCompareModalOpen: boolean;
 	isBranchCompareMode: boolean;
+	activePane: FocusedPane;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
@@ -25,6 +29,7 @@ export interface KeyboardIntentContext {
 	isThemeModalOpen: boolean;
 	isBranchCompareModalOpen: boolean;
 	isBranchCompareMode: boolean;
+	activePane: FocusedPane;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
 	visibleFilePaths: string[];
@@ -56,6 +61,8 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "SyncRemote"; readonly direction: "pull" | "push" }
 	| { readonly _tag: "ResetReviewMode" }
 	| { readonly _tag: "ScrollDiffHalfPage"; readonly direction: "up" | "down" }
+	| { readonly _tag: "FocusSidebarPane" }
+	| { readonly _tag: "FocusDiffPane" }
 	| { readonly _tag: "OpenSelectedFile"; readonly filePath: string }
 	| { readonly _tag: "ToggleSelectedFileStage"; readonly file: FileEntry }
 	| { readonly _tag: "SelectVisiblePath"; readonly path: string };
@@ -69,6 +76,28 @@ function isQuestionMarkKey(key: KeyEvent): boolean {
 		return false;
 	}
 	return key.name === "?" || (key.name === "/" && key.shift);
+}
+
+function isPaneFocusChordStart(key: KeyEvent): boolean {
+	return key.ctrl && !key.meta && key.name === "w";
+}
+
+export function decodePaneFocusIntent(
+	key: KeyEvent,
+): Option.Option<AppKeyboardIntent> {
+	if (key.ctrl || key.meta) {
+		return Option.none();
+	}
+
+	if (key.name === "h" || key.name === "left") {
+		return Option.some({ _tag: "FocusSidebarPane" });
+	}
+
+	if (key.name === "l" || key.name === "right") {
+		return Option.some({ _tag: "FocusDiffPane" });
+	}
+
+	return Option.none();
 }
 
 type DecoderLayerResult =
@@ -250,6 +279,10 @@ function decodeSelectionIntentLayer(
 	key: KeyEvent,
 	options: KeyboardIntentContext,
 ): Option.Option<AppKeyboardIntent> {
+	if (options.activePane !== "sidebar") {
+		return Option.none();
+	}
+
 	const hasVisibleSelection =
 		options.visibleFilePaths.length > 0 && options.selectedVisibleIndex !== -1;
 	if (!hasVisibleSelection) {
@@ -329,7 +362,46 @@ export function decodeKeyboardIntent(
 }
 
 export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
+	const pendingPaneFocusRef = useRef(false);
+
 	useKeyboard((key) => {
+		const hasOpenModal =
+			options.isCommitModalOpen ||
+			options.isDiscardModalOpen ||
+			options.isHelpModalOpen ||
+			options.isThemeModalOpen ||
+			options.isBranchCompareModalOpen;
+
+		if (pendingPaneFocusRef.current) {
+			pendingPaneFocusRef.current = false;
+
+			const priorityGlobalIntent = decodePriorityGlobalIntent(key);
+			if (Option.isSome(priorityGlobalIntent)) {
+				options.onIntent(priorityGlobalIntent.value);
+				return;
+			}
+
+			if (hasOpenModal) {
+				return;
+			}
+
+			pipe(
+				decodePaneFocusIntent(key),
+				Option.match({
+					onNone: () => {},
+					onSome: (intent) => {
+						options.onIntent(intent);
+					},
+				}),
+			);
+			return;
+		}
+
+		if (!hasOpenModal && isPaneFocusChordStart(key)) {
+			pendingPaneFocusRef.current = true;
+			return;
+		}
+
 		pipe(
 			decodeKeyboardIntent(key, options),
 			Option.match({

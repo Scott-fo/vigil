@@ -20,6 +20,7 @@ import { useAppSelectors } from "#ui/hooks/use-app-selectors";
 import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh";
 import { useRepoActions } from "#ui/hooks/use-repo-actions";
+import type { FocusedPane } from "#ui/inputs";
 import { useAppKeyboardInput } from "#ui/inputs";
 import {
 	branchCompareModalAtom,
@@ -27,10 +28,10 @@ import {
 	discardModalAtom,
 	fileViewStateAtom,
 	helpModalAtom,
+	isBranchCompareReviewMode,
 	remoteSyncAtom,
 	reviewModeAtom,
 	themeModalAtom,
-	isBranchCompareReviewMode,
 	type UpdateBranchCompareModal,
 	type UpdateCommitModal,
 	type UpdateDiscardModal,
@@ -64,6 +65,7 @@ export function App(props: AppProps) {
 	const renderer = useRenderer();
 	const [themeName, setThemeName] = useState(props.initialThemeName);
 	const [themeSearchQuery, setThemeSearchQuery] = useState("");
+	const [activePane, setActivePane] = useState<FocusedPane>("sidebar");
 	const [themeMode] = useState<ThemeMode>(props.initialThemeMode);
 	const [fileView, setFileView] = useAtom(fileViewStateAtom);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
@@ -337,6 +339,9 @@ export function App(props: AppProps) {
 		themeModalThemeNames: filteredThemeNames,
 		setThemeName,
 		stagedFileCount,
+		sidebarOpen,
+		activePane,
+		setActivePane,
 		commitModal,
 		discardModal,
 		themeModal,
@@ -382,6 +387,7 @@ export function App(props: AppProps) {
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
 		isBranchCompareMode: isBranchCompareReviewMode(reviewMode),
+		activePane,
 		canInitializeGitRepo,
 		stagedFileCount,
 		visibleFilePaths,
@@ -426,6 +432,9 @@ export function App(props: AppProps) {
 					onSelectFilePath={onSelectFilePath}
 					sidebarOpen={sidebarOpen}
 					onToggleSidebar={onToggleSidebar}
+					activePane={activePane}
+					onFocusSidebar={() => setActivePane("sidebar")}
+					onFocusDiff={() => setActivePane("diff")}
 					onCopySelection={onCopySelection}
 				/>
 			)}

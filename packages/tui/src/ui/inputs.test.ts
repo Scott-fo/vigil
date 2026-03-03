@@ -4,6 +4,7 @@ import { Option } from "effect";
 import { FileEntry } from "#tui/types";
 import {
 	decodeKeyboardIntent,
+	decodePaneFocusIntent,
 	type KeyboardIntentContext,
 } from "#ui/inputs";
 
@@ -34,6 +35,7 @@ function context(
 		isThemeModalOpen: false,
 		isBranchCompareModalOpen: false,
 		isBranchCompareMode: false,
+		activePane: "sidebar",
 		canInitializeGitRepo: false,
 		stagedFileCount: 1,
 		visibleFilePaths: ["src/app.tsx", "src/other.ts"],
@@ -379,6 +381,55 @@ describe("decodeKeyboardIntent", () => {
 				filePath: "src/app.tsx",
 			});
 		}
+	});
+
+	test("blocks sidebar selection keys when diff pane is focused", () => {
+		const openIntent = decodeKeyboardIntent(
+			keyEvent({ name: "return" }),
+			context({ activePane: "diff" }),
+		);
+		const stageIntent = decodeKeyboardIntent(
+			keyEvent({ name: "space" }),
+			context({ activePane: "diff" }),
+		);
+		const moveIntent = decodeKeyboardIntent(
+			keyEvent({ name: "j" }),
+			context({ activePane: "diff" }),
+		);
+
+		expect(Option.isNone(openIntent)).toBe(true);
+		expect(Option.isNone(stageIntent)).toBe(true);
+		expect(Option.isNone(moveIntent)).toBe(true);
+	});
+
+	test("maps pane focus keys for ctrl+w chord follow-up", () => {
+		const sidebarByLetter = decodePaneFocusIntent(keyEvent({ name: "h" }));
+		const sidebarByArrow = decodePaneFocusIntent(keyEvent({ name: "left" }));
+		const diffByLetter = decodePaneFocusIntent(keyEvent({ name: "l" }));
+		const diffByArrow = decodePaneFocusIntent(keyEvent({ name: "right" }));
+
+		expect(Option.isSome(sidebarByLetter)).toBe(true);
+		expect(Option.isSome(sidebarByArrow)).toBe(true);
+		expect(Option.isSome(diffByLetter)).toBe(true);
+		expect(Option.isSome(diffByArrow)).toBe(true);
+
+		if (Option.isSome(sidebarByLetter)) {
+			expect(sidebarByLetter.value._tag).toBe("FocusSidebarPane");
+		}
+		if (Option.isSome(sidebarByArrow)) {
+			expect(sidebarByArrow.value._tag).toBe("FocusSidebarPane");
+		}
+		if (Option.isSome(diffByLetter)) {
+			expect(diffByLetter.value._tag).toBe("FocusDiffPane");
+		}
+		if (Option.isSome(diffByArrow)) {
+			expect(diffByArrow.value._tag).toBe("FocusDiffPane");
+		}
+	});
+
+	test("does not map pane focus keys with modifiers", () => {
+		const intent = decodePaneFocusIntent(keyEvent({ name: "h", ctrl: true }));
+		expect(Option.isNone(intent)).toBe(true);
 	});
 
 	test("returns none when no visible selection exists", () => {

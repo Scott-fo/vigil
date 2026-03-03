@@ -7,12 +7,12 @@ import {
 	useCallback,
 } from "react";
 import type { RepoActionError } from "#data/git";
-import { type ThemeCatalog, type ThemeMode } from "#theme/theme";
+import type { ThemeCatalog, ThemeMode } from "#theme/theme";
+import { routeKeyboardIntent } from "#ui/hooks/keyboard-intent-router";
 import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions";
 import { useGitActions } from "#ui/hooks/use-git-actions";
-import { routeKeyboardIntent } from "#ui/hooks/keyboard-intent-router";
 import { useThemeActions } from "#ui/hooks/use-theme-actions";
-import type { AppKeyboardIntent } from "#ui/inputs";
+import type { AppKeyboardIntent, FocusedPane } from "#ui/inputs";
 import type {
 	BranchCompareModalState,
 	CommitModalState,
@@ -25,8 +25,8 @@ import type {
 	UpdateDiscardModal,
 	UpdateFileViewState,
 	UpdateHelpModal,
-	UpdateReviewMode,
 	UpdateRemoteSyncState,
+	UpdateReviewMode,
 	UpdateThemeModal,
 	UpdateUiStatus,
 } from "#ui/state";
@@ -49,6 +49,9 @@ interface UseRepoActionsOptions {
 	readonly themeModalThemeNames: ReadonlyArray<string>;
 	readonly setThemeName: Dispatch<SetStateAction<string>>;
 	readonly stagedFileCount: number;
+	readonly sidebarOpen: boolean;
+	readonly activePane: FocusedPane;
+	readonly setActivePane: Dispatch<SetStateAction<FocusedPane>>;
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
 	readonly themeModal: ThemeModalState;
@@ -90,6 +93,9 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		themeModalThemeNames,
 		setThemeName,
 		stagedFileCount,
+		sidebarOpen,
+		activePane,
+		setActivePane,
 		commitModal,
 		discardModal,
 		themeModal,
@@ -130,7 +136,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	);
 
 	const runAction = useCallback(
-		<E,>(
+		<E>(
 			effect: Effect.Effect<void, E>,
 			renderError: (error: E) => string,
 			actionOptions: RunActionOptions = {},
@@ -184,17 +190,31 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	);
 
 	const toggleSidebar = useCallback(() => {
+		if (sidebarOpen && activePane === "sidebar") {
+			setActivePane("diff");
+		}
+
 		updateFileView((current) => ({
 			...current,
 			sidebarOpen: !current.sidebarOpen,
 		}));
-	}, [updateFileView]);
+	}, [activePane, setActivePane, sidebarOpen, updateFileView]);
+
+	const focusSidebarPane = useCallback(() => {
+		setActivePane("sidebar");
+		updateFileView((current) =>
+			current.sidebarOpen ? current : { ...current, sidebarOpen: true },
+		);
+	}, [setActivePane, updateFileView]);
+
+	const focusDiffPane = useCallback(() => {
+		setActivePane("diff");
+	}, [setActivePane]);
 
 	const toggleDiffViewMode = useCallback(() => {
 		updateFileView((current) => ({
 			...current,
-			diffViewMode:
-				current.diffViewMode === "split" ? "unified" : "split",
+			diffViewMode: current.diffViewMode === "split" ? "unified" : "split",
 		}));
 	}, [updateFileView]);
 
@@ -326,6 +346,8 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				syncRemote,
 				resetReviewMode,
 				scrollDiffHalfPage,
+				focusSidebarPane,
+				focusDiffPane,
 				openSelectedFile,
 				toggleSelectedFileStage,
 				selectFilePath,
@@ -351,6 +373,8 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			renderer.destroy,
 			resetReviewMode,
 			scrollDiffHalfPage,
+			focusSidebarPane,
+			focusDiffPane,
 			selectFilePath,
 			switchBranchField,
 			syncRemote,

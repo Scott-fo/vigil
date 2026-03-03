@@ -8,9 +8,22 @@ interface KeybindRow {
 }
 
 const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
-	{ keys: "j / k, ↑ / ↓", description: "Navigate changed files" },
-	{ keys: "space", description: "Stage / unstage selected file" },
-	{ keys: "enter / e / o", description: "Open selected file in editor" },
+	{
+		keys: "Ctrl+w h/l/←/→",
+		description: "Focus sidebar / diff panel",
+	},
+	{
+		keys: "j / k, ↑ / ↓",
+		description: "Navigate changed files (sidebar focus)",
+	},
+	{
+		keys: "space",
+		description: "Stage / unstage selected file (sidebar focus)",
+	},
+	{
+		keys: "enter / e / o",
+		description: "Open selected file in editor (sidebar focus)",
+	},
 	{ keys: "d", description: "Open discard confirmation for selected file" },
 	{ keys: "tab", description: "Toggle split / unified diff" },
 	{ keys: "Ctrl+u / Ctrl+d", description: "Scroll diff up / down" },
@@ -62,7 +75,7 @@ export const HelpModal = memo(function HelpModal(props: HelpModalProps) {
 					{KEYBIND_ROWS.map((row) => (
 						<box key={row.keys}>
 							<text fg={props.theme.text}>
-								<span fg={props.theme.info}>{row.keys.padEnd(17, " ")}</span>
+								<span fg={props.theme.info}>{row.keys.padEnd(21, " ")}</span>
 								{row.description}
 							</text>
 						</box>

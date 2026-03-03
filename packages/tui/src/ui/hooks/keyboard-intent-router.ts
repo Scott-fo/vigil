@@ -26,6 +26,8 @@ interface KeyboardIntentRouterActions {
 	readonly syncRemote: (direction: "pull" | "push") => void;
 	readonly resetReviewMode: () => void;
 	readonly scrollDiffHalfPage: (direction: "up" | "down") => void;
+	readonly focusSidebarPane: () => void;
+	readonly focusDiffPane: () => void;
 	readonly openSelectedFile: (filePath: string) => void;
 	readonly toggleSelectedFileStage: (file: FileEntry) => void;
 	readonly selectFilePath: (path: string) => void;
@@ -70,6 +72,8 @@ export function routeKeyboardIntent(
 			ScrollDiffHalfPage: (typedIntent) => {
 				actions.scrollDiffHalfPage(typedIntent.direction);
 			},
+			FocusSidebarPane: actions.focusSidebarPane,
+			FocusDiffPane: actions.focusDiffPane,
 			OpenSelectedFile: (typedIntent) => {
 				actions.openSelectedFile(typedIntent.filePath);
 			},

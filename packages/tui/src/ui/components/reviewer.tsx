@@ -6,6 +6,7 @@ import { splitDiffIntoHunkBlocks } from "#diff/hunks";
 import type { ResolvedTheme } from "#theme/theme";
 import type { FileEntry } from "#tui/types";
 import { useScrollFollowSelection } from "#ui/hooks/use-scroll-follow-selection";
+import type { FocusedPane } from "#ui/inputs";
 import { getStatusColor, type SidebarItem } from "#ui/sidebar";
 
 type SidebarHeaderItem = Extract<SidebarItem, { kind: "header" }>;
@@ -96,7 +97,9 @@ interface SidebarPanelProps {
 	readonly theme: ResolvedTheme;
 	readonly files: FileEntry[];
 	readonly sidebarItems: SidebarItem[];
+	readonly isFocused: boolean;
 	readonly selectedFilePath: Option.Option<string>;
+	readonly onFocus: () => void;
 	readonly onToggleDirectory: (path: string) => void;
 	readonly onSelectFilePath: (path: string) => void;
 }
@@ -119,10 +122,15 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 			width={38}
 			border
 			borderStyle="rounded"
-			borderColor={props.theme.border}
+			borderColor={
+				props.isFocused ? props.theme.borderActive : props.theme.border
+			}
 			marginRight={1}
 			flexDirection="column"
 			backgroundColor={props.theme.backgroundPanel}
+			onMouseDown={() => {
+				props.onFocus();
+			}}
 		>
 			<box paddingX={1} marginBottom={1}>
 				<text fg={props.theme.text}>
@@ -130,7 +138,7 @@ const SidebarPanel = memo(function SidebarPanel(props: SidebarPanelProps) {
 				</text>
 			</box>
 
-			<scrollbox ref={sidebarScrollRef} flexGrow={1}>
+			<scrollbox ref={sidebarScrollRef} flexGrow={1} focused={props.isFocused}>
 				{props.sidebarItems.map((item) =>
 					item.kind === "header" ? (
 						<SidebarHeaderRow
@@ -186,6 +194,7 @@ interface DiffPanelProps {
 	readonly syntaxStyle: SyntaxStyle;
 	readonly reviewModeLabel: string;
 	readonly diffViewMode: "split" | "unified";
+	readonly isFocused: boolean;
 	readonly selectedFile: FileEntry | null;
 	readonly selectedFileDiff: string;
 	readonly selectedFileDiffNote: Option.Option<string>;
@@ -194,6 +203,7 @@ interface DiffPanelProps {
 	readonly error: Option.Option<string>;
 	readonly isCommitModalOpen: boolean;
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
+	readonly onFocus: () => void;
 }
 
 const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
@@ -209,9 +219,14 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 			flexGrow={1}
 			border
 			borderStyle="rounded"
-			borderColor={props.theme.border}
+			borderColor={
+				props.isFocused ? props.theme.borderActive : props.theme.border
+			}
 			flexDirection="column"
 			backgroundColor={props.theme.backgroundPanel}
+			onMouseDown={() => {
+				props.onFocus();
+			}}
 		>
 			<box paddingX={1} marginBottom={1} flexDirection="column" width="100%">
 				{props.reviewModeLabel.length > 0 ? (
@@ -252,7 +267,7 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 					<scrollbox
 						ref={props.diffScrollRef}
 						flexGrow={1}
-						focused={!props.isCommitModalOpen}
+						focused={!props.isCommitModalOpen && props.isFocused}
 						verticalScrollbarOptions={{
 							trackOptions: {
 								backgroundColor: props.theme.backgroundElement,
@@ -325,7 +340,10 @@ export interface ReviewerProps {
 	readonly onToggleDirectory: (path: string) => void;
 	readonly onSelectFilePath: (path: string) => void;
 	readonly sidebarOpen: boolean;
+	readonly activePane: FocusedPane;
 	readonly onToggleSidebar: () => void;
+	readonly onFocusSidebar: () => void;
+	readonly onFocusDiff: () => void;
 	readonly onCopySelection: () => void;
 }
 
@@ -334,6 +352,8 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 		Option.fromNullable(props.selectedFile),
 		Option.map((file) => file.path),
 	);
+	const isSidebarFocused = props.sidebarOpen && props.activePane === "sidebar";
+	const isDiffFocused = !props.sidebarOpen || props.activePane === "diff";
 
 	return (
 		<box
@@ -348,14 +368,19 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 					theme={props.theme}
 					files={props.files}
 					sidebarItems={props.sidebarItems}
+					isFocused={isSidebarFocused}
 					selectedFilePath={selectedFilePath}
+					onFocus={props.onFocusSidebar}
 					onToggleDirectory={props.onToggleDirectory}
 					onSelectFilePath={props.onSelectFilePath}
 				/>
 			) : (
 				<SidebarRail
 					theme={props.theme}
-					onToggleSidebar={props.onToggleSidebar}
+					onToggleSidebar={() => {
+						props.onToggleSidebar();
+						props.onFocusSidebar();
+					}}
 				/>
 			)}
 			<DiffPanel
@@ -363,6 +388,7 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 				syntaxStyle={props.syntaxStyle}
 				reviewModeLabel={props.reviewModeLabel}
 				diffViewMode={props.diffViewMode}
+				isFocused={isDiffFocused}
 				selectedFile={props.selectedFile}
 				selectedFileDiff={props.selectedFileDiff}
 				selectedFileDiffNote={props.selectedFileDiffNote}
@@ -371,6 +397,7 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 				error={props.error}
 				isCommitModalOpen={props.isCommitModalOpen}
 				diffScrollRef={props.diffScrollRef}
+				onFocus={props.onFocusDiff}
 			/>
 		</box>
 	);
