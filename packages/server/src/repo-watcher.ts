@@ -1,5 +1,4 @@
 import * as FileSystem from "@effect/platform/FileSystem";
-import { watch as watchFileSystem, type FSWatcher } from "node:fs";
 import path from "node:path";
 import {
 	Context,
@@ -91,11 +90,14 @@ function formatFsWatchEvent(event: unknown): string {
 	return String(event);
 }
 
-function shouldIgnoreFsEventPath(relativePath: string): boolean {
+function shouldIgnoreFsEventPath(watchPath: string): boolean {
+	const normalizedPath = watchPath.replaceAll("\\", "/").replace(/^\.\//, "");
+
 	return (
-		relativePath === ".git" ||
-		relativePath.startsWith(".git/") ||
-		relativePath.startsWith(".git\\")
+		normalizedPath === ".git" ||
+		normalizedPath.startsWith(".git/") ||
+		normalizedPath.endsWith("/.git") ||
+		normalizedPath.includes("/.git/")
 	);
 }
 
@@ -243,53 +245,26 @@ function makeRepoWatcherLoop(options: {
 		);
 		yield* Effect.logInfo(`[repo-watcher] watching ${options.repoRoot}`);
 
-		const maybeFsWatcher = yield* Effect.try({
-			try: () => {
-				const watcher = watchFileSystem(
-					options.repoRoot,
-					{ recursive: true },
-					(eventType, filename) => {
-						const relativePath =
-							typeof filename === "string" ? filename : "(unknown)";
-						if (shouldIgnoreFsEventPath(relativePath)) {
-							return;
-						}
-						const eventDescription = formatFsWatchEvent({
-							eventType,
-							path: relativePath,
-						});
-						triggerQueue.unsafeOffer(undefined);
-						void Effect.runFork(
+		const fsWatchFiber = yield* options.fs
+			.watch(options.repoRoot, { recursive: true })
+			.pipe(
+				Stream.filter((event) => !shouldIgnoreFsEventPath(event.path)),
+				Stream.runForEach((event) =>
+					triggerRefresh.pipe(
+						Effect.zipRight(
 							Effect.logInfo(
-								`[repo-watcher] fs event for ${options.repoRoot}: ${eventDescription}`,
+								`[repo-watcher] fs event for ${options.repoRoot}: ${formatFsWatchEvent(event)}`,
 							),
-						);
-					},
-				);
-
-				watcher.on("error", (cause) => {
-					void Effect.runFork(
-						Effect.logWarning(
-							`[repo-watcher] fs watcher error for ${options.repoRoot}: ${
-								cause instanceof Error ? cause.message : String(cause)
-							}`,
 						),
-					);
-				});
-
-				return watcher;
-			},
-			catch: (cause) => cause,
-		}).pipe(
-			Effect.map(Option.some),
-			Effect.catchAll((cause) =>
-				Effect.logWarning(
-					`[repo-watcher] filesystem watch failed for ${options.repoRoot}: ${
-						cause instanceof Error ? cause.message : String(cause)
-					}`,
-				).pipe(Effect.as(Option.none<FSWatcher>())),
-			),
-		);
+					),
+				),
+				Effect.catchAll((error) =>
+					Effect.logWarning(
+						`[repo-watcher] filesystem watch stream failed for ${options.repoRoot}: ${error.message}`,
+					),
+				),
+				Effect.forkDaemon,
+			);
 
 		const safetyPollFiber = yield* pipe(
 			Effect.forever(
@@ -347,13 +322,7 @@ function makeRepoWatcherLoop(options: {
 			Effect.ensuring(
 				Effect.all(
 					[
-						Effect.sync(() => {
-							if (Option.isSome(maybeFsWatcher)) {
-								try {
-									maybeFsWatcher.value.close();
-								} catch {}
-							}
-						}),
+						Fiber.interrupt(fsWatchFiber),
 						Fiber.interrupt(safetyPollFiber),
 						Queue.shutdown(triggerQueue),
 					],
