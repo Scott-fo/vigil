@@ -1,31 +1,37 @@
 import { spawn } from "node:child_process";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import { loadOrCreateDaemonTokenFromTuiConfig } from "@vigil/config";
 import { parseArgs } from "node:util";
 import {
-	loadOrCreateDaemonTokenFromTuiConfig,
-} from "@vigil/config";
-import {
-	DaemonMetaResponse,
-	HealthResponse,
+	buildVigilDaemonBaseUrl,
+	DaemonUnauthorizedError,
+	makeVigilDaemonClient,
+	makeVigilDaemonHttpClientLayer,
 	type VigilServerStartError,
-	VIGIL_DAEMON_TOKEN_ENV_VAR,
-	VIGIL_DAEMON_TOKEN_HEADER,
 	startVigilServerProgram,
+	VIGIL_DAEMON_TOKEN_ENV_VAR,
+	type VigilDaemonConnection,
 } from "@vigil/server";
 import { type StartVigilTuiError, startVigilTuiProgram } from "@vigil/tui";
-import { Data, Effect, Option, Schema, pipe } from "effect";
+import { Data, Effect, Either, Option, pipe } from "effect";
 
 const DAEMON_POLL_INTERVAL_MS = 100;
 const DAEMON_POLL_ATTEMPTS = 50;
-
-const decodeDaemonMetaResponse = Schema.decodeUnknownSync(DaemonMetaResponse);
-const decodeHealthResponse = Schema.decodeUnknownSync(HealthResponse);
+const VIGIL_DAEMON_MANAGED_ENV_VAR = "VIGIL_DAEMON_MANAGED";
+const MIN_DAEMON_HEARTBEAT_MS = 500;
 
 class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;
 }> {}
 
 class VigilDaemonEnsureError extends Data.TaggedError("VigilDaemonEnsureError")<{
+	readonly message: string;
+	readonly cause?: unknown;
+}> {}
+
+class DaemonProbeUnreachableError extends Data.TaggedError(
+	"DaemonProbeUnreachableError",
+)<{
 	readonly message: string;
 	readonly cause?: unknown;
 }> {}
@@ -46,17 +52,11 @@ interface DaemonConnectionOptions {
 	readonly daemonToken: string;
 }
 
-type DaemonProbeResult =
-	| {
-			readonly _tag: "ready";
-	  }
-	| {
-			readonly _tag: "unauthorized";
-	  }
-	| {
-			readonly _tag: "unreachable";
-			readonly detail: string;
-	  };
+interface DaemonSessionLease {
+	readonly sessionId: string;
+	readonly ttlMs: number;
+	readonly heartbeatIntervalMs: number;
+}
 
 function vigilUsage(): string {
 	return [
@@ -202,59 +202,56 @@ function resolveDaemonToken(): Effect.Effect<string, VigilDaemonEnsureError> {
 }
 
 function daemonBaseUrl(options: Pick<DaemonConnectionOptions, "host" | "port">) {
-	const host = options.host.includes(":")
-		? `[${options.host.replace(/^\[(.*)\]$/, "$1")}]`
-		: options.host;
-	return `http://${host}:${options.port}`;
+	return buildVigilDaemonBaseUrl(options);
+}
+
+function toVigilDaemonConnection(
+	options: DaemonConnectionOptions,
+): VigilDaemonConnection {
+	return {
+		host: options.host,
+		port: options.port,
+		token: options.daemonToken,
+	};
+}
+
+function makeDaemonProbeClient(options: DaemonConnectionOptions) {
+	const daemonConnection = toVigilDaemonConnection(options);
+
+	return makeVigilDaemonClient(daemonConnection).pipe(
+		Effect.provide(makeVigilDaemonHttpClientLayer(daemonConnection)),
+	);
 }
 
 function probeDaemon(
 	options: DaemonConnectionOptions,
-): Effect.Effect<DaemonProbeResult, never> {
-	return pipe(
-		Effect.tryPromise({
-			try: async () => {
-				const baseUrl = daemonBaseUrl(options);
-				const headers = {
-					[VIGIL_DAEMON_TOKEN_HEADER]: options.daemonToken,
-				} satisfies Record<string, string>;
+): Effect.Effect<void, DaemonUnauthorizedError | DaemonProbeUnreachableError> {
+	return Effect.gen(function* () {
+		const daemonClient = yield* makeDaemonProbeClient(options);
+		const metaResult = yield* daemonClient.system.meta().pipe(Effect.either);
+		if (Either.isLeft(metaResult)) {
+			const error = metaResult.left;
+			if (error._tag === "DaemonUnauthorizedError") {
+				return yield* Effect.fail(error);
+			}
+			return yield* new DaemonProbeUnreachableError({
+				message: error.message,
+				cause: error,
+			});
+		}
 
-				const metaResponse = await fetch(`${baseUrl}/meta`, { headers });
-				if (metaResponse.status === 401) {
-					return { _tag: "unauthorized" } as const;
-				}
-				if (!metaResponse.ok) {
-					return {
-						_tag: "unreachable",
-						detail: `GET /meta returned status ${metaResponse.status}.`,
-					} as const;
-				}
-
-				decodeDaemonMetaResponse(await metaResponse.json());
-
-				const healthResponse = await fetch(`${baseUrl}/health`, { headers });
-				if (healthResponse.status === 401) {
-					return { _tag: "unauthorized" } as const;
-				}
-				if (!healthResponse.ok) {
-					return {
-						_tag: "unreachable",
-						detail: `GET /health returned status ${healthResponse.status}.`,
-					} as const;
-				}
-
-				decodeHealthResponse(await healthResponse.json());
-				return { _tag: "ready" } as const;
-			},
-			catch: (cause) => cause,
-		}),
-		Effect.catchAll((cause) =>
-			Effect.succeed({
-				_tag: "unreachable" as const,
-				detail: cause instanceof Error ? cause.message : String(cause),
-			}),
-		),
-	);
+		const healthResult = yield* daemonClient.system.health().pipe(Effect.either);
+		if (Either.isLeft(healthResult)) {
+			const error = healthResult.left;
+			if (error._tag === "DaemonUnauthorizedError") {
+				return yield* Effect.fail(error);
+			}
+			return yield* new DaemonProbeUnreachableError({
+				message: error.message,
+				cause: error,
+			});
+		}
+	});
 }
 
 function spawnDaemonProcess(
@@ -284,6 +281,7 @@ function spawnDaemonProcess(
 					env: {
 						...process.env,
 						[VIGIL_DAEMON_TOKEN_ENV_VAR]: options.daemonToken,
+						[VIGIL_DAEMON_MANAGED_ENV_VAR]: "1",
 					},
 				},
 			);
@@ -308,38 +306,188 @@ function ensureServer(
 			daemonToken: options.daemonToken,
 		};
 
-		const firstProbe = yield* probeDaemon(connectionOptions);
-		if (firstProbe._tag === "ready") {
+		const firstProbeDetail = yield* probeDaemon(connectionOptions).pipe(
+			Effect.as(Option.none<string>()),
+			Effect.catchTag("DaemonUnauthorizedError", () =>
+				Effect.fail(
+					new VigilDaemonEnsureError({
+						message: `A server is already listening at ${daemonBaseUrl(connectionOptions)} but rejected this daemon token.`,
+					}),
+				),
+			),
+			Effect.catchTag("DaemonProbeUnreachableError", (error) =>
+				Effect.succeed(Option.some(error.message)),
+			),
+		);
+		if (Option.isNone(firstProbeDetail)) {
 			return;
-		}
-
-		if (firstProbe._tag === "unauthorized") {
-			return yield* new VigilDaemonEnsureError({
-				message: `A server is already listening at ${daemonBaseUrl(connectionOptions)} but rejected this daemon token.`,
-			});
 		}
 
 		yield* spawnDaemonProcess(connectionOptions);
 
-		let lastProbeDetail = firstProbe.detail;
+		let lastProbeDetail = firstProbeDetail.value;
 		for (let attempt = 0; attempt < DAEMON_POLL_ATTEMPTS; attempt += 1) {
-			const probe = yield* probeDaemon(connectionOptions);
-			if (probe._tag === "ready") {
+			const probeDetail = yield* probeDaemon(connectionOptions).pipe(
+				Effect.as(Option.none<string>()),
+				Effect.catchTag("DaemonUnauthorizedError", () =>
+					Effect.fail(
+						new VigilDaemonEnsureError({
+							message: `Daemon at ${daemonBaseUrl(connectionOptions)} rejected this daemon token after startup.`,
+						}),
+					),
+				),
+				Effect.catchTag("DaemonProbeUnreachableError", (error) =>
+					Effect.succeed(Option.some(error.message)),
+				),
+			);
+			if (Option.isNone(probeDetail)) {
 				return;
 			}
-			if (probe._tag === "unauthorized") {
-				return yield* new VigilDaemonEnsureError({
-					message: `Daemon at ${daemonBaseUrl(connectionOptions)} rejected this daemon token after startup.`,
-				});
-			}
 
-			lastProbeDetail = probe.detail;
+			lastProbeDetail = probeDetail.value;
 			yield* Effect.sleep(DAEMON_POLL_INTERVAL_MS);
 		}
 
 		return yield* new VigilDaemonEnsureError({
 			message: `Unable to connect to daemon at ${daemonBaseUrl(connectionOptions)} after auto-start. Last check: ${lastProbeDetail}`,
 		});
+	});
+}
+
+const openDaemonSession = Effect.fn("vigil.openDaemonSession")(function* (
+	options: DaemonConnectionOptions,
+) {
+	const daemonClient = yield* makeDaemonProbeClient(options);
+	const lease = yield* daemonClient.session.open().pipe(
+		Effect.mapError(
+			(cause) =>
+				new VigilDaemonEnsureError({
+					message: `Failed to open daemon session at ${daemonBaseUrl(options)}.`,
+					cause,
+				}),
+		),
+	);
+
+	return {
+		sessionId: lease.sessionId,
+		ttlMs: lease.ttlMs,
+		heartbeatIntervalMs: lease.heartbeatIntervalMs,
+	} satisfies DaemonSessionLease;
+});
+
+const heartbeatDaemonSession = Effect.fn("vigil.heartbeatDaemonSession")(function* (
+	options: DaemonConnectionOptions,
+	sessionId: string,
+) {
+	const daemonClient = yield* makeDaemonProbeClient(options);
+
+	yield* daemonClient.session
+		.heartbeat({
+			payload: {
+				sessionId,
+			},
+		})
+		.pipe(
+			Effect.mapError(
+				(cause) =>
+					new VigilDaemonEnsureError({
+						message: `Failed to heartbeat daemon session ${sessionId}.`,
+						cause,
+					}),
+			),
+		);
+});
+
+const closeDaemonSession = Effect.fn("vigil.closeDaemonSession")(function* (
+	options: DaemonConnectionOptions,
+	sessionId: string,
+) {
+	const daemonClient = yield* makeDaemonProbeClient(options);
+
+	yield* daemonClient.session
+		.close({
+			payload: {
+				sessionId,
+			},
+		})
+		.pipe(
+			Effect.mapError(
+				(cause) =>
+					new VigilDaemonEnsureError({
+						message: `Failed to close daemon session ${sessionId}.`,
+						cause,
+					}),
+			),
+		);
+});
+
+const runDaemonHeartbeatLoop = Effect.fn("vigil.runDaemonHeartbeatLoop")(function* (
+	options: DaemonConnectionOptions,
+	lease: DaemonSessionLease,
+) {
+	const heartbeatIntervalMs = Math.max(
+		MIN_DAEMON_HEARTBEAT_MS,
+		lease.heartbeatIntervalMs,
+	);
+
+	yield* Effect.forever(
+		Effect.sleep(`${heartbeatIntervalMs} millis`).pipe(
+			Effect.zipRight(
+				heartbeatDaemonSession(options, lease.sessionId).pipe(
+					Effect.catchTag("VigilDaemonEnsureError", (error) =>
+						Effect.logWarning(
+							`[vigil] daemon heartbeat failed for session ${lease.sessionId}: ${error.message}`,
+						),
+					),
+				),
+			),
+		),
+	);
+});
+
+function withOptionalDaemonSession<A, E, R>(
+	options: DaemonConnectionOptions,
+	effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | VigilDaemonEnsureError, R> {
+	return Effect.gen(function* () {
+		const maybeLease = yield* openDaemonSession(options).pipe(
+			Effect.tap((lease) =>
+				Effect.logInfo(
+					`[vigil] opened daemon session ${lease.sessionId} ttlMs=${lease.ttlMs} heartbeatMs=${lease.heartbeatIntervalMs}`,
+				),
+			),
+			Effect.map(Option.some),
+			Effect.catchTag("VigilDaemonEnsureError", (error) =>
+				Effect.logWarning(
+					`[vigil] daemon session unavailable; continuing without managed session: ${error.message}`,
+				).pipe(Effect.as(Option.none())),
+			),
+		);
+
+		if (Option.isNone(maybeLease)) {
+			return yield* effect;
+		}
+
+		return yield* Effect.acquireUseRelease(
+			Effect.succeed(maybeLease.value),
+			(lease) =>
+				Effect.scoped(
+					Effect.gen(function* () {
+						yield* runDaemonHeartbeatLoop(options, lease).pipe(
+							Effect.forkScoped,
+						);
+						return yield* effect;
+					}),
+				),
+			(lease) =>
+				closeDaemonSession(options, lease.sessionId).pipe(
+					Effect.catchTag("VigilDaemonEnsureError", (error) =>
+						Effect.logWarning(
+							`[vigil] daemon session close failed for ${lease.sessionId}: ${error.message}`,
+						),
+					),
+				),
+		);
 	});
 }
 
@@ -363,27 +511,37 @@ function runCli(
 		const daemonToken = yield* resolveDaemonToken();
 
 		if (args.command === "serve") {
+			const lifecycle =
+				process.env[VIGIL_DAEMON_MANAGED_ENV_VAR] === "1"
+					? "managed"
+					: "persistent";
 			return yield* startVigilServerProgram({
 				host: args.serverHost,
 				port: args.serverPort,
 				daemonToken,
+				lifecycle,
 			});
 		}
 
-		yield* ensureServer({
+		const connectionOptions: DaemonConnectionOptions = {
 			host: args.serverHost,
 			port: args.serverPort,
 			daemonToken,
-		});
+		};
 
-		yield* startVigilTuiProgram({
-			chooserFilePath: args.chooserFilePath,
-			daemonConnection: {
-				host: args.serverHost,
-				port: args.serverPort,
-				token: daemonToken,
-			},
-		});
+		yield* ensureServer(connectionOptions);
+
+		yield* withOptionalDaemonSession(
+			connectionOptions,
+			startVigilTuiProgram({
+				chooserFilePath: args.chooserFilePath,
+				daemonConnection: {
+					host: args.serverHost,
+					port: args.serverPort,
+					token: daemonToken,
+				},
+			}),
+		);
 	});
 }
 
