@@ -433,7 +433,7 @@ const runDaemonHeartbeatLoop = Effect.fn("vigil.runDaemonHeartbeatLoop")(
 			lease.heartbeatIntervalMs,
 		);
 
-		yield* Effect.forever(
+		return yield* Effect.forever(
 			Effect.sleep(`${heartbeatIntervalMs} millis`).pipe(
 				Effect.zipRight(
 					heartbeatDaemonSession(options, lease.sessionId).pipe(
