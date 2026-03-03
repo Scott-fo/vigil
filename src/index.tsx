@@ -1,13 +1,53 @@
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as FileSystem from "@effect/platform/FileSystem";
+import os from "node:os";
+import path from "node:path";
 import { parseArgs } from "node:util";
-import { Data, Effect, Option, pipe } from "effect";
 import {
+	DaemonMetaResponse,
+	HealthResponse,
 	type VigilServerStartError,
+	VIGIL_DAEMON_TOKEN_ENV_VAR,
+	VIGIL_DAEMON_TOKEN_HEADER,
 	startVigilServerProgram,
 } from "@vigil/server";
 import { type StartVigilTuiError, startVigilTuiProgram } from "@vigil/tui";
+import { Data, Effect, Option, Schema, pipe } from "effect";
+
+const DAEMON_POLL_INTERVAL_MS = 100;
+const DAEMON_POLL_ATTEMPTS = 50;
+const TUI_CONFIG_FILE = "tui.json";
+const DAEMON_TOKEN_CONFIG_KEY = "daemon_token";
+
+const decodeDaemonMetaResponse = Schema.decodeUnknownSync(DaemonMetaResponse);
+const decodeHealthResponse = Schema.decodeUnknownSync(HealthResponse);
+const decodeJsonObject = Schema.decodeUnknown(
+	Schema.parseJson(
+		Schema.Record({
+			key: Schema.String,
+			value: Schema.Unknown,
+		}),
+	),
+);
+const encodeJsonObject = Schema.encode(
+	Schema.parseJson(
+		Schema.Record({
+			key: Schema.String,
+			value: Schema.Unknown,
+		}),
+		{ space: 2 },
+	),
+);
 
 class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;
+}> {}
+
+class VigilDaemonEnsureError extends Data.TaggedError("VigilDaemonEnsureError")<{
+	readonly message: string;
+	readonly cause?: unknown;
 }> {}
 
 type VigilCommand = "tui" | "serve";
@@ -19,6 +59,24 @@ interface VigilCliArgs {
 	readonly serverPort: number;
 	readonly help: boolean;
 }
+
+interface DaemonConnectionOptions {
+	readonly host: string;
+	readonly port: number;
+	readonly daemonToken: string;
+}
+
+type DaemonProbeResult =
+	| {
+			readonly _tag: "ready";
+	  }
+	| {
+			readonly _tag: "unauthorized";
+	  }
+	| {
+			readonly _tag: "unreachable";
+			readonly detail: string;
+	  };
 
 function vigilUsage(): string {
 	return [
@@ -146,11 +204,304 @@ function parseVigilArgs(
 	);
 }
 
+function generateDaemonToken(): string {
+	return randomBytes(32).toString("hex");
+}
+
+function resolveVigilDataDirectory(): string {
+	return process.env.XDG_DATA_HOME
+		? path.join(process.env.XDG_DATA_HOME, "vigil")
+		: path.join(os.homedir(), ".local", "share", "vigil");
+}
+
+function resolveTuiConfigPath(): string {
+	return path.join(resolveVigilDataDirectory(), TUI_CONFIG_FILE);
+}
+
+function readTuiConfigObject(
+	filePath: string,
+): Effect.Effect<Record<string, unknown>, VigilDaemonEnsureError, FileSystem.FileSystem> {
+	return Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const raw = yield* pipe(
+			fs.readFileString(filePath),
+			Effect.catchTag("SystemError", (cause) =>
+				cause.reason === "NotFound"
+					? Effect.succeed("")
+					: Effect.fail(
+							new VigilDaemonEnsureError({
+								message: `Unable to read ${filePath}.`,
+								cause,
+							}),
+						),
+			),
+			Effect.catchTag("BadArgument", (cause) =>
+				Effect.fail(
+					new VigilDaemonEnsureError({
+						message: `Unable to read ${filePath}.`,
+						cause,
+					}),
+				),
+			),
+		);
+
+		if (raw.trim().length === 0) {
+			return {} as Record<string, unknown>;
+		}
+
+		return yield* pipe(
+			decodeJsonObject(raw),
+			Effect.mapError(
+				(cause) =>
+					new VigilDaemonEnsureError({
+						message: `Invalid ${TUI_CONFIG_FILE}.`,
+						cause,
+					}),
+			),
+		);
+	});
+}
+
+function writeTuiConfigObject(
+	filePath: string,
+	config: Record<string, unknown>,
+): Effect.Effect<void, VigilDaemonEnsureError, FileSystem.FileSystem> {
+	return Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const encoded = yield* pipe(
+			encodeJsonObject(config),
+			Effect.mapError(
+				(cause) =>
+					new VigilDaemonEnsureError({
+						message: `Unable to encode ${TUI_CONFIG_FILE}.`,
+						cause,
+					}),
+			),
+		);
+
+		yield* pipe(
+			fs.writeFileString(filePath, `${encoded}\n`),
+			Effect.catchTag("SystemError", (cause) =>
+				Effect.fail(
+					new VigilDaemonEnsureError({
+						message: `Unable to write ${filePath}.`,
+						cause,
+					}),
+				),
+			),
+			Effect.catchTag("BadArgument", (cause) =>
+				Effect.fail(
+					new VigilDaemonEnsureError({
+						message: `Unable to write ${filePath}.`,
+						cause,
+					}),
+				),
+			),
+		);
+	});
+}
+
+function loadOrCreateDaemonToken(): Effect.Effect<
+	string,
+	VigilDaemonEnsureError,
+	FileSystem.FileSystem
+> {
+	return Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const configPath = resolveTuiConfigPath();
+
+		yield* pipe(
+			fs.makeDirectory(path.dirname(configPath), { recursive: true }),
+			Effect.catchTag("SystemError", (cause) =>
+				Effect.fail(
+					new VigilDaemonEnsureError({
+						message: `Unable to create config directory for ${configPath}.`,
+						cause,
+					}),
+				),
+			),
+			Effect.catchTag("BadArgument", (cause) =>
+				Effect.fail(
+					new VigilDaemonEnsureError({
+						message: `Unable to create config directory for ${configPath}.`,
+						cause,
+					}),
+				),
+			),
+		);
+
+		const config = yield* readTuiConfigObject(configPath);
+		const existing = config[DAEMON_TOKEN_CONFIG_KEY];
+		if (typeof existing === "string" && existing.trim().length > 0) {
+			return existing.trim();
+		}
+
+		const daemonToken = generateDaemonToken();
+		yield* writeTuiConfigObject(configPath, {
+			...config,
+			[DAEMON_TOKEN_CONFIG_KEY]: daemonToken,
+		});
+		return daemonToken;
+	});
+}
+
+function resolveDaemonToken(): Effect.Effect<string, VigilDaemonEnsureError> {
+	const tokenFromEnv = process.env[VIGIL_DAEMON_TOKEN_ENV_VAR]?.trim();
+	return tokenFromEnv && tokenFromEnv.length > 0
+		? Effect.succeed(tokenFromEnv)
+		: pipe(loadOrCreateDaemonToken(), Effect.provide(BunFileSystem.layer));
+}
+
+function daemonBaseUrl(options: Pick<DaemonConnectionOptions, "host" | "port">) {
+	const host = options.host.includes(":")
+		? `[${options.host.replace(/^\[(.*)\]$/, "$1")}]`
+		: options.host;
+	return `http://${host}:${options.port}`;
+}
+
+function probeDaemon(
+	options: DaemonConnectionOptions,
+): Effect.Effect<DaemonProbeResult, never> {
+	return pipe(
+		Effect.tryPromise({
+			try: async () => {
+				const baseUrl = daemonBaseUrl(options);
+				const headers = {
+					[VIGIL_DAEMON_TOKEN_HEADER]: options.daemonToken,
+				} satisfies Record<string, string>;
+
+				const metaResponse = await fetch(`${baseUrl}/meta`, { headers });
+				if (metaResponse.status === 401) {
+					return { _tag: "unauthorized" } as const;
+				}
+				if (!metaResponse.ok) {
+					return {
+						_tag: "unreachable",
+						detail: `GET /meta returned status ${metaResponse.status}.`,
+					} as const;
+				}
+
+				decodeDaemonMetaResponse(await metaResponse.json());
+
+				const healthResponse = await fetch(`${baseUrl}/health`, { headers });
+				if (healthResponse.status === 401) {
+					return { _tag: "unauthorized" } as const;
+				}
+				if (!healthResponse.ok) {
+					return {
+						_tag: "unreachable",
+						detail: `GET /health returned status ${healthResponse.status}.`,
+					} as const;
+				}
+
+				decodeHealthResponse(await healthResponse.json());
+				return { _tag: "ready" } as const;
+			},
+			catch: (cause) => cause,
+		}),
+		Effect.catchAll((cause) =>
+			Effect.succeed({
+				_tag: "unreachable" as const,
+				detail: cause instanceof Error ? cause.message : String(cause),
+			}),
+		),
+	);
+}
+
+function spawnDaemonProcess(
+	options: DaemonConnectionOptions,
+): Effect.Effect<void, VigilDaemonEnsureError> {
+	return Effect.try({
+		try: () => {
+			const entrypoint = process.argv[1];
+			if (!entrypoint) {
+				throw new Error("Unable to resolve CLI entrypoint.");
+			}
+
+			const processHandle = spawn(
+				process.execPath,
+				[
+					entrypoint,
+					"serve",
+					"--host",
+					options.host,
+					"--port",
+					String(options.port),
+				],
+				{
+					detached: true,
+					stdio: "ignore",
+					windowsHide: true,
+					env: {
+						...process.env,
+						[VIGIL_DAEMON_TOKEN_ENV_VAR]: options.daemonToken,
+					},
+				},
+			);
+
+			processHandle.unref();
+		},
+		catch: (cause) =>
+			new VigilDaemonEnsureError({
+				message: "Failed to spawn daemon process.",
+				cause,
+			}),
+	});
+}
+
+function ensureServer(
+	options: Pick<DaemonConnectionOptions, "host" | "port" | "daemonToken">,
+): Effect.Effect<void, VigilDaemonEnsureError> {
+	return Effect.gen(function* () {
+		const connectionOptions: DaemonConnectionOptions = {
+			host: options.host,
+			port: options.port,
+			daemonToken: options.daemonToken,
+		};
+
+		const firstProbe = yield* probeDaemon(connectionOptions);
+		if (firstProbe._tag === "ready") {
+			return;
+		}
+
+		if (firstProbe._tag === "unauthorized") {
+			return yield* new VigilDaemonEnsureError({
+				message: `A server is already listening at ${daemonBaseUrl(connectionOptions)} but rejected this daemon token.`,
+			});
+		}
+
+		yield* spawnDaemonProcess(connectionOptions);
+
+		let lastProbeDetail = firstProbe.detail;
+		for (let attempt = 0; attempt < DAEMON_POLL_ATTEMPTS; attempt += 1) {
+			const probe = yield* probeDaemon(connectionOptions);
+			if (probe._tag === "ready") {
+				return;
+			}
+			if (probe._tag === "unauthorized") {
+				return yield* new VigilDaemonEnsureError({
+					message: `Daemon at ${daemonBaseUrl(connectionOptions)} rejected this daemon token after startup.`,
+				});
+			}
+
+			lastProbeDetail = probe.detail;
+			yield* Effect.sleep(DAEMON_POLL_INTERVAL_MS);
+		}
+
+		return yield* new VigilDaemonEnsureError({
+			message: `Unable to connect to daemon at ${daemonBaseUrl(connectionOptions)} after auto-start. Last check: ${lastProbeDetail}`,
+		});
+	});
+}
+
 function runCli(
 	argv: string[],
 ): Effect.Effect<
 	void,
-	CliArgumentError | StartVigilTuiError | VigilServerStartError
+	| CliArgumentError
+	| StartVigilTuiError
+	| VigilServerStartError
+	| VigilDaemonEnsureError
 > {
 	return Effect.gen(function* () {
 		const args = yield* parseVigilArgs(argv);
@@ -160,12 +511,21 @@ function runCli(
 			});
 		}
 
+		const daemonToken = yield* resolveDaemonToken();
+
 		if (args.command === "serve") {
 			return yield* startVigilServerProgram({
 				host: args.serverHost,
 				port: args.serverPort,
+				daemonToken,
 			});
 		}
+
+		yield* ensureServer({
+			host: args.serverHost,
+			port: args.serverPort,
+			daemonToken,
+		});
 
 		yield* startVigilTuiProgram({
 			chooserFilePath: args.chooserFilePath,
@@ -192,6 +552,9 @@ await Effect.runPromise(
 			}),
 		),
 		Effect.catchTag("VigilServerStartError", (error) =>
+			printErrorAndExit(error.message),
+		),
+		Effect.catchTag("VigilDaemonEnsureError", (error) =>
 			printErrorAndExit(error.message),
 		),
 		Effect.catchAll((error) => printErrorAndExit(error.message)),
