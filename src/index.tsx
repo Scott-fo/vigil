@@ -4,7 +4,7 @@ import { loadOrCreateDaemonTokenFromTuiConfig } from "@vigil/config";
 import { parseArgs } from "node:util";
 import {
 	buildVigilDaemonBaseUrl,
-	DaemonUnauthorizedError,
+	type DaemonUnauthorizedError,
 	makeVigilDaemonClient,
 	makeVigilDaemonHttpClientLayer,
 	type VigilServerStartError,
@@ -24,7 +24,9 @@ class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
 	readonly message: string;
 }> {}
 
-class VigilDaemonEnsureError extends Data.TaggedError("VigilDaemonEnsureError")<{
+class VigilDaemonEnsureError extends Data.TaggedError(
+	"VigilDaemonEnsureError",
+)<{
 	readonly message: string;
 	readonly cause?: unknown;
 }> {}
@@ -201,7 +203,9 @@ function resolveDaemonToken(): Effect.Effect<string, VigilDaemonEnsureError> {
 			);
 }
 
-function daemonBaseUrl(options: Pick<DaemonConnectionOptions, "host" | "port">) {
+function daemonBaseUrl(
+	options: Pick<DaemonConnectionOptions, "host" | "port">,
+) {
 	return buildVigilDaemonBaseUrl(options);
 }
 
@@ -240,7 +244,9 @@ function probeDaemon(
 			});
 		}
 
-		const healthResult = yield* daemonClient.system.health().pipe(Effect.either);
+		const healthResult = yield* daemonClient.system
+			.health()
+			.pipe(Effect.either);
 		if (Either.isLeft(healthResult)) {
 			const error = healthResult.left;
 			if (error._tag === "DaemonUnauthorizedError") {
@@ -375,28 +381,27 @@ const openDaemonSession = Effect.fn("vigil.openDaemonSession")(function* (
 	} satisfies DaemonSessionLease;
 });
 
-const heartbeatDaemonSession = Effect.fn("vigil.heartbeatDaemonSession")(function* (
-	options: DaemonConnectionOptions,
-	sessionId: string,
-) {
-	const daemonClient = yield* makeDaemonProbeClient(options);
+const heartbeatDaemonSession = Effect.fn("vigil.heartbeatDaemonSession")(
+	function* (options: DaemonConnectionOptions, sessionId: string) {
+		const daemonClient = yield* makeDaemonProbeClient(options);
 
-	yield* daemonClient.session
-		.heartbeat({
-			payload: {
-				sessionId,
-			},
-		})
-		.pipe(
-			Effect.mapError(
-				(cause) =>
-					new VigilDaemonEnsureError({
-						message: `Failed to heartbeat daemon session ${sessionId}.`,
-						cause,
-					}),
-			),
-		);
-});
+		yield* daemonClient.session
+			.heartbeat({
+				payload: {
+					sessionId,
+				},
+			})
+			.pipe(
+				Effect.mapError(
+					(cause) =>
+						new VigilDaemonEnsureError({
+							message: `Failed to heartbeat daemon session ${sessionId}.`,
+							cause,
+						}),
+				),
+			);
+	},
+);
 
 const closeDaemonSession = Effect.fn("vigil.closeDaemonSession")(function* (
 	options: DaemonConnectionOptions,
@@ -421,29 +426,28 @@ const closeDaemonSession = Effect.fn("vigil.closeDaemonSession")(function* (
 		);
 });
 
-const runDaemonHeartbeatLoop = Effect.fn("vigil.runDaemonHeartbeatLoop")(function* (
-	options: DaemonConnectionOptions,
-	lease: DaemonSessionLease,
-) {
-	const heartbeatIntervalMs = Math.max(
-		MIN_DAEMON_HEARTBEAT_MS,
-		lease.heartbeatIntervalMs,
-	);
+const runDaemonHeartbeatLoop = Effect.fn("vigil.runDaemonHeartbeatLoop")(
+	function* (options: DaemonConnectionOptions, lease: DaemonSessionLease) {
+		const heartbeatIntervalMs = Math.max(
+			MIN_DAEMON_HEARTBEAT_MS,
+			lease.heartbeatIntervalMs,
+		);
 
-	yield* Effect.forever(
-		Effect.sleep(`${heartbeatIntervalMs} millis`).pipe(
-			Effect.zipRight(
-				heartbeatDaemonSession(options, lease.sessionId).pipe(
-					Effect.catchTag("VigilDaemonEnsureError", (error) =>
-						Effect.logWarning(
-							`[vigil] daemon heartbeat failed for session ${lease.sessionId}: ${error.message}`,
+		yield* Effect.forever(
+			Effect.sleep(`${heartbeatIntervalMs} millis`).pipe(
+				Effect.zipRight(
+					heartbeatDaemonSession(options, lease.sessionId).pipe(
+						Effect.catchTag("VigilDaemonEnsureError", (error) =>
+							Effect.logWarning(
+								`[vigil] daemon heartbeat failed for session ${lease.sessionId}: ${error.message}`,
+							),
 						),
 					),
 				),
 			),
-		),
-	);
-});
+		);
+	},
+);
 
 function withOptionalDaemonSession<A, E, R>(
 	options: DaemonConnectionOptions,
