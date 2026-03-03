@@ -11,6 +11,7 @@ export {
 export {
 	type CreateLineThreadInput,
 	type CreateOverallThreadInput,
+	type ListThreadsInput,
 	type ReplyToThreadInput,
 	ReviewService,
 	type ReviewServiceError,

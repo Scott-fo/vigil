@@ -109,6 +109,7 @@ export {
 	buildWorkingTreeScopeKey,
 	type CreateLineThreadInput,
 	type CreateOverallThreadInput,
+	type ListThreadsInput,
 	createBranchCompareScope,
 	createOverallAnchor,
 	createWorkingTreeScope,

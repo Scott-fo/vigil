@@ -13,6 +13,7 @@ import {
 import type {
 	LineThreadAnchor,
 	ReviewScope,
+	ThreadAnchor,
 	ThreadWithComments,
 } from "./types.ts";
 
@@ -44,6 +45,14 @@ export interface ReplyToThreadInput {
 export interface UpdateThreadStateInput {
 	readonly scope: ReviewScope;
 	readonly threadId: string;
+}
+
+export interface ListThreadsInput {
+	readonly scope: ReviewScope;
+	readonly filePath?: string | null;
+	readonly includeResolved?: boolean;
+	readonly includeStale?: boolean;
+	readonly activeAnchors?: ReadonlyArray<ThreadAnchor>;
 }
 
 export class ReviewServiceValidationError extends Schema.TaggedError<ReviewServiceValidationError>()(
@@ -122,6 +131,9 @@ export class ReviewService extends Context.Tag("@vigil/server/ReviewService")<
 		readonly createLineThread: (
 			input: CreateLineThreadInput,
 		) => Effect.Effect<ThreadWithComments, ReviewServiceError>;
+		readonly listThreads: (
+			input: ListThreadsInput,
+		) => Effect.Effect<ReadonlyArray<ThreadWithComments>, ReviewServiceError>;
 		readonly replyToThread: (
 			input: ReplyToThreadInput,
 		) => Effect.Effect<ThreadWithComments, ReviewServiceError>;
@@ -168,6 +180,69 @@ export class ReviewService extends Context.Tag("@vigil/server/ReviewService")<
 					return thread;
 				},
 			);
+
+			const normalizeOptionalFilePath = Effect.fn(
+				"ReviewService.normalizeOptionalFilePath",
+			)(function* (filePath: string | null | undefined) {
+				if (filePath === undefined || filePath === null) {
+					return filePath;
+				}
+
+				return yield* validateNonEmpty("filePath", filePath);
+			});
+
+			const buildActiveAnchorKeySet = Effect.fn(
+				"ReviewService.buildActiveAnchorKeySet",
+			)(function* (anchors: ReadonlyArray<ThreadAnchor> | undefined) {
+				if (anchors === undefined) {
+					return Option.none<ReadonlySet<string>>();
+				}
+
+				const keys = yield* Effect.forEach(anchors, (anchor) =>
+					buildThreadAnchorKey(anchor),
+				);
+
+				return Option.some(new Set(keys) as ReadonlySet<string>);
+			});
+
+			const threadAnchorKey = Effect.fn("ReviewService.threadAnchorKey")(function* (
+				thread: ReviewThreadModel,
+			) {
+				if (thread.filePath === null) {
+					return Option.some("overall");
+				}
+
+				if (thread.lineSide === null || thread.lineNumber === null) {
+					return Option.none<string>();
+				}
+
+				const anchor: LineThreadAnchor = {
+					anchorType: "line",
+					filePath: thread.filePath,
+					lineSide: thread.lineSide,
+					lineNumber: thread.lineNumber,
+					hunkHeader: Option.fromNullable(thread.hunkHeader),
+					lineContentHash: Option.fromNullable(thread.lineContentHash),
+				};
+
+				return yield* buildThreadAnchorKey(anchor).pipe(Effect.option);
+			});
+
+			const isThreadStale = Effect.fn("ReviewService.isThreadStale")(function* (
+				thread: ReviewThreadModel,
+				activeAnchorKeys: Option.Option<ReadonlySet<string>>,
+			) {
+				if (Option.isNone(activeAnchorKeys) || thread.filePath === null) {
+					return false;
+				}
+
+				const anchorKey = yield* threadAnchorKey(thread);
+
+				return Option.match(anchorKey, {
+					onNone: () => true,
+					onSome: (value) => !activeAnchorKeys.value.has(value),
+				});
+			});
 
 			const createThreadWithComment = Effect.fn(
 				"ReviewService.createThreadWithComment",
@@ -269,6 +344,44 @@ export class ReviewService extends Context.Tag("@vigil/server/ReviewService")<
 				},
 			);
 
+			const listThreads = Effect.fn("ReviewService.listThreads")(function* (
+				input: ListThreadsInput,
+			) {
+				const scope = yield* normalizeScope(input.scope);
+				const filePath = yield* normalizeOptionalFilePath(input.filePath);
+
+				const listOptions = {
+					repoRoot: scope.repoRoot,
+					scopeKey: scope.scopeKey,
+					...(filePath === undefined ? {} : { filePath }),
+					...(input.includeResolved === undefined
+						? {}
+						: { includeResolved: input.includeResolved }),
+				};
+				const threads = yield* threadRepository.listByScope(listOptions);
+				const activeAnchorKeys = yield* buildActiveAnchorKeySet(input.activeAnchors);
+
+				const withComments = yield* Effect.forEach(
+					threads,
+					(thread) =>
+						Effect.gen(function* () {
+							const comments = yield* commentRepository.listByThreadId(thread.id);
+							const isStale = yield* isThreadStale(thread, activeAnchorKeys);
+
+							return {
+								thread,
+								comments,
+								isStale,
+							} satisfies ThreadWithComments;
+						}),
+					{ concurrency: "unbounded" },
+				);
+
+				return input.includeStale === true
+					? withComments
+					: withComments.filter((thread) => !thread.isStale);
+			});
+
 			const replyToThread = Effect.fn("ReviewService.replyToThread")(function* (
 				input: ReplyToThreadInput,
 			) {
@@ -316,6 +429,7 @@ export class ReviewService extends Context.Tag("@vigil/server/ReviewService")<
 			return ReviewService.of({
 				createOverallThread,
 				createLineThread,
+				listThreads,
 				replyToThread,
 				resolveThread,
 				reopenThread,
