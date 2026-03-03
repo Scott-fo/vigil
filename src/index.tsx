@@ -1,16 +1,16 @@
 import { spawn } from "node:child_process";
+import { parseArgs } from "node:util";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { loadOrCreateDaemonTokenFromTuiConfig } from "@vigil/config";
-import { parseArgs } from "node:util";
 import {
 	buildVigilDaemonBaseUrl,
 	type DaemonUnauthorizedError,
 	makeVigilDaemonClient,
 	makeVigilDaemonHttpClientLayer,
-	type VigilServerStartError,
 	startVigilServerProgram,
 	VIGIL_DAEMON_TOKEN_ENV_VAR,
 	type VigilDaemonConnection,
+	type VigilServerStartError,
 } from "@vigil/server";
 import { type StartVigilTuiError, startVigilTuiProgram } from "@vigil/tui";
 import { Data, Effect, Either, Option, pipe } from "effect";
