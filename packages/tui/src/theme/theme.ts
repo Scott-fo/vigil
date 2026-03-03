@@ -1,6 +1,14 @@
 import { RGBA, SyntaxStyle } from "@opentui/core";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as FileSystem from "@effect/platform/FileSystem";
+import {
+	readTuiConfigObject,
+	resolveTuiConfigPath,
+	TuiConfigReadError,
+	type TuiConfigParseError,
+	type TuiConfigWriteError,
+	writeTuiConfigObject,
+} from "@vigil/config";
 import os from "node:os";
 import path from "node:path";
 import { Data, Effect, Option, pipe, Schema } from "effect";
@@ -41,13 +49,6 @@ const ThemeJsonSchema = Schema.Struct({
 type ThemeJson = Schema.Schema.Type<typeof ThemeJsonSchema>;
 
 const JsonUnknownFromStringSchema = Schema.parseJson();
-const JsonObjectFromStringSchema = Schema.parseJson(
-	Schema.Record({
-		key: Schema.String,
-		value: Schema.Unknown,
-	}),
-	{ space: 2 },
-);
 
 export type ThemeColors = {
 	primary: RGBA;
@@ -139,39 +140,15 @@ class ThemeFileInvalidError extends Data.TaggedError("ThemeFileInvalidError")<{
 	readonly filePath: string;
 }> {}
 
-export class ThemePreferenceConfigReadError extends Data.TaggedError(
-	"ThemePreferenceConfigReadError",
-)<{
-	readonly filePath: string;
-	readonly message: string;
-	readonly cause: unknown;
-}> {}
-
-export class ThemePreferenceConfigParseError extends Data.TaggedError(
-	"ThemePreferenceConfigParseError",
-)<{
-	readonly filePath: string;
-	readonly message: string;
-	readonly cause: unknown;
-}> {}
-
-export class ThemePreferenceConfigWriteError extends Data.TaggedError(
-	"ThemePreferenceConfigWriteError",
-)<{
-	readonly filePath: string;
-	readonly message: string;
-	readonly cause: unknown;
-}> {}
-
 type ThemeFileError =
 	| ThemeFileReadError
 	| ThemeFileParseError
 	| ThemeFileInvalidError;
 
 export type ThemePreferencePersistError =
-	| ThemePreferenceConfigReadError
-	| ThemePreferenceConfigParseError
-	| ThemePreferenceConfigWriteError;
+	| TuiConfigReadError
+	| TuiConfigParseError
+	| TuiConfigWriteError;
 
 const REQUIRED_THEME_KEYS = [
 	"primary",
@@ -597,18 +574,7 @@ type ThemePreference = {
 	mode?: ThemeMode;
 };
 
-const TUI_CONFIG_FILE = "tui.json";
 const LEGACY_TUI_CONFIG_FILE = "tui.json";
-
-function resolveVigilDataDirectory(): string {
-	return process.env.XDG_DATA_HOME
-		? path.join(process.env.XDG_DATA_HOME, "vigil")
-		: path.join(os.homedir(), ".local", "share", "vigil");
-}
-
-function resolveConfigFilePath(): string {
-	return path.join(resolveVigilDataDirectory(), TUI_CONFIG_FILE);
-}
 
 function resolveLegacyConfigFilePath(): string {
 	return path.join(process.cwd(), LEGACY_TUI_CONFIG_FILE);
@@ -654,13 +620,13 @@ export async function readThemePreferenceFromTuiConfig(): Promise<{
 		pipe(
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
-				const primaryPath = resolveConfigFilePath();
+				const primaryPath = resolveTuiConfigPath();
 				const legacyPath = resolveLegacyConfigFilePath();
 				const primaryExists = yield* pipe(
 					fs.exists(primaryPath),
 					Effect.catchTag("SystemError", (cause) =>
 						Effect.fail(
-							new ThemePreferenceConfigReadError({
+							new TuiConfigReadError({
 								filePath: primaryPath,
 								message: cause.message,
 								cause,
@@ -669,7 +635,7 @@ export async function readThemePreferenceFromTuiConfig(): Promise<{
 					),
 					Effect.catchTag("BadArgument", (cause) =>
 						Effect.fail(
-							new ThemePreferenceConfigReadError({
+							new TuiConfigReadError({
 								filePath: primaryPath,
 								message: cause.message,
 								cause,
@@ -693,135 +659,20 @@ export function persistThemePreferenceToTuiConfig(preference: {
 	readonly theme: string;
 	readonly mode: ThemeMode;
 }): Effect.Effect<void, ThemePreferencePersistError> {
-	const filePath = resolveConfigFilePath();
+	const filePath = resolveTuiConfigPath();
 
 	return pipe(
 		Effect.gen(function* () {
-			const fs = yield* FileSystem.FileSystem;
-			const configDir = path.dirname(filePath);
-			yield* pipe(
-				fs.makeDirectory(configDir, { recursive: true }),
-				Effect.catchTag("SystemError", (cause) =>
-					Effect.fail(
-						new ThemePreferenceConfigWriteError({
-							filePath,
-							message: cause.message,
-							cause,
-						}),
-					),
-				),
-				Effect.catchTag("BadArgument", (cause) =>
-					Effect.fail(
-						new ThemePreferenceConfigWriteError({
-							filePath,
-							message: cause.message,
-							cause,
-						}),
-					),
-				),
-			);
 			const config = yield* readTuiConfigObject(filePath);
 			const nextConfig: Record<string, unknown> = {
 				...config,
 				theme: preference.theme,
 				theme_mode: preference.mode,
 			};
-			yield* writeTuiConfigObject(filePath, nextConfig);
+			yield* writeTuiConfigObject(nextConfig, filePath);
 		}),
 		Effect.provide(BunFileSystem.layer),
 	);
-}
-
-function readTuiConfigObject(
-	filePath: string,
-): Effect.Effect<
-	Record<string, unknown>,
-	ThemePreferenceConfigReadError | ThemePreferenceConfigParseError,
-	FileSystem.FileSystem
-> {
-	return Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem;
-		const raw = yield* pipe(
-			fs.readFileString(filePath),
-			Effect.catchTag("SystemError", (cause) =>
-				cause.reason === "NotFound"
-					? Effect.succeed("")
-					: Effect.fail(
-							new ThemePreferenceConfigReadError({
-								filePath,
-								message: cause.message,
-								cause,
-							}),
-						),
-			),
-			Effect.catchTag("BadArgument", (cause) =>
-				Effect.fail(
-					new ThemePreferenceConfigReadError({
-						filePath,
-						message: cause.message,
-						cause,
-					}),
-				),
-			),
-		);
-
-		if (raw.trim().length === 0) {
-			return {} as Record<string, unknown>;
-		}
-
-		return yield* pipe(
-			Schema.decodeUnknown(JsonObjectFromStringSchema)(raw),
-			Effect.mapError(
-				(cause) =>
-					new ThemePreferenceConfigParseError({
-						filePath,
-						message: `Invalid ${TUI_CONFIG_FILE}.`,
-						cause,
-					}),
-			),
-		);
-	});
-}
-
-function writeTuiConfigObject(
-	filePath: string,
-	config: Record<string, unknown>,
-): Effect.Effect<void, ThemePreferenceConfigWriteError, FileSystem.FileSystem> {
-	return Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem;
-		const encoded = yield* pipe(
-			Schema.encode(JsonObjectFromStringSchema)(config),
-			Effect.mapError(
-				(cause) =>
-					new ThemePreferenceConfigWriteError({
-						filePath,
-						message: `Unable to encode ${TUI_CONFIG_FILE}.`,
-						cause,
-					}),
-			),
-		);
-		yield* pipe(
-			fs.writeFileString(filePath, `${encoded}\n`),
-			Effect.catchTag("SystemError", (cause) =>
-				Effect.fail(
-					new ThemePreferenceConfigWriteError({
-						filePath,
-						message: cause.message,
-						cause,
-					}),
-				),
-			),
-			Effect.catchTag("BadArgument", (cause) =>
-				Effect.fail(
-					new ThemePreferenceConfigWriteError({
-						filePath,
-						message: cause.message,
-						cause,
-					}),
-				),
-			),
-		);
-	});
 }
 
 function generateSyntax(theme: ResolvedTheme): SyntaxStyle {

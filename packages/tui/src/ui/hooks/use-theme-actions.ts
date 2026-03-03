@@ -30,18 +30,9 @@ function renderThemePreferencePersistError(
 	error: ThemePreferencePersistError,
 ): string {
 	return Match.value(error).pipe(
-		Match.tag(
-			"ThemePreferenceConfigParseError",
-			() => "Invalid theme config. Fix it and try again.",
-		),
-		Match.tag(
-			"ThemePreferenceConfigReadError",
-			(typedError) => typedError.message,
-		),
-		Match.tag(
-			"ThemePreferenceConfigWriteError",
-			(typedError) => typedError.message,
-		),
+		Match.tag("TuiConfigParseError", () => "Invalid theme config. Fix it and try again."),
+		Match.tag("TuiConfigReadError", (typedError) => typedError.message),
+		Match.tag("TuiConfigWriteError", (typedError) => typedError.message),
 		Match.exhaustive,
 	);
 }

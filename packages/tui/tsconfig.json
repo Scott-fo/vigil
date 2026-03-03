@@ -9,7 +9,9 @@
       "#diff/*": ["./src/diff/*"],
       "#theme/*": ["./src/theme/*"],
       "#syntax/*": ["./src/syntax/*"],
-      "#config/*": ["./src/config/*"]
+      "#config/*": ["./src/config/*"],
+      "@vigil/config": ["../config/src/index.ts"],
+      "@vigil/config/*": ["../config/src/*"]
     }
   },
   "include": ["src/**/*"]
