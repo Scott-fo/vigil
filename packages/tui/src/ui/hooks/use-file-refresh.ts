@@ -104,24 +104,27 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 	const reviewModeRef = useRef(reviewMode);
 	reviewModeRef.current = reviewMode;
 
-	const runRefresh = useCallback(
-		async (showLoading: boolean) => {
-			let nextShowLoading = showLoading;
-			let shouldContinue = true;
-			while (shouldContinue) {
-				isRefreshingRef.current = true;
-				requestStateRef.current = {
-					...requestStateRef.current,
-					isRefreshing: true,
-				};
-				if (nextShowLoading) {
-					updateFileView((current) =>
-						current.loading ? current : { ...current, loading: true },
-					);
-				}
+	const runRefreshEffect = useCallback(
+		(showLoading: boolean) =>
+			Effect.gen(function* () {
+				let nextShowLoading = showLoading;
+				let shouldContinue = true;
 
-				const result = await Effect.runPromise(
-					pipe(
+				while (shouldContinue) {
+					yield* Effect.sync(() => {
+						isRefreshingRef.current = true;
+						requestStateRef.current = {
+							...requestStateRef.current,
+							isRefreshing: true,
+						};
+						if (nextShowLoading) {
+							updateFileView((current) =>
+								current.loading ? current : { ...current, loading: true },
+							);
+						}
+					});
+
+					const result = yield* pipe(
 						buildFilesLoadEffect(reviewModeRef.current),
 						Effect.match({
 							onFailure: (repoError) => ({
@@ -147,143 +150,163 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 								};
 							}),
 						),
-					),
-				);
+					);
 
-				if (!result.ok) {
-					updateFileView((current) => {
-						if (
-							current.files.length === 0 &&
-							Option.isNone(current.selectedPath)
-						) {
-							return current;
+					if (!result.ok) {
+						const queuedShowLoading = yield* Effect.sync(() => {
+							updateFileView((current) => {
+								if (
+									current.files.length === 0 &&
+									Option.isNone(current.selectedPath)
+								) {
+									return current;
+								}
+								return {
+									...current,
+									files: current.files.length === 0 ? current.files : [],
+									selectedPath: Option.none(),
+								};
+							});
+							updateUiStatus((current) => {
+								if (
+									current.showSplash &&
+									Option.isSome(current.error) &&
+									current.error.value === result.error
+								) {
+									return current;
+								}
+								return {
+									showSplash: true,
+									error: Option.some(result.error),
+								};
+							});
+
+							const queuedRefresh = consumeQueuedRefresh(requestStateRef.current);
+							requestStateRef.current = queuedRefresh.nextState;
+							return queuedRefresh.queuedShowLoading;
+						});
+
+						if (Option.isSome(queuedShowLoading)) {
+							nextShowLoading = queuedShowLoading.value;
+							yield* Effect.sync(() => {
+								queuedRefreshRef.current = false;
+								queuedShowLoadingRef.current = false;
+							});
+							continue;
 						}
-						return {
-							...current,
-							files: current.files.length === 0 ? current.files : [],
-							selectedPath: Option.none(),
-						};
+
+						return;
+					}
+
+					const queuedShowLoading = yield* Effect.sync(() => {
+						updateFileView((current) => {
+							const previousByPath = new Map(
+								current.files.map((file) => [file.path, file] as const),
+							);
+							const nextFiles = result.files.map((file) => {
+								const previous = previousByPath.get(file.path);
+								if (!previous) {
+									return file;
+								}
+								return previous.equals(file) ? previous : file;
+							});
+							const filesAreEqual =
+								current.files.length === nextFiles.length &&
+								current.files.every((file, index) => file === nextFiles[index]);
+							const hasCurrentSelection = pipe(
+								current.selectedPath,
+								Option.match({
+									onNone: () => false,
+									onSome: (path) =>
+										result.files.some((file) => file.path === path),
+								}),
+							);
+							const nextSelectedPath =
+								result.files.length === 0
+									? Option.none<string>()
+									: hasCurrentSelection
+										? current.selectedPath
+										: pipe(
+												Option.fromNullable(result.files[0]),
+												Option.map((file) => file.path),
+											);
+							const selectedPathUnchanged =
+								(Option.isNone(current.selectedPath) &&
+									Option.isNone(nextSelectedPath)) ||
+								(Option.isSome(current.selectedPath) &&
+									Option.isSome(nextSelectedPath) &&
+									current.selectedPath.value === nextSelectedPath.value);
+							if (filesAreEqual && selectedPathUnchanged) {
+								return current;
+							}
+							return {
+								...current,
+								files: nextFiles,
+								selectedPath: nextSelectedPath,
+							};
+						});
+						updateUiStatus((current) => {
+							const shouldShowSplash = result.files.length === 0;
+							if (
+								current.showSplash === shouldShowSplash &&
+								Option.isNone(current.error)
+							) {
+								return current;
+							}
+							return {
+								showSplash: shouldShowSplash,
+								error: Option.none(),
+							};
+						});
+
+						const queuedRefresh = consumeQueuedRefresh(requestStateRef.current);
+						requestStateRef.current = queuedRefresh.nextState;
+						return queuedRefresh.queuedShowLoading;
 					});
-					updateUiStatus((current) => {
-						if (
-							current.showSplash &&
-							Option.isSome(current.error) &&
-							current.error.value === result.error
-						) {
-							return current;
-						}
-						return {
-							showSplash: true,
-							error: Option.some(result.error),
-						};
-					});
-					const queuedRefresh = consumeQueuedRefresh(requestStateRef.current);
-					requestStateRef.current = queuedRefresh.nextState;
-					if (Option.isSome(queuedRefresh.queuedShowLoading)) {
-						nextShowLoading = queuedRefresh.queuedShowLoading.value;
-						queuedRefreshRef.current = false;
-						queuedShowLoadingRef.current = false;
+
+					if (Option.isSome(queuedShowLoading)) {
+						nextShowLoading = queuedShowLoading.value;
+						yield* Effect.sync(() => {
+							queuedRefreshRef.current = false;
+							queuedShowLoadingRef.current = false;
+						});
 						continue;
 					}
-					return;
+
+					shouldContinue = false;
 				}
-
-				updateFileView((current) => {
-					const previousByPath = new Map(
-						current.files.map((file) => [file.path, file] as const),
-					);
-					const nextFiles = result.files.map((file) => {
-						const previous = previousByPath.get(file.path);
-						if (!previous) {
-							return file;
-						}
-						return previous.equals(file) ? previous : file;
-					});
-					const filesAreEqual =
-						current.files.length === nextFiles.length &&
-						current.files.every((file, index) => file === nextFiles[index]);
-					const hasCurrentSelection = pipe(
-						current.selectedPath,
-						Option.match({
-							onNone: () => false,
-							onSome: (path) => result.files.some((file) => file.path === path),
-						}),
-					);
-					const nextSelectedPath =
-						result.files.length === 0
-							? Option.none<string>()
-							: hasCurrentSelection
-								? current.selectedPath
-								: pipe(
-										Option.fromNullable(result.files[0]),
-										Option.map((file) => file.path),
-									);
-					const selectedPathUnchanged =
-						(Option.isNone(current.selectedPath) &&
-							Option.isNone(nextSelectedPath)) ||
-						(Option.isSome(current.selectedPath) &&
-							Option.isSome(nextSelectedPath) &&
-							current.selectedPath.value === nextSelectedPath.value);
-					if (filesAreEqual && selectedPathUnchanged) {
-						return current;
-					}
-					return {
-						...current,
-						files: nextFiles,
-						selectedPath: nextSelectedPath,
-					};
-				});
-				updateUiStatus((current) => {
-					const shouldShowSplash = result.files.length === 0;
-					if (
-						current.showSplash === shouldShowSplash &&
-						Option.isNone(current.error)
-					) {
-						return current;
-					}
-					return {
-						showSplash: shouldShowSplash,
-						error: Option.none(),
-					};
-				});
-
-				const queuedRefresh = consumeQueuedRefresh(requestStateRef.current);
-				requestStateRef.current = queuedRefresh.nextState;
-				if (Option.isSome(queuedRefresh.queuedShowLoading)) {
-					nextShowLoading = queuedRefresh.queuedShowLoading.value;
-					queuedRefreshRef.current = false;
-					queuedShowLoadingRef.current = false;
-					continue;
-				}
-
-				shouldContinue = false;
-			}
-		},
+			}),
 		[renderRepoActionError, updateFileView, updateUiStatus],
 	);
 
+	const refreshFilesEffect = useCallback(
+		(showLoading: boolean) =>
+			Effect.gen(function* () {
+				const request = registerRefreshRequest(
+					requestStateRef.current,
+					showLoading,
+				);
+				requestStateRef.current = request.nextState;
+
+				if (!request.shouldRunNow) {
+					queuedRefreshRef.current = true;
+					queuedShowLoadingRef.current = request.nextState.queuedShowLoading;
+					return;
+				}
+
+				yield* runRefreshEffect(showLoading);
+			}),
+		[runRefreshEffect],
+	);
+
 	const refreshFiles = useCallback(
-		async (showLoading: boolean) => {
-			const request = registerRefreshRequest(
-				requestStateRef.current,
-				showLoading,
-			);
-			requestStateRef.current = request.nextState;
-
-			if (!request.shouldRunNow) {
-				queuedRefreshRef.current = true;
-				queuedShowLoadingRef.current = request.nextState.queuedShowLoading;
-				return;
-			}
-
-			await runRefresh(showLoading);
-		},
-		[runRefresh],
+		(showLoading: boolean) => Effect.runPromise(refreshFilesEffect(showLoading)),
+		[refreshFilesEffect],
 	);
 
 	useEffect(() => {
-		void refreshFiles(true);
-	}, [refreshFiles, reviewMode]);
+		void Effect.runPromise(refreshFilesEffect(true));
+	}, [refreshFilesEffect, reviewMode]);
 
-	return { refreshFiles };
+	return { refreshFiles, refreshFilesEffect };
 }

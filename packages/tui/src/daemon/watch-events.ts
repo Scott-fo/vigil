@@ -1,3 +1,5 @@
+import { Data, Effect, Option, Schema } from "effect";
+
 export interface RepoChangedEvent {
 	readonly subscriptionId: string;
 	readonly repoRoot: string;
@@ -10,9 +12,43 @@ interface DrainedSseBlocks {
 	readonly remaining: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
+const RepoChangedEventSchema = Schema.Struct({
+	subscriptionId: Schema.String,
+	repoRoot: Schema.String,
+	version: Schema.Number,
+	changedAt: Schema.String,
+});
+
+const decodeRepoChangedEvent = Schema.decodeUnknown(RepoChangedEventSchema);
+const decodeJsonString = Schema.decodeUnknown(Schema.parseJson());
+
+export class RepoChangedEventDataMissingError extends Data.TaggedError(
+	"RepoChangedEventDataMissingError",
+)<{
+	readonly message: string;
+	readonly block: string;
+}> {}
+
+export class RepoChangedEventJsonParseError extends Data.TaggedError(
+	"RepoChangedEventJsonParseError",
+)<{
+	readonly message: string;
+	readonly block: string;
+	readonly cause: unknown;
+}> {}
+
+export class RepoChangedEventPayloadDecodeError extends Data.TaggedError(
+	"RepoChangedEventPayloadDecodeError",
+)<{
+	readonly message: string;
+	readonly block: string;
+	readonly cause: unknown;
+}> {}
+
+export type ParseRepoChangedEventBlockError =
+	| RepoChangedEventDataMissingError
+	| RepoChangedEventJsonParseError
+	| RepoChangedEventPayloadDecodeError;
 
 export function appendSseChunk(buffer: string, chunk: string): string {
 	return `${buffer}${chunk.replace(/\r\n/g, "\n")}`;
@@ -35,9 +71,11 @@ export function drainSseBlocks(buffer: string): DrainedSseBlocks {
 	return { blocks, remaining };
 }
 
-export function parseRepoChangedEventBlock(
+export const parseRepoChangedEventBlock = Effect.fn(
+	"watchEvents.parseRepoChangedEventBlock",
+)(function* (
 	block: string,
-): RepoChangedEvent | null {
+) {
 	let eventName = "message";
 	const dataLines: Array<string> = [];
 
@@ -57,39 +95,38 @@ export function parseRepoChangedEventBlock(
 		}
 	}
 
-	if (eventName !== "repo-changed" || dataLines.length === 0) {
-		return null;
+	if (eventName !== "repo-changed") {
+		return Option.none();
 	}
 
-	let decoded: unknown;
-	try {
-		decoded = JSON.parse(dataLines.join("\n"));
-	} catch {
-		return null;
+	if (dataLines.length === 0) {
+		return yield* new RepoChangedEventDataMissingError({
+			message: "repo-changed event did not include a data payload.",
+			block,
+		});
 	}
 
-	if (!isRecord(decoded)) {
-		return null;
-	}
+	const decoded = yield* decodeJsonString(dataLines.join("\n")).pipe(
+		Effect.mapError(
+			(cause) =>
+				new RepoChangedEventJsonParseError({
+					message: "repo-changed event payload is not valid JSON.",
+					block,
+					cause,
+				}),
+		),
+	);
 
-	const subscriptionId = decoded.subscriptionId;
-	const repoRoot = decoded.repoRoot;
-	const version = decoded.version;
-	const changedAt = decoded.changedAt;
+	const event = yield* decodeRepoChangedEvent(decoded).pipe(
+		Effect.mapError(
+			(cause) =>
+				new RepoChangedEventPayloadDecodeError({
+					message: "repo-changed event payload does not match expected shape.",
+					block,
+					cause,
+				}),
+		),
+	);
 
-	if (
-		typeof subscriptionId !== "string" ||
-		typeof repoRoot !== "string" ||
-		typeof version !== "number" ||
-		typeof changedAt !== "string"
-	) {
-		return null;
-	}
-
-	return {
-		subscriptionId,
-		repoRoot,
-		version,
-		changedAt,
-	};
-}
+	return Option.some(event);
+});

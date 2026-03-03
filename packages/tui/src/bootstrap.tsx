@@ -1,10 +1,7 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { Data, Effect, type Option, pipe } from "effect";
-import {
-	makeVigilDaemonApiCall,
-	type VigilDaemonConnection,
-} from "#daemon/client.ts";
+import type { VigilDaemonConnection } from "#daemon/client.ts";
 import {
 	FrontendRuntimeProvider,
 	makeFrontendRuntime,
@@ -108,10 +105,6 @@ export function startVigilTuiProgram(
 			themePreference,
 		);
 		const frontendRuntime = makeFrontendRuntime();
-		const daemonApiCall = makeVigilDaemonApiCall(
-			options.daemonConnection,
-			frontendRuntime,
-		);
 
 		const renderer = yield* Effect.tryPromise({
 			try: () => createCliRenderer({ useMouse: true }),
@@ -131,7 +124,6 @@ export function startVigilTuiProgram(
 							initialThemeName={initialThemeName}
 							initialThemeMode={themePreference.mode ?? "dark"}
 							chooserFilePath={options.chooserFilePath}
-							daemonApiCall={daemonApiCall}
 							daemonConnection={options.daemonConnection}
 						/>
 					</FrontendRuntimeProvider>,

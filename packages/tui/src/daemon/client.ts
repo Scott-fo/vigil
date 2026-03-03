@@ -1,7 +1,6 @@
 import { FetchHttpClient, HttpApiClient } from "@effect/platform";
 import { VIGIL_DAEMON_TOKEN_HEADER, VigilApi } from "@vigil/api";
 import { Effect, Layer } from "effect";
-import type { FrontendRuntime } from "#runtime/frontend-runtime.tsx";
 
 export interface VigilDaemonConnection {
 	readonly host: string;
@@ -38,24 +37,3 @@ export const makeVigilDaemonClient = (connection: VigilDaemonConnection) =>
 export type VigilDaemonClient = Effect.Effect.Success<
 	ReturnType<typeof makeVigilDaemonClient>
 >;
-
-export type VigilDaemonApiCall = <A, E>(
-	fn: (client: VigilDaemonClient) => Effect.Effect<A, E, never>,
-) => Promise<A>;
-
-export function makeVigilDaemonApiCall(
-	connection: VigilDaemonConnection,
-	runtime: FrontendRuntime,
-): VigilDaemonApiCall {
-	const makeClient = makeVigilDaemonClient(connection);
-
-	return <A, E>(
-		fn: (client: VigilDaemonClient) => Effect.Effect<A, E, never>,
-	): Promise<A> =>
-		runtime.runPromise(
-			Effect.gen(function* () {
-				const client = yield* makeClient;
-				return yield* fn(client);
-			}),
-		);
-}

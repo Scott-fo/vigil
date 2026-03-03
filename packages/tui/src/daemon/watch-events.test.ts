@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Effect, Either, Option } from "effect";
 import {
 	appendSseChunk,
 	drainSseBlocks,
@@ -30,40 +31,57 @@ describe("appendSseChunk", () => {
 
 describe("parseRepoChangedEventBlock", () => {
 	test("parses a valid repo-changed block", () => {
-		const event = parseRepoChangedEventBlock(
-			[
-				"event: repo-changed",
-				'data: {"subscriptionId":"sub-1","repoRoot":"/tmp/repo","version":3,"changedAt":"2026-03-03T01:02:03.000Z"}',
-			].join("\n"),
+		const event = Effect.runSync(
+			parseRepoChangedEventBlock(
+				[
+					"event: repo-changed",
+					'data: {"subscriptionId":"sub-1","repoRoot":"/tmp/repo","version":3,"changedAt":"2026-03-03T01:02:03.000Z"}',
+				].join("\n"),
+			),
 		);
 
-		expect(event).toEqual({
-			subscriptionId: "sub-1",
-			repoRoot: "/tmp/repo",
-			version: 3,
-			changedAt: "2026-03-03T01:02:03.000Z",
-		});
+		expect(event).toEqual(
+			Option.some({
+				subscriptionId: "sub-1",
+				repoRoot: "/tmp/repo",
+				version: 3,
+				changedAt: "2026-03-03T01:02:03.000Z",
+			}),
+		);
 	});
 
 	test("ignores comment and non repo-changed blocks", () => {
-		expect(parseRepoChangedEventBlock(": connected")).toBeNull();
+		expect(Effect.runSync(parseRepoChangedEventBlock(": connected"))).toEqual(
+			Option.none(),
+		);
 		expect(
-			parseRepoChangedEventBlock(
-				["event: keepalive", 'data: {"ok":true}'].join("\n"),
+			Effect.runSync(
+				parseRepoChangedEventBlock(
+					["event: keepalive", 'data: {"ok":true}'].join("\n"),
+				),
 			),
-		).toBeNull();
+		).toEqual(Option.none());
 	});
 
-	test("returns null for invalid JSON payloads", () => {
-		expect(
+	test("returns tagged errors for invalid payloads", () => {
+		const invalidJson = Effect.runSync(
 			parseRepoChangedEventBlock(
 				["event: repo-changed", "data: {not-json}"].join("\n"),
-			),
-		).toBeNull();
-		expect(
+			).pipe(Effect.either),
+		);
+		expect(Either.isLeft(invalidJson)).toBe(true);
+		if (Either.isLeft(invalidJson)) {
+			expect(invalidJson.left._tag).toBe("RepoChangedEventJsonParseError");
+		}
+
+		const invalidShape = Effect.runSync(
 			parseRepoChangedEventBlock(
 				["event: repo-changed", 'data: {"version":"x"}'].join("\n"),
-			),
-		).toBeNull();
+			).pipe(Effect.either),
+		);
+		expect(Either.isLeft(invalidShape)).toBe(true);
+		if (Either.isLeft(invalidShape)) {
+			expect(invalidShape.left._tag).toBe("RepoChangedEventPayloadDecodeError");
+		}
 	});
 });

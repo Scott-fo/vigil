@@ -205,20 +205,27 @@ export function App(props: AppProps) {
 	const watchRepoPath = useMemo(() => process.cwd(), []);
 	const isWorkingTreeMode = isWorkingTreeReviewMode(reviewMode);
 
-	const { refreshFiles } = useFileRefresh({
+	const { refreshFiles, refreshFilesEffect } = useFileRefresh({
 		updateFileView,
 		updateUiStatus,
 		renderRepoActionError: formatRepoActionError,
 		reviewMode,
 	});
 
-	const onRefreshInstruction = useCallback(async () => {
-		await refreshFiles(false);
-		setRefreshInstructionVersion((current) => current + 1);
-	}, [refreshFiles]);
+	const onRefreshInstruction = useMemo(
+		() =>
+			pipe(
+				refreshFilesEffect(false),
+				Effect.tap(() =>
+					Effect.sync(() => {
+						setRefreshInstructionVersion((current) => current + 1);
+					}),
+				),
+			),
+		[refreshFilesEffect],
+	);
 
 	useDaemonWatch({
-		daemonApiCall: props.daemonApiCall,
 		daemonConnection: props.daemonConnection,
 		repoPath: watchRepoPath,
 		enabled: isWorkingTreeMode,
