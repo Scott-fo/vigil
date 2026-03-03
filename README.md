@@ -20,7 +20,7 @@ bun dev
 ### Global command (recommended while iterating)
 
 ```bash
-bun run install:global
+bun run install:global (or bun install && bun link)
 ```
 
 This creates a global `vigil` command using `bun link`.
