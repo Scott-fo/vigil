@@ -1,6 +1,4 @@
 import path from "node:path";
-import { watch as watchFileSystem } from "node:fs";
-import * as PlatformError from "@effect/platform/Error";
 import * as FileSystem from "@effect/platform/FileSystem";
 import {
 	Cause,
@@ -14,12 +12,12 @@ import {
 	pipe,
 	Queue,
 	Ref,
-	Schedule,
 	Stream,
 } from "effect";
 
 const REPO_WATCH_DEBOUNCE_MS = 250;
 const REPO_WATCH_SAFETY_POLL_MS = 30_000;
+const REPO_WATCH_DEAD_POLL_MS = 3_000;
 
 interface RepoWatcherState {
 	readonly version: number;
@@ -67,13 +65,6 @@ export type RepoWatcherRetainError =
 	| RepoWatcherResolveError
 	| RepoWatcherGitError;
 
-interface RepoFileWatchEvent {
-	readonly path: string;
-	readonly eventType: "rename" | "change";
-}
-
-const TRANSIENT_WATCH_ERROR_CODES = new Set(["ENOENT", "EACCES", "EPERM"]);
-
 function formatFsWatchEvent(event: unknown): string {
 	if (typeof event === "string") {
 		return event;
@@ -101,37 +92,6 @@ function formatFsWatchEvent(event: unknown): string {
 	return String(event);
 }
 
-function readWatchErrorCode(cause: unknown): string | undefined {
-	if (typeof cause !== "object" || cause === null) {
-		return undefined;
-	}
-
-	const code = (cause as { code?: unknown }).code;
-	return typeof code === "string" ? code : undefined;
-}
-
-function readWatchErrorMessage(cause: unknown): string | undefined {
-	if (typeof cause !== "object" || cause === null) {
-		return undefined;
-	}
-
-	const message = (cause as { message?: unknown }).message;
-	return typeof message === "string" ? message : undefined;
-}
-
-function isTransientWatchError(cause: unknown): boolean {
-	const code = readWatchErrorCode(cause);
-	if (code && TRANSIENT_WATCH_ERROR_CODES.has(code)) {
-		return true;
-	}
-
-	const message = readWatchErrorMessage(cause);
-	return (
-		typeof message === "string" &&
-		message.toLowerCase().includes("no such file or directory")
-	);
-}
-
 function shouldIgnoreFsEventPath(watchPath: string): boolean {
 	const normalizedPath = watchPath.replaceAll("\\", "/").replace(/^\.\//, "");
 	const pathSegments = normalizedPath
@@ -154,55 +114,6 @@ function shouldIgnoreFsEventPath(watchPath: string): boolean {
 		normalizedPath.includes("/node_modules/")
 	);
 }
-
-const watchRepoFileEvents = (
-	repoRoot: string,
-): Stream.Stream<RepoFileWatchEvent, PlatformError.SystemError> =>
-	Stream.asyncScoped<RepoFileWatchEvent, PlatformError.SystemError>((emit) =>
-		Effect.acquireRelease(
-			Effect.sync(() => {
-				const watcher = watchFileSystem(
-					repoRoot,
-					{ recursive: true },
-					(eventType, fileName) => {
-						const watchPath =
-							typeof fileName === "string"
-								? fileName
-								: fileName instanceof Buffer
-									? fileName.toString("utf8")
-									: "";
-						if (watchPath.length === 0) {
-							return;
-						}
-
-						emit.single({
-							path: watchPath,
-							eventType,
-						});
-					},
-				);
-
-				watcher.on("error", (cause) => {
-					if (isTransientWatchError(cause)) {
-						return;
-					}
-
-					emit.fail(
-						new PlatformError.SystemError({
-							reason: "Unknown",
-							module: "FileSystem",
-							method: "watch",
-							pathOrDescriptor: repoRoot,
-							cause,
-						}),
-					);
-				});
-
-				return watcher;
-			}),
-			(watcher) => Effect.sync(() => watcher.close()),
-		),
-	);
 
 const runGitInRepo = Effect.fn("RepoWatcher.runGitInRepo")(function* (
 	repoRoot: string,
@@ -336,56 +247,83 @@ const resolveRepoRoot = Effect.fn("RepoWatcher.resolveRepoRoot")(function* (
 });
 
 function makeRepoWatcherLoop(options: {
+	readonly fs: FileSystem.FileSystem;
 	readonly repoRoot: string;
 	readonly stateRef: Ref.Ref<RepoWatcherState>;
 	readonly eventPubSub: PubSub.PubSub<RepoWatcherEvent>;
 }): Effect.Effect<void, never> {
 	return Effect.gen(function* () {
+		const watcherDeadRef = yield* Ref.make(false);
+
 		const triggerQueue = yield* Queue.sliding<void>(1);
+		const pollWakeQueue = yield* Queue.sliding<void>(1);
+
 		const triggerRefresh = Queue.offer(triggerQueue, undefined).pipe(
 			Effect.asVoid,
 		);
+		const wakePollLoop = Queue.offer(pollWakeQueue, undefined).pipe(
+			Effect.asVoid,
+		);
+
 		yield* Effect.logInfo(`[repo-watcher] watching ${options.repoRoot}`);
 
-		const fsWatchFiber = yield* watchRepoFileEvents(options.repoRoot).pipe(
-			Stream.filter((event) => !shouldIgnoreFsEventPath(event.path)),
-			Stream.runForEach((event) =>
-				triggerRefresh.pipe(
-					Effect.zipRight(
-						Effect.logInfo(
-							`[repo-watcher] fs event for ${options.repoRoot}: ${formatFsWatchEvent(event)}`,
+		const fsWatchFiber = yield* options.fs
+			.watch(options.repoRoot, { recursive: true })
+			.pipe(
+				Stream.filter((event) => !shouldIgnoreFsEventPath(event.path)),
+				Stream.runForEach((event) =>
+					triggerRefresh.pipe(
+						Effect.zipRight(
+							Effect.logInfo(
+								`[repo-watcher] fs event for ${options.repoRoot}: ${formatFsWatchEvent(event)}`,
+							),
 						),
 					),
 				),
-			),
-			Effect.tapErrorCause((cause) =>
-				Effect.logWarning(
-					`[repo-watcher] filesystem watch stream failed for ${options.repoRoot}; retrying: ${Cause.pretty(cause, { renderErrorCause: true })}`,
+				Effect.catchAllCause((cause) =>
+					Ref.set(watcherDeadRef, true).pipe(
+						Effect.zipRight(triggerRefresh),
+						Effect.zipRight(wakePollLoop),
+						Effect.zipRight(
+							Effect.logWarning(
+								`[repo-watcher] filesystem watch stream failed for ${options.repoRoot}; switching to ${REPO_WATCH_DEAD_POLL_MS}ms polling: ${Cause.pretty(cause, { renderErrorCause: true })}`,
+							),
+						),
+					),
 				),
-			),
-			Effect.retry(Schedule.spaced("1 second")),
-			Effect.forkDaemon,
-		);
+				Effect.forkDaemon,
+			);
 
 		const safetyPollFiber = yield* pipe(
 			Effect.forever(
-				Effect.sleep(`${REPO_WATCH_SAFETY_POLL_MS} millis`).pipe(
-					Effect.zipRight(triggerRefresh),
-				),
+				Effect.gen(function* () {
+					const pollMs = (yield* Ref.get(watcherDeadRef))
+						? REPO_WATCH_DEAD_POLL_MS
+						: REPO_WATCH_SAFETY_POLL_MS;
+
+					yield* Effect.raceFirst(
+						Effect.sleep(`${pollMs} millis`),
+						Queue.take(pollWakeQueue),
+					);
+
+					yield* Queue.takeAll(pollWakeQueue);
+					yield* triggerRefresh;
+				}),
 			),
 			Effect.forkDaemon,
 		);
 
 		yield* triggerRefresh;
 
-		yield* Effect.forever(
+		return yield* Effect.forever(
 			Effect.gen(function* () {
 				yield* Queue.take(triggerQueue);
 				yield* Effect.sleep(`${REPO_WATCH_DEBOUNCE_MS} millis`);
 				yield* Queue.takeAll(triggerQueue);
 
-				const maybeNextSnapshot = yield* pipe(
-					computeRepoSnapshot(options.repoRoot),
+				const maybeNextSnapshot = yield* computeRepoSnapshot(
+					options.repoRoot,
+				).pipe(
 					Effect.map(Option.some),
 					Effect.catchAll((error) =>
 						Effect.logWarning(
@@ -399,6 +337,7 @@ function makeRepoWatcherLoop(options: {
 				}
 
 				const nextSnapshot = maybeNextSnapshot.value;
+
 				const currentState = yield* Ref.get(options.stateRef);
 				if (currentState.snapshot === nextSnapshot) {
 					return;
@@ -409,6 +348,7 @@ function makeRepoWatcherLoop(options: {
 					version: nextVersion,
 					snapshot: nextSnapshot,
 				});
+
 				yield* Effect.logInfo(
 					`[repo-watcher] snapshot changed repoRoot=${options.repoRoot} version=${nextVersion}`,
 				);
@@ -426,6 +366,7 @@ function makeRepoWatcherLoop(options: {
 						Fiber.interrupt(fsWatchFiber),
 						Fiber.interrupt(safetyPollFiber),
 						Queue.shutdown(triggerQueue),
+						Queue.shutdown(pollWakeQueue),
 					],
 					{ discard: true },
 				).pipe(
@@ -517,6 +458,7 @@ export class RepoWatcher extends Context.Tag("@vigil/server/RepoWatcher")<
 						});
 
 						const fiber = yield* makeRepoWatcherLoop({
+							fs,
 							repoRoot,
 							stateRef,
 							eventPubSub,
