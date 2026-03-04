@@ -1,6 +1,7 @@
 import * as FileSystem from "@effect/platform/FileSystem";
 import path from "node:path";
 import {
+	Cause,
 	Context,
 	Data,
 	Effect,
@@ -92,12 +93,24 @@ function formatFsWatchEvent(event: unknown): string {
 
 function shouldIgnoreFsEventPath(watchPath: string): boolean {
 	const normalizedPath = watchPath.replaceAll("\\", "/").replace(/^\.\//, "");
+	const pathSegments = normalizedPath
+		.split("/")
+		.map((segment) => segment.trim())
+		.filter((segment) => segment.length > 0);
+	const hasHiddenDirectory = pathSegments
+		.slice(0, -1)
+		.some((segment) => segment.startsWith("."));
 
 	return (
+		hasHiddenDirectory ||
 		normalizedPath === ".git" ||
 		normalizedPath.startsWith(".git/") ||
 		normalizedPath.endsWith("/.git") ||
-		normalizedPath.includes("/.git/")
+		normalizedPath.includes("/.git/") ||
+		normalizedPath === "node_modules" ||
+		normalizedPath.startsWith("node_modules/") ||
+		normalizedPath.endsWith("/node_modules") ||
+		normalizedPath.includes("/node_modules/")
 	);
 }
 
@@ -258,9 +271,9 @@ function makeRepoWatcherLoop(options: {
 						),
 					),
 				),
-				Effect.catchAll((error) =>
+				Effect.catchAllCause((cause) =>
 					Effect.logWarning(
-						`[repo-watcher] filesystem watch stream failed for ${options.repoRoot}: ${error.message}`,
+						`[repo-watcher] filesystem watch stream failed for ${options.repoRoot}: ${Cause.pretty(cause)}`,
 					),
 				),
 				Effect.forkDaemon,
