@@ -1,6 +1,6 @@
 import { resolveReviewsDatabasePath } from "@vigil/config";
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -27,6 +27,14 @@ function toMessage(cause: unknown): string {
 
 function resolveMigrationsFolder(): string {
 	return path.resolve(import.meta.dir, "..", "..", "drizzle");
+}
+
+function hasSqlMigrations(migrationsFolder: string): boolean {
+	if (!existsSync(migrationsFolder)) {
+		return false;
+	}
+
+	return readdirSync(migrationsFolder).some((entry) => entry.endsWith(".sql"));
 }
 
 function makeDbService(db: Db): DbServiceShape {
@@ -59,6 +67,7 @@ export class DbService extends Context.Tag("@vigil/server/DbService")<
 			yield* Effect.try({
 				try: () => {
 					mkdirSync(databaseDirectoryPath, { recursive: true });
+					mkdirSync(migrationsFolder, { recursive: true });
 				},
 				catch: (cause) =>
 					DbError.make({
@@ -88,17 +97,23 @@ export class DbService extends Context.Tag("@vigil/server/DbService")<
 				schema,
 			});
 
-			yield* Effect.try({
-				try: () => {
-					migrate(client, { migrationsFolder });
-				},
-				catch: (cause) =>
-					DbError.make({
-						message: `Unable to migrate review database: ${toMessage(cause)}`,
-					}),
-			});
+			if (hasSqlMigrations(migrationsFolder)) {
+				yield* Effect.try({
+					try: () => {
+						migrate(client, { migrationsFolder });
+					},
+					catch: (cause) =>
+						DbError.make({
+							message: `Unable to migrate review database: ${toMessage(cause)}`,
+						}),
+				});
 
-			yield* Effect.logInfo(`[review-db] migrated database=${databaseFilePath}`);
+				yield* Effect.logInfo(`[review-db] migrated database=${databaseFilePath}`);
+			} else {
+				yield* Effect.logInfo(
+					`[review-db] no migrations found database=${databaseFilePath}`,
+				);
+			}
 
 			return DbService.of(makeDbService(client));
 		}),
