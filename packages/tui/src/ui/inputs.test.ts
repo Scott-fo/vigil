@@ -32,9 +32,11 @@ function context(
 		isCommitModalOpen: false,
 		isDiscardModalOpen: false,
 		isHelpModalOpen: false,
+		isSupportReviewModalOpen: false,
 		isThemeModalOpen: false,
 		isBranchCompareModalOpen: false,
 		isBranchCompareMode: false,
+		isReviewPanelActive: false,
 		activePane: "sidebar",
 		canInitializeGitRepo: false,
 		stagedFileCount: 1,
@@ -133,6 +135,17 @@ describe("decodeKeyboardIntent", () => {
 		expect(Option.isSome(intent)).toBe(true);
 		if (Option.isSome(intent)) {
 			expect(intent.value._tag).toBe("OpenHelpModal");
+		}
+	});
+
+	test("maps ctrl+r to open support review modal", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "r", ctrl: true }),
+			context(),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("OpenSupportReviewModal");
 		}
 	});
 
@@ -338,6 +351,28 @@ describe("decodeKeyboardIntent", () => {
 		expect(Option.isSome(intent)).toBe(true);
 		if (Option.isSome(intent)) {
 			expect(intent.value._tag).toBe("CloseHelpModal");
+		}
+	});
+
+	test("maps escape to close support review modal when open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "escape" }),
+			context({ isSupportReviewModalOpen: true }),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("CloseSupportReviewModal");
+		}
+	});
+
+	test("maps enter to confirm support review modal when open", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "return" }),
+			context({ isSupportReviewModalOpen: true }),
+		);
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("ConfirmSupportReviewModal");
 		}
 	});
 

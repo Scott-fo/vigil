@@ -202,6 +202,21 @@ export class ReviewThreadWithCommentsResponse extends Schema.Class<ReviewThreadW
 	isStale: Schema.Boolean,
 }) {}
 
+export class SupportReviewDiffRequest extends Schema.Class<SupportReviewDiffRequest>(
+	"SupportReviewDiffRequest",
+)({
+	repoRoot: Schema.NonEmptyString,
+	mode: Schema.Literal("working-tree", "branch-compare"),
+	sourceRef: Schema.NullOr(Schema.String),
+	destinationRef: Schema.NullOr(Schema.String),
+}) {}
+
+export class SupportReviewDiffResponse extends Schema.Class<SupportReviewDiffResponse>(
+	"SupportReviewDiffResponse",
+)({
+	markdown: Schema.String,
+}) {}
+
 export class DaemonUnauthorizedError extends Schema.TaggedError<DaemonUnauthorizedError>()(
 	"DaemonUnauthorizedError",
 	{
@@ -256,6 +271,14 @@ export class ReviewNotFoundError extends Schema.TaggedError<ReviewNotFoundError>
 		message: Schema.String,
 	},
 	HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+export class SupportBadRequestError extends Schema.TaggedError<SupportBadRequestError>()(
+	"SupportBadRequestError",
+	{
+		message: Schema.String,
+	},
+	HttpApiSchema.annotations({ status: 400 }),
 ) {}
 
 export class VigilDaemonAuth extends HttpApiMiddleware.Tag<VigilDaemonAuth>()(
@@ -377,11 +400,21 @@ export class ReviewApi extends HttpApiGroup.make("review")
 	)
 	.middleware(VigilDaemonAuth) {}
 
+export class SupportApi extends HttpApiGroup.make("support")
+	.add(
+		HttpApiEndpoint.post("reviewDiff")`/support/review-diff`
+			.setPayload(SupportReviewDiffRequest)
+			.addSuccess(SupportReviewDiffResponse)
+			.addError(SupportBadRequestError),
+	)
+	.middleware(VigilDaemonAuth) {}
+
 export class VigilApi extends HttpApi.make("vigil")
 	.add(SystemApi)
 	.add(WatchApi)
 	.add(SessionApi)
-	.add(ReviewApi) {}
+	.add(ReviewApi)
+	.add(SupportApi) {}
 
 export interface VigilDaemonConnection {
 	readonly host: string;

@@ -18,6 +18,8 @@ import type {
 	FileViewState,
 	HelpModalState,
 	ReviewMode,
+	SupportReviewModalState,
+	SupportReviewState,
 	ThemeModalState,
 	UiStatus,
 } from "#ui/state.ts";
@@ -29,8 +31,10 @@ interface UseAppSelectorsOptions {
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
 	readonly helpModal: HelpModalState;
+	readonly supportReviewModal: SupportReviewModalState;
 	readonly themeModal: ThemeModalState;
 	readonly branchCompareModal: BranchCompareModalState;
+	readonly supportReview: SupportReviewState;
 	readonly reviewMode: ReviewMode;
 	readonly themeCatalog: ThemeCatalog;
 	readonly themeName: string;
@@ -45,8 +49,10 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		commitModal,
 		discardModal,
 		helpModal,
+		supportReviewModal,
 		themeModal,
 		branchCompareModal,
+		supportReview,
 		reviewMode,
 		themeCatalog,
 		themeName,
@@ -81,6 +87,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		isCommitModalOpen,
 		isDiscardModalOpen,
 		isHelpModalOpen,
+		isSupportReviewModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
 		isAnyModalOpen,
@@ -88,6 +95,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		commitModal,
 		discardModal,
 		helpModal,
+		supportReviewModal,
 		themeModal,
 		branchCompareModal,
 	});
@@ -259,6 +267,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		isCommitModalOpen,
 		isDiscardModalOpen,
 		isHelpModalOpen,
+		isSupportReviewModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
 		isAnyModalOpen,
@@ -283,5 +292,9 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		visibleFilePaths,
 		selectedVisibleIndex,
 		stagedFileCount,
+		activePanel: supportReview.activeTab,
+		supportReviewLoading: supportReview.loading,
+		supportReviewMarkdown: supportReview.markdown,
+		supportReviewError: supportReview.error,
 	};
 }
