@@ -1,5 +1,5 @@
-import * as FileSystem from "@effect/platform/FileSystem";
 import path from "node:path";
+import * as FileSystem from "@effect/platform/FileSystem";
 import {
 	Cause,
 	Context,
@@ -8,8 +8,8 @@ import {
 	Fiber,
 	Layer,
 	Option,
-	pipe,
 	PubSub,
+	pipe,
 	Queue,
 	Ref,
 	Stream,
@@ -273,7 +273,7 @@ function makeRepoWatcherLoop(options: {
 				),
 				Effect.catchAllCause((cause) =>
 					Effect.logWarning(
-						`[repo-watcher] filesystem watch stream failed for ${options.repoRoot}: ${Cause.pretty(cause)}`,
+						`[repo-watcher] filesystem watch stream failed for ${options.repoRoot}: ${Cause.pretty(cause, { renderErrorCause: true })}`,
 					),
 				),
 				Effect.forkDaemon,
