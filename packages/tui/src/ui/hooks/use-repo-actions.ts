@@ -11,6 +11,7 @@ import type { ThemeCatalog, ThemeMode } from "#theme/theme.ts";
 import { routeKeyboardIntent } from "#ui/hooks/keyboard-intent-router.ts";
 import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions.ts";
 import { useGitActions } from "#ui/hooks/use-git-actions.ts";
+import { useSupportReviewActions } from "#ui/hooks/use-support-review-actions.ts";
 import { useThemeActions } from "#ui/hooks/use-theme-actions.ts";
 import type { AppKeyboardIntent, FocusedPane } from "#ui/inputs.ts";
 import type {
@@ -19,6 +20,8 @@ import type {
 	DiscardModalState,
 	RemoteSyncState,
 	ReviewMode,
+	SupportReviewModalState,
+	SupportReviewState,
 	ThemeModalState,
 	UpdateBranchCompareModal,
 	UpdateCommitModal,
@@ -27,6 +30,8 @@ import type {
 	UpdateHelpModal,
 	UpdateRemoteSyncState,
 	UpdateReviewMode,
+	UpdateSupportReviewModal,
+	UpdateSupportReviewState,
 	UpdateThemeModal,
 	UpdateUiStatus,
 } from "#ui/state.ts";
@@ -56,8 +61,10 @@ interface UseRepoActionsOptions {
 	readonly setSelectedDiffLineIndex: Dispatch<SetStateAction<number>>;
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
+	readonly supportReviewModal: SupportReviewModalState;
 	readonly themeModal: ThemeModalState;
 	readonly branchCompareModal: BranchCompareModalState;
+	readonly supportReview: SupportReviewState;
 	readonly remoteSync: RemoteSyncState;
 	readonly reviewMode: ReviewMode;
 	readonly canInitializeGitRepo: boolean;
@@ -66,10 +73,12 @@ interface UseRepoActionsOptions {
 	readonly updateCommitModal: UpdateCommitModal;
 	readonly updateDiscardModal: UpdateDiscardModal;
 	readonly updateHelpModal: UpdateHelpModal;
+	readonly updateSupportReviewModal: UpdateSupportReviewModal;
 	readonly updateThemeModal: UpdateThemeModal;
 	readonly updateBranchCompareModal: UpdateBranchCompareModal;
 	readonly updateRemoteSync: UpdateRemoteSyncState;
 	readonly updateReviewMode: UpdateReviewMode;
+	readonly updateSupportReview: UpdateSupportReviewState;
 	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
 }
@@ -102,8 +111,10 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		setSelectedDiffLineIndex,
 		commitModal,
 		discardModal,
+		supportReviewModal,
 		themeModal,
 		branchCompareModal,
+		supportReview,
 		remoteSync,
 		reviewMode,
 		canInitializeGitRepo,
@@ -112,10 +123,12 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		updateCommitModal,
 		updateDiscardModal,
 		updateHelpModal,
+		updateSupportReviewModal,
 		updateThemeModal,
 		updateBranchCompareModal,
 		updateRemoteSync,
 		updateReviewMode,
+		updateSupportReview,
 		refreshFiles,
 		renderRepoActionError,
 	} = options;
@@ -239,6 +252,21 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	const openHelpModal = useCallback(() => {
 		updateHelpModal(openHelpModalState);
 	}, [updateHelpModal]);
+
+	const {
+		openSupportReviewModal,
+		closeSupportReviewModal,
+		confirmSupportReviewModal,
+		setSupportPanelTab,
+	} = useSupportReviewActions({
+		reviewMode,
+		supportReviewModal,
+		supportReview,
+		updateSupportReviewModal,
+		updateSupportReview,
+		clearUiError,
+		setUiError,
+	});
 
 	const {
 		openThemeModal,
@@ -369,6 +397,9 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				confirmDiscardModal,
 				closeHelpModal,
 				openHelpModal,
+				closeSupportReviewModal,
+				openSupportReviewModal,
+				confirmSupportReviewModal,
 				initializeGitRepository,
 				openThemeModal,
 				openBranchCompareModal,
@@ -395,9 +426,11 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			closeCommitModal,
 			closeDiscardModal,
 			closeHelpModal,
+			closeSupportReviewModal,
 			closeThemeModal,
 			confirmBranchCompareModal,
 			confirmDiscardModal,
+			confirmSupportReviewModal,
 			confirmThemeModal,
 			initializeGitRepository,
 			moveBranchSelection,
@@ -406,6 +439,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			openCommitModal,
 			openDiscardModal,
 			openHelpModal,
+			openSupportReviewModal,
 			openSelectedFile,
 			openThemeModal,
 			renderer.destroy,
@@ -438,5 +472,6 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		onSelectFilePath: selectFilePath,
 		onSelectThemeInModal: selectThemeInModal,
 		onToggleSidebar: toggleSidebar,
+		onSetSupportPanelTab: setSupportPanelTab,
 	};
 }

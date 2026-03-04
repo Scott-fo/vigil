@@ -3,6 +3,7 @@ import type {
 	LineColorConfig,
 	ScrollBoxRenderable,
 	SyntaxStyle,
+	TabSelectRenderable,
 } from "@opentui/core";
 import { Option, pipe } from "effect";
 import {
@@ -20,6 +21,7 @@ import type { ResolvedTheme } from "#theme/theme.ts";
 import type { FileEntry } from "#tui/types.ts";
 import type { FocusedPane } from "#ui/inputs.ts";
 import { getStatusColor, type SidebarItem } from "#ui/sidebar.ts";
+import type { SupportPanelTab } from "#ui/state.ts";
 import {
 	calculateSidebarVirtualWindow,
 	getScrollTopForVisibleRow,
@@ -551,6 +553,146 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 	);
 });
 
+const PANEL_TAB_OPTIONS = [
+	{
+		name: "Diff",
+		description: "Changed files and diff",
+	},
+	{
+		name: "Review",
+		description: "Generated markdown review",
+	},
+];
+
+interface PanelTabsProps {
+	readonly theme: ResolvedTheme;
+	readonly activePanel: SupportPanelTab;
+	readonly onSetSupportPanelTab: (tab: SupportPanelTab) => void;
+}
+
+const PanelTabs = memo(function PanelTabs(props: PanelTabsProps) {
+	const tabSelectRef = useRef<TabSelectRenderable | null>(null);
+
+	useEffect(() => {
+		const tabSelect = tabSelectRef.current;
+		if (!tabSelect) {
+			return;
+		}
+
+		const selectedIndex = props.activePanel === "review" ? 1 : 0;
+		if (tabSelect.getSelectedIndex() !== selectedIndex) {
+			tabSelect.setSelectedIndex(selectedIndex);
+		}
+	}, [props.activePanel]);
+
+	return (
+		<tab-select
+			ref={tabSelectRef}
+			options={PANEL_TAB_OPTIONS}
+			width={16}
+			tabWidth={8}
+			showDescription={false}
+			showUnderline={false}
+			backgroundColor="transparent"
+			textColor={props.theme.textMuted}
+			focusedBackgroundColor="transparent"
+			focusedTextColor={props.theme.text}
+			selectedBackgroundColor={props.theme.backgroundElement}
+			selectedTextColor={props.theme.primary}
+			selectedDescriptionColor={props.theme.textMuted}
+			onChange={(index) => {
+				props.onSetSupportPanelTab(index === 1 ? "review" : "diff");
+			}}
+			onSelect={(index) => {
+				props.onSetSupportPanelTab(index === 1 ? "review" : "diff");
+			}}
+			onMouseDown={(event) => {
+				event.preventDefault();
+
+				const tabSelect = tabSelectRef.current;
+				if (!tabSelect) {
+					return;
+				}
+
+				const relativeX = event.x - tabSelect.x;
+				if (relativeX < 0 || relativeX >= tabSelect.width) {
+					return;
+				}
+
+				const clickedIndex = Math.floor(relativeX / tabSelect.getTabWidth());
+				props.onSetSupportPanelTab(clickedIndex >= 1 ? "review" : "diff");
+			}}
+		/>
+	);
+});
+
+interface ReviewPanelProps {
+	readonly theme: ResolvedTheme;
+	readonly syntaxStyle: SyntaxStyle;
+	readonly reviewModeLabel: string;
+	readonly isFocused: boolean;
+	readonly loading: boolean;
+	readonly markdown: Option.Option<string>;
+	readonly error: Option.Option<string>;
+	readonly isCommitModalOpen: boolean;
+}
+
+const ReviewPanel = memo(function ReviewPanel(props: ReviewPanelProps) {
+	return (
+		<box
+			flexGrow={1}
+			border
+			borderStyle="rounded"
+			borderColor={
+				props.isFocused ? props.theme.borderActive : props.theme.border
+			}
+			flexDirection="column"
+			backgroundColor={props.theme.backgroundPanel}
+		>
+			<box paddingX={1} marginBottom={1} flexDirection="column" width="100%">
+				{props.reviewModeLabel.length > 0 ? (
+					<box width="100%" height={1} justifyContent="flex-end">
+						<text fg={props.theme.textMuted}>{props.reviewModeLabel}</text>
+					</box>
+				) : null}
+				<box width="100%" height={1}>
+					<text fg={props.theme.text}>
+						<strong>Diff Review</strong>
+					</text>
+				</box>
+			</box>
+			<box flexGrow={1} padding={1}>
+				{props.loading ? (
+					<text fg={props.theme.textMuted}>Generating review...</text>
+				) : Option.isSome(props.error) ? (
+					<text fg={props.theme.error}>{props.error.value}</text>
+				) : Option.isSome(props.markdown) ? (
+					<scrollbox
+						flexGrow={1}
+						focused={!props.isCommitModalOpen && props.isFocused}
+						verticalScrollbarOptions={{
+							trackOptions: {
+								backgroundColor: props.theme.backgroundElement,
+								foregroundColor: props.theme.borderActive,
+							},
+						}}
+					>
+						<markdown
+							content={props.markdown.value}
+							syntaxStyle={props.syntaxStyle}
+							conceal
+						/>
+					</scrollbox>
+				) : (
+					<text fg={props.theme.textMuted}>
+						No generated review yet. Press Ctrl+r to request one.
+					</text>
+				)}
+			</box>
+		</box>
+	);
+});
+
 export interface ReviewerProps {
 	readonly theme: ResolvedTheme;
 	readonly syntaxStyle: SyntaxStyle;
@@ -572,6 +714,11 @@ export interface ReviewerProps {
 	readonly onSelectFilePath: (path: string) => void;
 	readonly sidebarOpen: boolean;
 	readonly activePane: FocusedPane;
+	readonly activePanel: SupportPanelTab;
+	readonly supportReviewLoading: boolean;
+	readonly supportReviewMarkdown: Option.Option<string>;
+	readonly supportReviewError: Option.Option<string>;
+	readonly onSetSupportPanelTab: (tab: SupportPanelTab) => void;
 	readonly onToggleSidebar: () => void;
 	readonly onCopySelection: () => void;
 }
@@ -582,51 +729,73 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 		Option.map((file) => file.path),
 	);
 	const isSidebarFocused = props.sidebarOpen && props.activePane === "sidebar";
-	const isDiffFocused = !props.sidebarOpen || props.activePane === "diff";
+	const isContentFocused = !props.sidebarOpen || props.activePane === "diff";
 
 	return (
 		<box
-			flexDirection="row"
+			flexDirection="column"
 			flexGrow={1}
 			onMouseUp={() => {
 				props.onCopySelection();
 			}}
 		>
-			{props.sidebarOpen ? (
-				<SidebarPanel
+			<box width="100%" justifyContent="flex-end">
+				<PanelTabs
 					theme={props.theme}
-					files={props.files}
-					sidebarItems={props.sidebarItems}
-					isFocused={isSidebarFocused}
-					selectedFilePath={selectedFilePath}
-					onToggleDirectory={props.onToggleDirectory}
-					onSelectFilePath={props.onSelectFilePath}
+					activePanel={props.activePanel}
+					onSetSupportPanelTab={props.onSetSupportPanelTab}
 				/>
-			) : (
-				<SidebarRail
-					theme={props.theme}
-					onToggleSidebar={() => {
-						props.onToggleSidebar();
-					}}
-				/>
-			)}
-			<DiffPanel
-				theme={props.theme}
-				syntaxStyle={props.syntaxStyle}
-				reviewModeLabel={props.reviewModeLabel}
-				diffViewMode={props.diffViewMode}
-				selectedDiffLineIndex={props.selectedDiffLineIndex}
-				diffNavigationLines={props.diffNavigationLines}
-				isFocused={isDiffFocused}
-				selectedFile={props.selectedFile}
-				selectedFileDiff={props.selectedFileDiff}
-				selectedFileDiffNote={props.selectedFileDiffNote}
-				selectedFileDiffLoading={props.selectedFileDiffLoading}
-				loading={props.loading}
-				error={props.error}
-				isCommitModalOpen={props.isCommitModalOpen}
-				diffScrollRef={props.diffScrollRef}
-			/>
+			</box>
+			<box flexDirection="row" flexGrow={1}>
+				{props.sidebarOpen ? (
+					<SidebarPanel
+						theme={props.theme}
+						files={props.files}
+						sidebarItems={props.sidebarItems}
+						isFocused={isSidebarFocused}
+						selectedFilePath={selectedFilePath}
+						onToggleDirectory={props.onToggleDirectory}
+						onSelectFilePath={props.onSelectFilePath}
+					/>
+				) : (
+					<SidebarRail
+						theme={props.theme}
+						onToggleSidebar={() => {
+							props.onToggleSidebar();
+						}}
+					/>
+				)}
+				{props.activePanel === "review" ? (
+					<ReviewPanel
+						theme={props.theme}
+						syntaxStyle={props.syntaxStyle}
+						reviewModeLabel={props.reviewModeLabel}
+						isFocused={isContentFocused}
+						loading={props.supportReviewLoading}
+						markdown={props.supportReviewMarkdown}
+						error={props.supportReviewError}
+						isCommitModalOpen={props.isCommitModalOpen}
+					/>
+				) : (
+					<DiffPanel
+						theme={props.theme}
+						syntaxStyle={props.syntaxStyle}
+						reviewModeLabel={props.reviewModeLabel}
+						diffViewMode={props.diffViewMode}
+						selectedDiffLineIndex={props.selectedDiffLineIndex}
+						diffNavigationLines={props.diffNavigationLines}
+						isFocused={isContentFocused}
+						selectedFile={props.selectedFile}
+						selectedFileDiff={props.selectedFileDiff}
+						selectedFileDiffNote={props.selectedFileDiffNote}
+						selectedFileDiffLoading={props.selectedFileDiffLoading}
+						loading={props.loading}
+						error={props.error}
+						isCommitModalOpen={props.isCommitModalOpen}
+						diffScrollRef={props.diffScrollRef}
+					/>
+				)}
+			</box>
 		</box>
 	);
 });

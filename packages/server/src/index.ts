@@ -9,6 +9,8 @@ import {
 	ReviewNotFoundError,
 	ReviewThreadResponse,
 	ReviewThreadWithCommentsResponse,
+	SupportBadRequestError,
+	SupportReviewDiffResponse,
 	type ReviewThreadAnchorRequest as ReviewThreadAnchorApi,
 	SessionBadRequestError,
 	SessionNotFoundError,
@@ -51,6 +53,10 @@ import {
 	type ThreadAnchor,
 	type ThreadWithComments,
 } from "./review/index.ts";
+import {
+	SupportService,
+	type SupportServiceError,
+} from "./support/service.ts";
 export {
 	RepoWatcher,
 	type RepoWatcherEvent,
@@ -148,6 +154,13 @@ export {
 	type ThreadWithComments,
 	type UpdateThreadStateInput,
 } from "./review/index.ts";
+
+export {
+	SupportService,
+	type SupportServiceError,
+	SupportServiceOpencodeError,
+	SupportServiceValidationError,
+} from "./support/service.ts";
 
 export interface StartVigilServerOptions {
 	readonly host: string;
@@ -329,6 +342,27 @@ function mapReviewErrors<A, R>(
 			Effect.fail(
 				ReviewBadRequestError.make({
 					message: "Unable to decode review comment data.",
+				}),
+			),
+		),
+	);
+}
+
+function mapSupportErrors<A, R>(
+	effect: Effect.Effect<A, SupportServiceError, R>,
+): Effect.Effect<A, SupportBadRequestError, R> {
+	return effect.pipe(
+		Effect.catchTag("SupportServiceValidationError", (error) =>
+			Effect.fail(
+				SupportBadRequestError.make({
+					message: error.message,
+				}),
+			),
+		),
+		Effect.catchTag("SupportServiceOpencodeError", (error) =>
+			Effect.fail(
+				SupportBadRequestError.make({
+					message: error.message,
 				}),
 			),
 		),
@@ -633,6 +667,27 @@ export function makeVigilApiLayer(
 				),
 			),
 	);
+	const supportApiLive = HttpApiBuilder.group(VigilApi, "support", (handlers) =>
+		handlers.handle("reviewDiff", ({ payload }) =>
+			pipe(
+				SupportService,
+				Effect.flatMap((supportService) =>
+					supportService.reviewDiff({
+						repoRoot: payload.repoRoot,
+						mode: payload.mode,
+						sourceRef: Option.fromNullable(payload.sourceRef),
+						destinationRef: Option.fromNullable(payload.destinationRef),
+					}),
+				),
+				Effect.map((markdown) =>
+					SupportReviewDiffResponse.make({
+						markdown,
+					}),
+				),
+				mapSupportErrors,
+			),
+		),
+	);
 
 	const reviewServiceLive = ReviewService.layer.pipe(
 		Layer.provide(ReviewThreadRepository.layer),
@@ -646,11 +701,13 @@ export function makeVigilApiLayer(
 		Layer.provide(watchApiLive),
 		Layer.provide(sessionApiLive),
 		Layer.provide(reviewApiLive),
+		Layer.provide(supportApiLive),
 		Layer.provide(makeVigilDaemonAuthLayer(options)),
 		Layer.provide(makeDaemonSessionLayer(options, runtimeOptions)),
 		Layer.provide(RepoSubscription.layer),
 		Layer.provide(RepoWatcher.layer),
 		Layer.provide(reviewServiceLive),
+		Layer.provide(SupportService.layer),
 	);
 }
 

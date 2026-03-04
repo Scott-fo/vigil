@@ -32,6 +32,8 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	{ keys: "b", description: "Open branch compare dialog" },
 	{ keys: "Ctrl+l", description: "Reset to working tree mode" },
 	{ keys: "p / P", description: "Pull / push" },
+	{ keys: "Ctrl+r", description: "Open support review generation dialog" },
+	{ keys: "Diff/Review tabs", description: "Switch between diff and review panel" },
 	{ keys: "t", description: "Open theme picker" },
 	{ keys: "q or esc", description: "Quit reviewer" },
 ];

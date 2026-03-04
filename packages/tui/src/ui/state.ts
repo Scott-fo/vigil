@@ -45,6 +45,18 @@ export const helpModalAtom = Atom.make<HelpModalState>({
 	isOpen: false,
 });
 
+export type SupportReviewModalState = {
+	readonly isOpen: boolean;
+};
+
+export type UpdateSupportReviewModal = (
+	update: (current: SupportReviewModalState) => SupportReviewModalState,
+) => void;
+
+export const supportReviewModalAtom = Atom.make<SupportReviewModalState>({
+	isOpen: false,
+});
+
 export type ThemeModalState =
 	| {
 			readonly isOpen: false;
@@ -142,6 +154,26 @@ export const branchCompareModalAtom = Atom.make<BranchCompareModalState>({
 	isOpen: false,
 });
 
+export type SupportPanelTab = "diff" | "review";
+
+export interface SupportReviewState {
+	readonly activeTab: SupportPanelTab;
+	readonly loading: boolean;
+	readonly markdown: Option.Option<string>;
+	readonly error: Option.Option<string>;
+}
+
+export type UpdateSupportReviewState = (
+	update: (current: SupportReviewState) => SupportReviewState,
+) => void;
+
+export const supportReviewAtom = Atom.make<SupportReviewState>({
+	activeTab: "diff",
+	loading: false,
+	markdown: Option.none(),
+	error: Option.none(),
+});
+
 export function closeCommitModalState(
 	current: CommitModalState,
 ): CommitModalState {
@@ -211,6 +243,18 @@ export function closeHelpModalState(current: HelpModalState): HelpModalState {
 }
 
 export function openHelpModalState(current: HelpModalState): HelpModalState {
+	return current.isOpen ? current : { isOpen: true };
+}
+
+export function closeSupportReviewModalState(
+	current: SupportReviewModalState,
+): SupportReviewModalState {
+	return current.isOpen ? { isOpen: false } : current;
+}
+
+export function openSupportReviewModalState(
+	current: SupportReviewModalState,
+): SupportReviewModalState {
 	return current.isOpen ? current : { isOpen: true };
 }
 
@@ -297,6 +341,7 @@ export interface ModalVisibility {
 	readonly isCommitModalOpen: boolean;
 	readonly isDiscardModalOpen: boolean;
 	readonly isHelpModalOpen: boolean;
+	readonly isSupportReviewModalOpen: boolean;
 	readonly isThemeModalOpen: boolean;
 	readonly isBranchCompareModalOpen: boolean;
 	readonly isAnyModalOpen: boolean;
@@ -306,6 +351,7 @@ interface DeriveModalVisibilityOptions {
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
 	readonly helpModal: HelpModalState;
+	readonly supportReviewModal: SupportReviewModalState;
 	readonly themeModal: ThemeModalState;
 	readonly branchCompareModal: BranchCompareModalState;
 }
@@ -316,20 +362,71 @@ export function deriveModalVisibility(
 	const isCommitModalOpen = options.commitModal.isOpen;
 	const isDiscardModalOpen = options.discardModal.isOpen;
 	const isHelpModalOpen = options.helpModal.isOpen;
+	const isSupportReviewModalOpen = options.supportReviewModal.isOpen;
 	const isThemeModalOpen = options.themeModal.isOpen;
 	const isBranchCompareModalOpen = options.branchCompareModal.isOpen;
 	return {
 		isCommitModalOpen,
 		isDiscardModalOpen,
 		isHelpModalOpen,
+		isSupportReviewModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
 		isAnyModalOpen:
 			isCommitModalOpen ||
 			isDiscardModalOpen ||
 			isHelpModalOpen ||
+			isSupportReviewModalOpen ||
 			isThemeModalOpen ||
 			isBranchCompareModalOpen,
+	};
+}
+
+export function setSupportReviewActiveTabState(
+	current: SupportReviewState,
+	activeTab: SupportPanelTab,
+): SupportReviewState {
+	return current.activeTab === activeTab
+		? current
+		: {
+				...current,
+				activeTab,
+			};
+}
+
+export function beginSupportReviewGenerationState(
+	current: SupportReviewState,
+): SupportReviewState {
+	return {
+		...current,
+		activeTab: "review",
+		loading: true,
+		error: Option.none(),
+	};
+}
+
+export function completeSupportReviewGenerationState(
+	current: SupportReviewState,
+	markdown: string,
+): SupportReviewState {
+	return {
+		...current,
+		activeTab: "review",
+		loading: false,
+		markdown: Option.some(markdown),
+		error: Option.none(),
+	};
+}
+
+export function failSupportReviewGenerationState(
+	current: SupportReviewState,
+	error: string,
+): SupportReviewState {
+	return {
+		...current,
+		activeTab: "review",
+		loading: false,
+		error: Option.some(error),
 	};
 }
 

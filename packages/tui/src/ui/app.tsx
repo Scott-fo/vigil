@@ -16,6 +16,8 @@ import { RemoteSyncStatus } from "#ui/components/remote-sync-status.tsx";
 import { Reviewer } from "#ui/components/reviewer.tsx";
 import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar.tsx";
 import { Splash } from "#ui/components/splash.tsx";
+import { SupportReviewModal } from "#ui/components/support-review-modal.tsx";
+import { SupportReviewStatus } from "#ui/components/support-review-status.tsx";
 import { ThemeModal } from "#ui/components/theme-modal.tsx";
 import { useAppSelectors } from "#ui/hooks/use-app-selectors.ts";
 import { useDaemonSession } from "#ui/hooks/use-daemon-session.ts";
@@ -35,6 +37,8 @@ import {
 	isWorkingTreeReviewMode,
 	remoteSyncAtom,
 	reviewModeAtom,
+	supportReviewAtom,
+	supportReviewModalAtom,
 	themeModalAtom,
 	type UpdateBranchCompareModal,
 	type UpdateCommitModal,
@@ -43,6 +47,8 @@ import {
 	type UpdateHelpModal,
 	type UpdateRemoteSyncState,
 	type UpdateReviewMode,
+	type UpdateSupportReviewModal,
+	type UpdateSupportReviewState,
 	type UpdateThemeModal,
 	type UpdateUiStatus,
 	uiStatusAtom,
@@ -77,6 +83,10 @@ export function App(props: AppProps) {
 	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
 	const [discardModal, setDiscardModal] = useAtom(discardModalAtom);
 	const [helpModal, setHelpModal] = useAtom(helpModalAtom);
+	const [supportReviewModal, setSupportReviewModal] = useAtom(
+		supportReviewModalAtom,
+	);
+	const [supportReview, setSupportReview] = useAtom(supportReviewAtom);
 	const [themeModal, setThemeModal] = useAtom(themeModalAtom);
 	const [branchCompareModal, setBranchCompareModal] = useAtom(
 		branchCompareModalAtom,
@@ -116,6 +126,20 @@ export function App(props: AppProps) {
 			setHelpModal(update);
 		},
 		[setHelpModal],
+	);
+
+	const updateSupportReviewModal = useCallback<UpdateSupportReviewModal>(
+		(update) => {
+			setSupportReviewModal(update);
+		},
+		[setSupportReviewModal],
+	);
+
+	const updateSupportReview = useCallback<UpdateSupportReviewState>(
+		(update) => {
+			setSupportReview(update);
+		},
+		[setSupportReview],
 	);
 
 	const updateThemeModal = useCallback<UpdateThemeModal>(
@@ -164,6 +188,7 @@ export function App(props: AppProps) {
 		isCommitModalOpen,
 		isDiscardModalOpen,
 		isHelpModalOpen,
+		isSupportReviewModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
 		isAnyModalOpen,
@@ -188,14 +213,20 @@ export function App(props: AppProps) {
 		visibleFilePaths,
 		selectedVisibleIndex,
 		stagedFileCount,
+		activePanel,
+		supportReviewLoading,
+		supportReviewMarkdown,
+		supportReviewError,
 	} = useAppSelectors({
 		fileView,
 		uiStatus,
 		commitModal,
 		discardModal,
 		helpModal,
+		supportReviewModal,
 		themeModal,
 		branchCompareModal,
+		supportReview,
 		reviewMode,
 		themeCatalog: props.themeCatalog,
 		themeName,
@@ -392,6 +423,7 @@ export function App(props: AppProps) {
 		onKeyboardIntent,
 		onToggleDirectory,
 		onSelectFilePath,
+		onSetSupportPanelTab,
 		onSelectThemeInModal,
 		onToggleSidebar,
 	} = useRepoActions({
@@ -411,19 +443,23 @@ export function App(props: AppProps) {
 		setSelectedDiffLineIndex,
 		commitModal,
 		discardModal,
+		supportReviewModal,
 		themeModal,
 		branchCompareModal,
+		supportReview,
 		canInitializeGitRepo,
 		reviewMode,
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
 		updateHelpModal,
+		updateSupportReviewModal,
 		updateThemeModal,
 		updateBranchCompareModal,
 		remoteSync,
 		updateRemoteSync,
 		updateReviewMode,
+		updateSupportReview,
 		updateDiscardModal,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
@@ -451,9 +487,11 @@ export function App(props: AppProps) {
 		isCommitModalOpen,
 		isDiscardModalOpen,
 		isHelpModalOpen,
+		isSupportReviewModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
 		isBranchCompareMode: isBranchCompareReviewMode(reviewMode),
+		isReviewPanelActive: activePanel === "review",
 		activePane,
 		canInitializeGitRepo,
 		stagedFileCount,
@@ -464,6 +502,10 @@ export function App(props: AppProps) {
 		selectedDiffLineNumber,
 		onIntent: onKeyboardIntent,
 	});
+
+	const statusBannerCount =
+		(remoteSync._tag === "running" ? 1 : 0) + (supportReviewLoading ? 1 : 0);
+	const snackbarTop = statusBannerCount === 0 ? 1 : statusBannerCount * 3 + 1;
 
 	return (
 		<box
@@ -497,6 +539,11 @@ export function App(props: AppProps) {
 					sidebarOpen={sidebarOpen}
 					onToggleSidebar={onToggleSidebar}
 					activePane={activePane}
+					activePanel={activePanel}
+					supportReviewLoading={supportReviewLoading}
+					supportReviewMarkdown={supportReviewMarkdown}
+					supportReviewError={supportReviewError}
+					onSetSupportPanelTab={onSetSupportPanelTab}
 					onCopySelection={onCopySelection}
 				/>
 			)}
@@ -521,6 +568,18 @@ export function App(props: AppProps) {
 			)}
 			{isHelpModalOpen && (
 				<HelpModal theme={theme} modalBackdropColor={modalBackdropColor} />
+			)}
+			{isSupportReviewModalOpen && (
+				<SupportReviewModal
+					theme={theme}
+					modalBackdropColor={modalBackdropColor}
+					onCancel={() => {
+						onKeyboardIntent({ _tag: "CloseSupportReviewModal" });
+					}}
+					onConfirm={() => {
+						onKeyboardIntent({ _tag: "ConfirmSupportReviewModal" });
+					}}
+				/>
 			)}
 			{isThemeModalOpen && (
 				<ThemeModal
@@ -552,12 +611,13 @@ export function App(props: AppProps) {
 					onActivateField={onBranchActivateField}
 				/>
 			)}
-			<RemoteSyncStatus theme={theme} state={remoteSync} />
-			<Snackbar
+			<SupportReviewStatus
 				theme={theme}
-				notice={snackbarNotice}
+				loading={supportReviewLoading}
 				top={remoteSync._tag === "running" ? 4 : 1}
 			/>
+			<RemoteSyncStatus theme={theme} state={remoteSync} />
+			<Snackbar theme={theme} notice={snackbarNotice} top={snackbarTop} />
 		</box>
 	);
 }

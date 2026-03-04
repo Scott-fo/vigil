@@ -10,9 +10,11 @@ interface UseAppKeyboardInputOptions {
 	isCommitModalOpen: boolean;
 	isDiscardModalOpen: boolean;
 	isHelpModalOpen: boolean;
+	isSupportReviewModalOpen: boolean;
 	isThemeModalOpen: boolean;
 	isBranchCompareModalOpen: boolean;
 	isBranchCompareMode: boolean;
+	isReviewPanelActive: boolean;
 	activePane: FocusedPane;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
@@ -28,9 +30,11 @@ export interface KeyboardIntentContext {
 	isCommitModalOpen: boolean;
 	isDiscardModalOpen: boolean;
 	isHelpModalOpen: boolean;
+	isSupportReviewModalOpen: boolean;
 	isThemeModalOpen: boolean;
 	isBranchCompareModalOpen: boolean;
 	isBranchCompareMode: boolean;
+	isReviewPanelActive: boolean;
 	activePane: FocusedPane;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
@@ -52,6 +56,9 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "ConfirmDiscardModal" }
 	| { readonly _tag: "CloseHelpModal" }
 	| { readonly _tag: "OpenHelpModal" }
+	| { readonly _tag: "CloseSupportReviewModal" }
+	| { readonly _tag: "OpenSupportReviewModal" }
+	| { readonly _tag: "ConfirmSupportReviewModal" }
 	| { readonly _tag: "InitGitRepository" }
 	| { readonly _tag: "OpenThemeModal" }
 	| { readonly _tag: "OpenBranchCompareModal" }
@@ -171,6 +178,16 @@ function decodeModalIntentLayer(
 		);
 	}
 
+	if (options.isSupportReviewModalOpen) {
+		if (key.name === "escape") {
+			return handledLayer(Option.some({ _tag: "CloseSupportReviewModal" }));
+		}
+		if (key.name === "enter" || key.name === "return") {
+			return handledLayer(Option.some({ _tag: "ConfirmSupportReviewModal" }));
+		}
+		return handledLayer(Option.none());
+	}
+
 	if (options.isThemeModalOpen) {
 		if (key.name === "escape") {
 			return handledLayer(Option.some({ _tag: "CloseThemeModal" }));
@@ -233,6 +250,10 @@ function decodeGlobalIntentLayer(
 		return Option.some({ _tag: "ResetReviewMode" });
 	}
 
+	if (key.ctrl && key.name === "r") {
+		return Option.some({ _tag: "OpenSupportReviewModal" });
+	}
+
 	if (isUnmodifiedKey(key, "i") && options.canInitializeGitRepo) {
 		return Option.some({ _tag: "InitGitRepository" });
 	}
@@ -290,6 +311,10 @@ function decodeSelectionIntentLayer(
 	options: KeyboardIntentContext,
 ): Option.Option<AppKeyboardIntent> {
 	if (options.activePane === "diff") {
+		if (options.isReviewPanelActive) {
+			return Option.none();
+		}
+
 		if (
 			key.name === "enter" ||
 			key.name === "return" ||
@@ -419,6 +444,7 @@ export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
 			options.isCommitModalOpen ||
 			options.isDiscardModalOpen ||
 			options.isHelpModalOpen ||
+			options.isSupportReviewModalOpen ||
 			options.isThemeModalOpen ||
 			options.isBranchCompareModalOpen;
 

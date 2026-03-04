@@ -13,6 +13,9 @@ interface KeyboardIntentRouterActions {
 	readonly confirmDiscardModal: () => void;
 	readonly closeHelpModal: () => void;
 	readonly openHelpModal: () => void;
+	readonly closeSupportReviewModal: () => void;
+	readonly openSupportReviewModal: () => void;
+	readonly confirmSupportReviewModal: () => void;
 	readonly initializeGitRepository: () => void;
 	readonly openThemeModal: () => void;
 	readonly openBranchCompareModal: () => void;
@@ -53,6 +56,9 @@ export function routeKeyboardIntent(
 			ConfirmDiscardModal: actions.confirmDiscardModal,
 			CloseHelpModal: actions.closeHelpModal,
 			OpenHelpModal: actions.openHelpModal,
+			CloseSupportReviewModal: actions.closeSupportReviewModal,
+			OpenSupportReviewModal: actions.openSupportReviewModal,
+			ConfirmSupportReviewModal: actions.confirmSupportReviewModal,
 			InitGitRepository: actions.initializeGitRepository,
 			OpenThemeModal: actions.openThemeModal,
 			OpenBranchCompareModal: actions.openBranchCompareModal,
