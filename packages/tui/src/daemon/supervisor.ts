@@ -7,7 +7,7 @@ import {
 	VIGIL_DAEMON_TOKEN_ENV_VAR,
 	type VigilDaemonConnection,
 } from "@vigil/api";
-import { Data, Either, Effect, Option, Schedule } from "effect";
+import { Data, Effect, Either, Option, Schedule } from "effect";
 
 const DAEMON_POLL_INTERVAL_MS = 100;
 const DAEMON_POLL_ATTEMPTS = 50;
@@ -39,22 +39,26 @@ function probeDaemon(
 	return Effect.gen(function* () {
 		const daemonClient = yield* makeProbeClient(connection);
 		const metaResult = yield* daemonClient.system.meta().pipe(Effect.either);
+
 		if (Either.isLeft(metaResult)) {
 			const error = metaResult.left;
 			if (error._tag === "DaemonUnauthorizedError") {
-				return yield* Effect.fail(error);
+				return yield* error;
 			}
+
 			return yield* new DaemonProbeUnreachableError({
 				message: error.message,
 				cause: error,
 			});
 		}
 
-		const healthResult = yield* daemonClient.system.health().pipe(Effect.either);
+		const healthResult = yield* daemonClient.system
+			.health()
+			.pipe(Effect.either);
 		if (Either.isLeft(healthResult)) {
 			const error = healthResult.left;
 			if (error._tag === "DaemonUnauthorizedError") {
-				return yield* Effect.fail(error);
+				return yield* error;
 			}
 			return yield* new DaemonProbeUnreachableError({
 				message: error.message,
@@ -110,15 +114,15 @@ const spawnManagedDaemon = Effect.fn("daemonSupervisor.spawnManagedDaemon")(
 
 export const ensureManagedDaemonAvailable = Effect.fn(
 	"daemonSupervisor.ensureManagedDaemonAvailable",
-)(function* (
-	connection: VigilDaemonConnection,
-) {
+)(function* (connection: VigilDaemonConnection) {
 	const firstProbeDetail = yield* probeDaemon(connection).pipe(
 		Effect.as(Option.none<string>()),
-		Effect.catchTag("DaemonUnauthorizedError", () =>
-			new DaemonSupervisorError({
-				message: `A server is already listening at ${buildVigilDaemonBaseUrl(connection)} but rejected this daemon token.`,
-			}),
+		Effect.catchTag(
+			"DaemonUnauthorizedError",
+			() =>
+				new DaemonSupervisorError({
+					message: `A server is already listening at ${buildVigilDaemonBaseUrl(connection)} but rejected this daemon token.`,
+				}),
 		),
 		Effect.catchTag("DaemonProbeUnreachableError", (error) =>
 			Effect.succeed(Option.some(error.message)),

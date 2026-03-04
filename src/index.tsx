@@ -7,9 +7,9 @@ import {
 	type VigilServerStartError,
 } from "@vigil/server";
 import {
+	ensureManagedDaemonAvailable,
 	type StartVigilTuiError,
 	startVigilTuiProgram,
-	ensureManagedDaemonAvailable,
 } from "@vigil/tui";
 import { Data, Effect, Option, pipe } from "effect";
 
