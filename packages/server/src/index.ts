@@ -29,7 +29,6 @@ import {
 } from "./daemon-session.ts";
 import { RepoSubscription } from "./repo-subscription.ts";
 import { RepoWatcher } from "./repo-watcher.ts";
-import { parcelWatchBackendLayer } from "./parcel-watch-backend.ts";
 
 export {
 	RepoWatcher,
@@ -104,10 +103,6 @@ interface VigilServerRuntimeOptions {
 const defaultRuntimeOptions: VigilServerRuntimeOptions = {
 	onManagedIdle: Effect.void,
 };
-
-const repoWatcherFileSystemLayer = BunFileSystem.layer.pipe(
-	Layer.provide(parcelWatchBackendLayer),
-);
 
 function makeDaemonSessionLayer(
 	options: StartVigilServerOptions,
@@ -330,9 +325,7 @@ export function makeVigilApiLayer(
 		Layer.provide(makeVigilDaemonAuthLayer(options)),
 		Layer.provide(makeDaemonSessionLayer(options, runtimeOptions)),
 		Layer.provide(RepoSubscription.layer),
-		Layer.provide(
-			RepoWatcher.layer.pipe(Layer.provide(repoWatcherFileSystemLayer)),
-		),
+		Layer.provide(RepoWatcher.layer.pipe(Layer.provide(BunFileSystem.layer))),
 	);
 }
 
