@@ -8,6 +8,7 @@ import {
 	VigilDaemonClientContext,
 	type VigilDaemonConnection,
 } from "#daemon/client.ts";
+import { ensureManagedDaemonAvailable } from "#daemon/supervisor.ts";
 import {
 	type ParseRepoChangedSseEventError,
 	parseRepoChangedSseEvent,
@@ -46,6 +47,12 @@ class WatchEventsStreamReadError extends Data.TaggedError(
 )<{
 	readonly message: string;
 	readonly cause: unknown;
+}> {}
+
+class WatchEventsStreamEndedError extends Data.TaggedError(
+	"WatchEventsStreamEndedError",
+)<{
+	readonly message: string;
 }> {}
 
 class WatchUnsubscribeAllError extends Data.TaggedError(
@@ -149,6 +156,10 @@ const runWatchAttempt = Effect.fn("useDaemonWatch.runWatchAttempt")(function* (
 	}
 
 	yield* consumeWatchEventStream(response, onRefreshInstruction);
+
+	return yield* new WatchEventsStreamEndedError({
+		message: "Watch events stream ended unexpectedly.",
+	});
 });
 
 const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
@@ -185,7 +196,11 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 		repoPath,
 		onRefreshInstruction,
 	).pipe(
-		Effect.tapError(() => Effect.void),
+		Effect.tapError(() =>
+			ensureManagedDaemonAvailable(daemonConnection).pipe(
+				Effect.catchAll(() => Effect.void),
+			),
+		),
 		Effect.retry(Schedule.spaced(`${reconnectDelayMs} millis`)),
 		Effect.ensuring(unsubscribeAll),
 	);

@@ -1,22 +1,18 @@
-import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { loadOrCreateDaemonTokenFromTuiConfig } from "@vigil/config";
 import {
-	buildVigilDaemonBaseUrl,
-	type DaemonUnauthorizedError,
-	makeVigilDaemonClient,
-	makeVigilDaemonHttpClientLayer,
 	startVigilServerProgram,
 	VIGIL_DAEMON_TOKEN_ENV_VAR,
-	type VigilDaemonConnection,
 	type VigilServerStartError,
 } from "@vigil/server";
-import { type StartVigilTuiError, startVigilTuiProgram } from "@vigil/tui";
-import { Data, Effect, Either, Option, Schedule, pipe } from "effect";
+import {
+	type StartVigilTuiError,
+	startVigilTuiProgram,
+	ensureManagedDaemonAvailable,
+} from "@vigil/tui";
+import { Data, Effect, Option, pipe } from "effect";
 
-const DAEMON_POLL_INTERVAL_MS = 100;
-const DAEMON_POLL_ATTEMPTS = 50;
 const VIGIL_DAEMON_MANAGED_ENV_VAR = "VIGIL_DAEMON_MANAGED";
 
 class CliArgumentError extends Data.TaggedError("CliArgumentError")<{
@@ -30,13 +26,6 @@ class VigilDaemonEnsureError extends Data.TaggedError(
 	readonly cause?: unknown;
 }> {}
 
-class DaemonProbeUnreachableError extends Data.TaggedError(
-	"DaemonProbeUnreachableError",
-)<{
-	readonly message: string;
-	readonly cause?: unknown;
-}> {}
-
 type VigilCommand = "tui" | "serve";
 
 interface VigilCliArgs {
@@ -45,12 +34,6 @@ interface VigilCliArgs {
 	readonly serverHost: string;
 	readonly serverPort: number;
 	readonly help: boolean;
-}
-
-interface DaemonConnectionOptions {
-	readonly host: string;
-	readonly port: number;
-	readonly daemonToken: string;
 }
 
 function vigilUsage(): string {
@@ -196,165 +179,6 @@ function resolveDaemonToken(): Effect.Effect<string, VigilDaemonEnsureError> {
 			);
 }
 
-function daemonBaseUrl(
-	options: Pick<DaemonConnectionOptions, "host" | "port">,
-) {
-	return buildVigilDaemonBaseUrl(options);
-}
-
-function toVigilDaemonConnection(
-	options: DaemonConnectionOptions,
-): VigilDaemonConnection {
-	return {
-		host: options.host,
-		port: options.port,
-		token: options.daemonToken,
-	};
-}
-
-function makeDaemonProbeClient(options: DaemonConnectionOptions) {
-	const daemonConnection = toVigilDaemonConnection(options);
-
-	return makeVigilDaemonClient(daemonConnection).pipe(
-		Effect.provide(makeVigilDaemonHttpClientLayer(daemonConnection)),
-	);
-}
-
-function probeDaemon(
-	options: DaemonConnectionOptions,
-): Effect.Effect<void, DaemonUnauthorizedError | DaemonProbeUnreachableError> {
-	return Effect.gen(function* () {
-		const daemonClient = yield* makeDaemonProbeClient(options);
-		const metaResult = yield* daemonClient.system.meta().pipe(Effect.either);
-		if (Either.isLeft(metaResult)) {
-			const error = metaResult.left;
-			if (error._tag === "DaemonUnauthorizedError") {
-				return yield* Effect.fail(error);
-			}
-			return yield* new DaemonProbeUnreachableError({
-				message: error.message,
-				cause: error,
-			});
-		}
-
-		const healthResult = yield* daemonClient.system
-			.health()
-			.pipe(Effect.either);
-		if (Either.isLeft(healthResult)) {
-			const error = healthResult.left;
-			if (error._tag === "DaemonUnauthorizedError") {
-				return yield* Effect.fail(error);
-			}
-			return yield* new DaemonProbeUnreachableError({
-				message: error.message,
-				cause: error,
-			});
-		}
-	});
-}
-
-function spawnDaemonProcess(
-	options: DaemonConnectionOptions,
-): Effect.Effect<void, VigilDaemonEnsureError> {
-	return Effect.try({
-		try: () => {
-			const entrypoint = process.argv[1];
-			if (!entrypoint) {
-				throw new Error("Unable to resolve CLI entrypoint.");
-			}
-
-			const processHandle = spawn(
-				process.execPath,
-				[
-					entrypoint,
-					"serve",
-					"--host",
-					options.host,
-					"--port",
-					String(options.port),
-				],
-				{
-					detached: true,
-					stdio: "ignore",
-					windowsHide: true,
-					env: {
-						...process.env,
-						[VIGIL_DAEMON_TOKEN_ENV_VAR]: options.daemonToken,
-						[VIGIL_DAEMON_MANAGED_ENV_VAR]: "1",
-					},
-				},
-			);
-
-			processHandle.unref();
-		},
-		catch: (cause) =>
-			new VigilDaemonEnsureError({
-				message: "Failed to spawn daemon process.",
-				cause,
-			}),
-	});
-}
-
-function ensureServer(
-	options: Pick<DaemonConnectionOptions, "host" | "port" | "daemonToken">,
-): Effect.Effect<void, VigilDaemonEnsureError> {
-	return Effect.gen(function* () {
-		const connectionOptions: DaemonConnectionOptions = {
-			host: options.host,
-			port: options.port,
-			daemonToken: options.daemonToken,
-		};
-
-		const firstProbeDetail = yield* probeDaemon(connectionOptions).pipe(
-			Effect.as(Option.none<string>()),
-			Effect.catchTag("DaemonUnauthorizedError", () =>
-				Effect.fail(
-					new VigilDaemonEnsureError({
-						message: `A server is already listening at ${daemonBaseUrl(connectionOptions)} but rejected this daemon token.`,
-					}),
-				),
-			),
-			Effect.catchTag("DaemonProbeUnreachableError", (error) =>
-				Effect.succeed(Option.some(error.message)),
-			),
-		);
-		if (Option.isNone(firstProbeDetail)) {
-			return;
-		}
-
-		yield* spawnDaemonProcess(connectionOptions);
-
-		const startupRetrySchedule = Schedule.spaced(
-			`${DAEMON_POLL_INTERVAL_MS} millis`,
-		).pipe(
-			Schedule.compose(Schedule.recurs(DAEMON_POLL_ATTEMPTS - 1)),
-			Schedule.whileInput(
-				(error: DaemonUnauthorizedError | DaemonProbeUnreachableError) =>
-					error._tag === "DaemonProbeUnreachableError",
-			),
-		);
-
-		yield* probeDaemon(connectionOptions).pipe(
-			Effect.retry(startupRetrySchedule),
-			Effect.catchTag(
-				"DaemonUnauthorizedError",
-				() =>
-					new VigilDaemonEnsureError({
-						message: `Daemon at ${daemonBaseUrl(connectionOptions)} rejected this daemon token after startup.`,
-					}),
-			),
-			Effect.catchTag(
-				"DaemonProbeUnreachableError",
-				(error) =>
-					new VigilDaemonEnsureError({
-						message: `Unable to connect to daemon at ${daemonBaseUrl(connectionOptions)} after auto-start. Last check: ${error.message}`,
-						cause: error,
-					}),
-			),
-		);
-	});
-}
-
 function runCli(
 	argv: string[],
 ): Effect.Effect<
@@ -387,21 +211,25 @@ function runCli(
 			});
 		}
 
-		const connectionOptions: DaemonConnectionOptions = {
+		const daemonConnection = {
 			host: args.serverHost,
 			port: args.serverPort,
-			daemonToken,
+			token: daemonToken,
 		};
 
-		yield* ensureServer(connectionOptions);
+		yield* ensureManagedDaemonAvailable(daemonConnection).pipe(
+			Effect.mapError(
+				(error) =>
+					new VigilDaemonEnsureError({
+						message: error.message,
+						cause: error.cause,
+					}),
+			),
+		);
 
 		yield* startVigilTuiProgram({
 			chooserFilePath: args.chooserFilePath,
-			daemonConnection: {
-				host: args.serverHost,
-				port: args.serverPort,
-				token: daemonToken,
-			},
+			daemonConnection,
 		});
 	});
 }

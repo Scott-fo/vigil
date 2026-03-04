@@ -227,6 +227,7 @@ export function App(props: AppProps) {
 	);
 
 	useDaemonSession({
+		daemonConnection: props.daemonConnection,
 		enabled: true,
 	});
 

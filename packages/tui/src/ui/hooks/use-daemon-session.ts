@@ -2,13 +2,16 @@ import { Data, Effect, Fiber, Schedule } from "effect";
 import { useEffect } from "react";
 import {
 	type VigilDaemonClient,
+	type VigilDaemonConnection,
 	VigilDaemonClientContext,
 } from "#daemon/client.ts";
+import { ensureManagedDaemonAvailable } from "#daemon/supervisor.ts";
 import { useFrontendRuntime } from "#runtime/frontend-runtime.tsx";
 
 const MIN_DAEMON_HEARTBEAT_MS = 500;
 
 interface UseDaemonSessionOptions {
+	readonly daemonConnection: VigilDaemonConnection;
 	readonly enabled: boolean;
 	readonly reconnectDelayMs?: number;
 }
@@ -100,18 +103,23 @@ const runSessionAttempt = Effect.fn("useDaemonSession.runSessionAttempt")(
 );
 
 const makeSessionLoop = Effect.fn("useDaemonSession.makeSessionLoop")(function* (
+	daemonConnection: VigilDaemonConnection,
 	reconnectDelayMs: number,
 ) {
 	const daemonClient = yield* VigilDaemonClientContext;
 
 	yield* runSessionAttempt(daemonClient).pipe(
-		Effect.tapError(() => Effect.void),
+		Effect.tapError(() =>
+			ensureManagedDaemonAvailable(daemonConnection).pipe(
+				Effect.catchAll(() => Effect.void),
+			),
+		),
 		Effect.retry(Schedule.spaced(`${reconnectDelayMs} millis`)),
 	);
 });
 
 export function useDaemonSession(options: UseDaemonSessionOptions) {
-	const { enabled } = options;
+	const { daemonConnection, enabled } = options;
 	const reconnectDelayMs = options.reconnectDelayMs ?? 1_500;
 	const runtime = useFrontendRuntime();
 
@@ -120,10 +128,12 @@ export function useDaemonSession(options: UseDaemonSessionOptions) {
 			return;
 		}
 
-		const fiber = runtime.runFork(makeSessionLoop(reconnectDelayMs));
+		const fiber = runtime.runFork(
+			makeSessionLoop(daemonConnection, reconnectDelayMs),
+		);
 
 		return () => {
 			runtime.runFork(Fiber.interrupt(fiber));
 		};
-	}, [enabled, reconnectDelayMs, runtime]);
+	}, [daemonConnection, enabled, reconnectDelayMs, runtime]);
 }
