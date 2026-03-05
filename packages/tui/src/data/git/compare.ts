@@ -121,7 +121,6 @@ export function listSearchableCommits(
 		runGitEffectAsync(
 			[
 				"log",
-				"--all",
 				`--max-count=${Math.max(1, Math.floor(limit))}`,
 				"--date=short",
 				`--pretty=format:%H%x1f%P%x1f%h%x1f%ad%x1f%an%x1f%s%x1e`,
