@@ -126,7 +126,10 @@ export function App(props: AppProps) {
 		createBlameViewState(props.initialBlameTarget),
 	);
 	const [refreshInstructionVersion, setRefreshInstructionVersion] = useState(0);
-	const [snackbarNotice, setSnackbarNotice] = useState<
+	const [daemonSnackbarNotice, setDaemonSnackbarNotice] = useState<
+		Option.Option<SnackbarNotice>
+	>(Option.none());
+	const [transientSnackbarNotice, setTransientSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
 	>(Option.none());
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
@@ -284,9 +287,40 @@ export function App(props: AppProps) {
 		[refreshFilesEffect],
 	);
 
+	const showSnackbar = useCallback((notice: SnackbarNotice) => {
+		if (snackbarTimeoutRef.current) {
+			clearTimeout(snackbarTimeoutRef.current);
+		}
+		setTransientSnackbarNotice(Option.some(notice));
+		const timeoutHandle = setTimeout(() => {
+			setTransientSnackbarNotice(Option.none());
+		}, 2000);
+		timeoutHandle.unref?.();
+		snackbarTimeoutRef.current = timeoutHandle;
+	}, []);
+
+	const showDaemonDisconnected = useCallback((message: string) => {
+		setDaemonSnackbarNotice(
+			Option.some({
+				message,
+				variant: "error",
+			}),
+		);
+	}, []);
+
+	const clearDaemonDisconnected = useCallback(() => {
+		setDaemonSnackbarNotice(Option.none());
+		showSnackbar({
+			message: "Reconnected to background daemon",
+			variant: "info",
+		});
+	}, [showSnackbar]);
+
 	useDaemonSession({
 		daemonConnection: props.daemonConnection,
 		enabled: true,
+		onDisconnect: showDaemonDisconnected,
+		onReconnect: clearDaemonDisconnected,
 	});
 
 	useDaemonWatch({
@@ -295,18 +329,6 @@ export function App(props: AppProps) {
 		enabled: isWorkingTreeMode,
 		onRefreshInstruction,
 	});
-
-	const showSnackbar = useCallback((notice: SnackbarNotice) => {
-		if (snackbarTimeoutRef.current) {
-			clearTimeout(snackbarTimeoutRef.current);
-		}
-		setSnackbarNotice(Option.some(notice));
-		const timeoutHandle = setTimeout(() => {
-			setSnackbarNotice(Option.none());
-		}, 2000);
-		timeoutHandle.unref?.();
-		snackbarTimeoutRef.current = timeoutHandle;
-	}, []);
 
 	const copyAndNotify = useCallback(
 		(text: string) => {
@@ -417,6 +439,10 @@ export function App(props: AppProps) {
 		() => buildDiffNavigationModel(selectedFileDiff),
 		[selectedFileDiff],
 	);
+	const snackbarTop = remoteSync._tag === "running" ? 4 : 1;
+	const transientSnackbarTop = Option.isSome(daemonSnackbarNotice)
+		? snackbarTop + 4
+		: snackbarTop;
 
 	const diffLineCount = diffNavigationModel.lines.length;
 	const selectedDiffLine =
@@ -759,8 +785,13 @@ export function App(props: AppProps) {
 			<RemoteSyncStatus theme={theme} state={remoteSync} />
 			<Snackbar
 				theme={theme}
-				notice={snackbarNotice}
-				top={remoteSync._tag === "running" ? 4 : 1}
+				notice={daemonSnackbarNotice}
+				top={snackbarTop}
+			/>
+			<Snackbar
+				theme={theme}
+				notice={transientSnackbarNotice}
+				top={transientSnackbarTop}
 			/>
 		</box>
 	);

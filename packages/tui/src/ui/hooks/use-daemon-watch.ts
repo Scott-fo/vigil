@@ -7,7 +7,6 @@ import {
 	VigilDaemonClientContext,
 	type VigilDaemonConnection,
 } from "#daemon/client.ts";
-import { ensureManagedDaemonAvailable } from "#daemon/supervisor.ts";
 import { consumeWatchEventStream } from "#daemon/watch-stream.ts";
 import { useFrontendRuntime } from "#runtime/frontend-runtime.tsx";
 
@@ -154,11 +153,6 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 		repoPath,
 		onRefreshInstruction,
 	).pipe(
-		Effect.tapError(() =>
-			ensureManagedDaemonAvailable(daemonConnection).pipe(
-				Effect.catchAll(() => Effect.void),
-			),
-		),
 		Effect.retry(Schedule.spaced(`${reconnectDelayMs} millis`)),
 		Effect.ensuring(unsubscribeAll),
 	);
