@@ -1,6 +1,5 @@
-import * as Sse from "@effect/experimental/Sse";
-import { HttpClient, type HttpClientResponse } from "@effect/platform";
-import { Data, Effect, Fiber, Option, Schedule, Stream } from "effect";
+import { HttpClient } from "@effect/platform";
+import { Data, Effect, Fiber, Schedule } from "effect";
 import { useEffect, useMemo } from "react";
 import {
 	buildVigilDaemonBaseUrl,
@@ -9,10 +8,7 @@ import {
 	type VigilDaemonConnection,
 } from "#daemon/client.ts";
 import { ensureManagedDaemonAvailable } from "#daemon/supervisor.ts";
-import {
-	type ParseRepoChangedSseEventError,
-	parseRepoChangedSseEvent,
-} from "#daemon/watch-events.ts";
+import { consumeWatchEventStream } from "#daemon/watch-stream.ts";
 import { useFrontendRuntime } from "#runtime/frontend-runtime.tsx";
 
 interface UseDaemonWatchOptions {
@@ -42,13 +38,6 @@ class WatchEventsStreamStatusError extends Data.TaggedError(
 	readonly status: number;
 }> {}
 
-class WatchEventsStreamReadError extends Data.TaggedError(
-	"WatchEventsStreamReadError",
-)<{
-	readonly message: string;
-	readonly cause: unknown;
-}> {}
-
 class WatchEventsStreamEndedError extends Data.TaggedError(
 	"WatchEventsStreamEndedError",
 )<{
@@ -61,37 +50,6 @@ class WatchUnsubscribeAllError extends Data.TaggedError(
 	readonly message: string;
 	readonly cause: unknown;
 }> {}
-
-const ignoreParseErrorAndContinue = (
-	_error: ParseRepoChangedSseEventError,
-) => Effect.succeed(Option.none());
-
-const consumeWatchEventStream = Effect.fn(
-	"useDaemonWatch.consumeWatchEventStream",
-)(function* (
-	response: HttpClientResponse.HttpClientResponse,
-	onRefreshInstruction: Effect.Effect<void, never, never>,
-) {
-	yield* response.stream.pipe(
-		Stream.decodeText(),
-		Stream.pipeThroughChannel(Sse.makeChannel()),
-		Stream.runForEach((sseEvent) =>
-			parseRepoChangedSseEvent(sseEvent).pipe(
-				Effect.catchAll(ignoreParseErrorAndContinue),
-				Effect.flatMap((parsedEvent) =>
-					Option.isSome(parsedEvent) ? onRefreshInstruction : Effect.void,
-				),
-			),
-		),
-		Effect.mapError(
-			(error) =>
-				new WatchEventsStreamReadError({
-					message: "Failed while reading watch events stream.",
-					cause: error,
-				}),
-		),
-	);
-});
 
 const openWatchEventsResponse = Effect.fn(
 	"useDaemonWatch.openWatchEventsResponse",
@@ -155,7 +113,7 @@ const runWatchAttempt = Effect.fn("useDaemonWatch.runWatchAttempt")(function* (
 		});
 	}
 
-	yield* consumeWatchEventStream(response, onRefreshInstruction);
+	yield* consumeWatchEventStream(response.stream, onRefreshInstruction);
 
 	return yield* new WatchEventsStreamEndedError({
 		message: "Watch events stream ended unexpectedly.",
@@ -188,7 +146,7 @@ const makeWatchLoop = Effect.fn("useDaemonWatch.makeWatchLoop")(function* (
 			Effect.asVoid,
 		);
 
-	yield* runWatchAttempt(
+	return yield* runWatchAttempt(
 		daemonClient,
 		daemonHttpClient,
 		clientId,
