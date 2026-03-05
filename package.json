@@ -12,6 +12,7 @@
 	],
 	"scripts": {
 		"dev": "bun run --watch src/index.tsx",
+		"build:install": "bun run ./scripts/build-install.ts",
 		"install:global": "bun install && bun link",
 		"test": "bun run --filter '*' test",
 		"test:watch": "bun run --filter '*' test:watch",

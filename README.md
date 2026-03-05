@@ -17,13 +17,19 @@ bun install
 bun dev
 ```
 
-### Global command (recommended while iterating)
+### Global command (compiled install)
 
 ```bash
-bun run install:global (or bun install && bun link)
+bun install
+bun run build:install
 ```
 
-This creates a global `vigil` command using `bun link`.
+This installs:
+
+- binary: `~/.local/lib/vigil/vigil`
+- wrapper: `~/.local/bin/vigil`
+
+If `vigil` is not found, add `~/.local/bin` to your `PATH`.
 
 ## Update flow
 
@@ -32,9 +38,10 @@ After pulling changes:
 ```bash
 git pull --ff-only
 bun install
+bun run build:install
 ```
 
-You usually do not need to re-link unless the link/bin wiring changed.
+Re-run `build:install` whenever you want to refresh the global binary.
 
 ## Usage
 

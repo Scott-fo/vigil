@@ -506,9 +506,20 @@ function normalizeThemeOrder(names: string[]): string[] {
 	});
 }
 
+function getBundledThemeDirectories(): string[] {
+	const installedThemesDirectory = path.join(path.dirname(process.execPath), "themes");
+	const sourceThemesDirectory = path.join(import.meta.dir, "..", "themes");
+
+	return Array.from(
+		new Set([installedThemesDirectory, sourceThemesDirectory]),
+	);
+}
+
 export async function loadThemeCatalog(): Promise<ThemeCatalog> {
-	const bundledThemesDirectory = path.join(import.meta.dir, "..", "themes");
-	const directories = [bundledThemesDirectory, ...getCustomThemeDirectories()];
+	const directories = [
+		...getBundledThemeDirectories(),
+		...getCustomThemeDirectories(),
+	];
 	const layers = await Promise.all(directories.map(loadThemesFromDirectory));
 	const themes = Object.assign({}, ...layers) as Record<string, ThemeJson>;
 
