@@ -114,6 +114,7 @@ await fs.rm(installThemesDir, { recursive: true, force: true });
 await fs.cp(sourceThemesDir, installThemesDir, { recursive: true });
 
 const wrapperScript = `#!/usr/bin/env sh
+export VIGIL_SELF_EXECUTABLE="${binaryPath}"
 exec "${binaryPath}" "$@"
 `;
 
