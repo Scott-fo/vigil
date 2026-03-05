@@ -30,6 +30,7 @@ const KEYBIND_ROWS: ReadonlyArray<KeybindRow> = [
 	{ keys: "Ctrl+b", description: "Toggle sidebar" },
 	{ keys: "c", description: "Open commit dialog (if files staged)" },
 	{ keys: "b", description: "Open branch compare dialog" },
+	{ keys: "g", description: "Open commit search dialog" },
 	{ keys: "Ctrl+l", description: "Reset to working tree mode" },
 	{ keys: "p / P", description: "Pull / push" },
 	{ keys: "t", description: "Open theme picker" },
