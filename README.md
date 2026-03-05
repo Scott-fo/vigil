@@ -42,6 +42,12 @@ You usually do not need to re-link unless the link/bin wiring changed.
 vigil
 ```
 
+Blame mode:
+
+```bash
+vigil blame <file>:<line>
+```
+
 Chooser mode (Helix/Yazi-style integration):
 
 ```bash
