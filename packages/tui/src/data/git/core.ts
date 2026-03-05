@@ -22,6 +22,24 @@ export interface BranchDiffSelection {
 	readonly destinationRef: string;
 }
 
+export interface CommitSearchEntry {
+	readonly hash: string;
+	readonly shortHash: string;
+	readonly parentHashes: ReadonlyArray<string>;
+	readonly author: string;
+	readonly date: string;
+	readonly subject: string;
+}
+
+export interface CommitDiffSelection {
+	readonly commitHash: string;
+	readonly baseRef: string;
+	readonly shortHash: string;
+	readonly subject: string;
+}
+
+export const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 function decodeOutput(output?: Uint8Array | null): string {
 	if (!output) {
 		return "";
@@ -130,5 +148,16 @@ export function normalizeBranchDiffSelection(
 	return {
 		sourceRef: selection.sourceRef.trim(),
 		destinationRef: selection.destinationRef.trim(),
+	};
+}
+
+export function normalizeCommitDiffSelection(
+	selection: CommitDiffSelection,
+): CommitDiffSelection {
+	return {
+		commitHash: selection.commitHash.trim(),
+		baseRef: selection.baseRef.trim(),
+		shortHash: selection.shortHash.trim(),
+		subject: selection.subject.trim(),
 	};
 }

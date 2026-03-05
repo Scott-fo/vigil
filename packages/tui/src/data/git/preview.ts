@@ -3,7 +3,9 @@ import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, Option, pipe } from "effect";
 import {
 	type BranchDiffSelection,
+	type CommitDiffSelection,
 	buildBranchDiffRange,
+	normalizeCommitDiffSelection,
 	normalizeBranchDiffSelection,
 	renderGitCommandError,
 	runGitEffectAsync,
@@ -153,6 +155,36 @@ function loadBranchPreview(
 	);
 }
 
+function loadCommitPreview(
+	filePath: string,
+	selection: CommitDiffSelection,
+): Effect.Effect<FilePreview, never> {
+	return pipe(
+		runGitEffectAsync(
+			[
+				"diff",
+				"--no-color",
+				"--find-renames",
+				selection.baseRef,
+				selection.commitHash,
+				"--",
+				filePath,
+			],
+			`Unable to load commit diff for ${filePath}.`,
+		),
+		Effect.match({
+			onFailure: (error) => ({
+				diff: "",
+				note: Option.some(renderGitCommandError(error)),
+			}),
+			onSuccess: (result) => ({
+				diff: result.stdout,
+				note: Option.none<string>(),
+			}),
+		}),
+	);
+}
+
 export function loadFilePreview(
 	file: Pick<FileEntry, "path" | "status">,
 ): Effect.Effect<FileDiffPreview, never> {
@@ -171,6 +203,17 @@ export function loadBranchFilePreview(
 	const normalizedSelection = normalizeBranchDiffSelection(selection);
 	return pipe(
 		loadBranchPreview(filePath, normalizedSelection),
+		Effect.map(withDefaultPreviewNote),
+	);
+}
+
+export function loadCommitFilePreview(
+	filePath: string,
+	selection: CommitDiffSelection,
+): Effect.Effect<FileDiffPreview, never> {
+	const normalizedSelection = normalizeCommitDiffSelection(selection);
+	return pipe(
+		loadCommitPreview(filePath, normalizedSelection),
 		Effect.map(withDefaultPreviewNote),
 	);
 }

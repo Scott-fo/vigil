@@ -1,16 +1,23 @@
 export {
 	listComparableRefs,
+	listSearchableCommits,
 	loadFilesWithBranchDiffs,
+	loadFilesWithCommitDiff,
+	resolveCommitBaseRef,
 } from "#data/git/compare.ts";
 export {
 	type BranchDiffSelection,
+	type CommitDiffSelection,
+	type CommitSearchEntry,
 	CommitMessageRequiredError,
+	EMPTY_TREE_HASH,
 	GitCommandError,
 	type RepoActionError,
 } from "#data/git/core.ts";
 export {
 	type FileDiffPreview,
 	loadBranchFilePreview,
+	loadCommitFilePreview,
 	loadFilePreview,
 } from "#data/git/preview.ts";
 export {
