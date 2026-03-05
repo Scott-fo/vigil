@@ -1,5 +1,5 @@
 import { Effect, Option, pipe } from "effect";
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import {
 	type CommitDiffSelection,
 	listSearchableCommits,
@@ -39,7 +39,6 @@ export function useCommitSearchActions(options: UseCommitSearchActionsOptions) {
 		refreshFiles,
 		renderRepoActionError,
 	} = options;
-	const commitCacheRef = useRef<ReadonlyArray<CommitDiffSelection> | null>(null);
 
 	const resolveSelection = useCallback(
 		(
@@ -85,21 +84,6 @@ export function useCommitSearchActions(options: UseCommitSearchActionsOptions) {
 			? Option.some(reviewMode.selection.commitHash)
 			: Option.none<string>();
 
-		const cachedCommits = commitCacheRef.current;
-		if (cachedCommits && cachedCommits.length > 0) {
-			const selection = resolveSelection(cachedCommits, seededCommitHash);
-			updateCommitSearchModal(() => ({
-				isOpen: true,
-				loading: false,
-				query: "",
-				availableCommits: cachedCommits,
-				selectedCommitHash: selection.selectedCommitHash,
-				selectedIndex: selection.selectedIndex,
-				error: Option.none(),
-			}));
-			return;
-		}
-
 		updateCommitSearchModal(() =>
 			openCommitSearchModalLoadingState({
 				selectedCommitHash: seededCommitHash,
@@ -137,7 +121,6 @@ export function useCommitSearchActions(options: UseCommitSearchActionsOptions) {
 									availableCommits,
 									current.selectedCommitHash,
 								);
-								commitCacheRef.current = availableCommits;
 
 								return {
 									...current,
