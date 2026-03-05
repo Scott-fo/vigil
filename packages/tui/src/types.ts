@@ -2,6 +2,11 @@ import { Schema, type Option } from "effect";
 import type { VigilDaemonConnection } from "#daemon/client.ts";
 import type { ThemeCatalog, ThemeMode } from "#theme/theme.ts";
 
+export interface BlameTarget {
+	readonly filePath: string;
+	readonly lineNumber: number;
+}
+
 export interface StatusEntry {
 	readonly status: string;
 	readonly path: string;
@@ -29,5 +34,6 @@ export interface AppProps {
 	readonly initialThemeName: string;
 	readonly initialThemeMode: ThemeMode;
 	readonly chooserFilePath: Option.Option<string>;
+	readonly initialBlameTarget: Option.Option<BlameTarget>;
 	readonly daemonConnection: VigilDaemonConnection;
 }

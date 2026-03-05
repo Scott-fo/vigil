@@ -4,10 +4,15 @@ import { useRenderer } from "@opentui/react";
 import { Effect, Match, Option, pipe } from "effect";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { copyTextToClipboard } from "#data/clipboard.ts";
-import type { RepoActionError } from "#data/git.ts";
+import {
+	loadBlameCommitDetails,
+	type BlameCommitDetails,
+	type RepoActionError,
+} from "#data/git.ts";
 import { buildDiffNavigationModel } from "#diff/navigation.ts";
 import type { ThemeMode } from "#theme/theme.ts";
-import type { AppProps } from "#tui/types.ts";
+import type { AppProps, BlameTarget } from "#tui/types.ts";
+import { BlameView } from "#ui/components/blame-view.tsx";
 import { BranchCompareModal } from "#ui/components/branch-compare-modal.tsx";
 import { CommitSearchModal } from "#ui/components/commit-search-modal.tsx";
 import { CommitModal } from "#ui/components/commit-modal.tsx";
@@ -67,6 +72,35 @@ function formatRepoActionError(error: RepoActionError): string {
 	);
 }
 
+interface BlameViewState {
+	readonly isOpen: boolean;
+	readonly target: BlameTarget | null;
+	readonly loading: boolean;
+	readonly details: BlameCommitDetails | null;
+	readonly error: string | null;
+}
+
+function createBlameViewState(
+	initialTarget: Option.Option<BlameTarget>,
+): BlameViewState {
+	return Option.match(initialTarget, {
+		onNone: () => ({
+			isOpen: false,
+			target: null,
+			loading: false,
+			details: null,
+			error: null,
+		}),
+		onSome: (target) => ({
+			isOpen: true,
+			target,
+			loading: true,
+			details: null,
+			error: null,
+		}),
+	});
+}
+
 export function App(props: AppProps) {
 	const renderer = useRenderer();
 	const [themeName, setThemeName] = useState(props.initialThemeName);
@@ -88,11 +122,15 @@ export function App(props: AppProps) {
 	);
 	const [remoteSync, setRemoteSync] = useAtom(remoteSyncAtom);
 	const [reviewMode, setReviewMode] = useAtom(reviewModeAtom);
+	const [blameView, setBlameView] = useState<BlameViewState>(() =>
+		createBlameViewState(props.initialBlameTarget),
+	);
 	const [refreshInstructionVersion, setRefreshInstructionVersion] = useState(0);
 	const [snackbarNotice, setSnackbarNotice] = useState<
 		Option.Option<SnackbarNotice>
 	>(Option.none());
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
+	const blameScrollRef = useRef<ScrollBoxRenderable | null>(null);
 	const snackbarTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const updateFileView = useCallback<UpdateFileViewState>(
@@ -386,6 +424,10 @@ export function App(props: AppProps) {
 	const selectedDiffLineNumber =
 		selectedDiffLine?.newLine ?? selectedDiffLine?.oldLine ?? null;
 	const selectedDiffFilePath = selectedFile?.path ?? null;
+	const canOpenBlameCommitCompare =
+		blameView.isOpen &&
+		blameView.details !== null &&
+		Option.isSome(blameView.details.compareSelection);
 
 	useEffect(() => {
 		setSelectedDiffLineIndex(0);
@@ -399,6 +441,113 @@ export function App(props: AppProps) {
 			return Math.min(current, diffLineCount - 1);
 		});
 	}, [diffLineCount]);
+
+	useEffect(() => {
+		if (!blameView.isOpen || !blameView.loading || !blameView.target) {
+			return;
+		}
+
+		const target = blameView.target;
+		let cancelled = false;
+
+		void Effect.runPromise(
+			pipe(
+				loadBlameCommitDetails(target),
+				Effect.match({
+					onFailure: (error) => ({
+						ok: false as const,
+						error: formatRepoActionError(error),
+					}),
+					onSuccess: (details) => ({
+						ok: true as const,
+						details,
+					}),
+				}),
+			),
+		).then((result) => {
+			if (cancelled) {
+				return;
+			}
+			setBlameView((current) => {
+				if (
+					!current.isOpen ||
+					!current.loading ||
+					!current.target ||
+					current.target.filePath !== target.filePath ||
+					current.target.lineNumber !== target.lineNumber
+				) {
+					return current;
+				}
+
+				return result.ok
+					? {
+							...current,
+							loading: false,
+							details: result.details,
+							error: null,
+						}
+					: {
+							...current,
+							loading: false,
+							details: null,
+							error: result.error,
+						};
+			});
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [blameView.isOpen, blameView.loading, blameView.target]);
+
+	const closeBlameView = useCallback(() => {
+		setBlameView((current) =>
+			current.isOpen ? { ...current, isOpen: false } : current,
+		);
+	}, []);
+
+	const openBlameCommitCompare = useCallback(() => {
+		if (!blameView.isOpen || !blameView.details) {
+			return;
+		}
+		if (Option.isNone(blameView.details.compareSelection)) {
+			setBlameView((current) =>
+				current.isOpen
+					? {
+							...current,
+							error: "No committed change is available for this line.",
+						}
+					: current,
+			);
+			return;
+		}
+
+		const selection = blameView.details.compareSelection.value;
+		updateReviewMode(() => ({
+			_tag: "commit-compare",
+			selection,
+		}));
+		updateUiStatus((current) =>
+			Option.isNone(current.error)
+				? current
+				: { ...current, error: Option.none() },
+		);
+		setBlameView((current) =>
+			current.isOpen ? { ...current, isOpen: false } : current,
+		);
+		void refreshFiles(true);
+	}, [blameView, refreshFiles, updateReviewMode, updateUiStatus]);
+
+	const scrollBlameView = useCallback((direction: "up" | "down") => {
+		const scroll = blameScrollRef.current;
+		if (!scroll) {
+			return;
+		}
+		scroll.scrollBy({
+			x: 0,
+			y: direction === "up" ? -3 : 3,
+		});
+	}, []);
 
 	const {
 		onCommitMessageChange,
@@ -448,6 +597,9 @@ export function App(props: AppProps) {
 		remoteSync,
 		updateRemoteSync,
 		updateReviewMode,
+		closeBlameView,
+		openBlameCommitCompare,
+		scrollBlameView,
 		updateDiscardModal,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
@@ -472,6 +624,8 @@ export function App(props: AppProps) {
 	]);
 
 	useAppKeyboardInput({
+		isBlameViewOpen: blameView.isOpen,
+		canOpenBlameCommitCompare,
 		isCommitModalOpen,
 		isDiscardModalOpen,
 		isCommitSearchModalOpen,
@@ -515,7 +669,7 @@ export function App(props: AppProps) {
 					loading={loading}
 					diffViewMode={diffViewMode}
 					error={uiStatus.error}
-					isCommitModalOpen={isAnyModalOpen}
+					isCommitModalOpen={isAnyModalOpen || blameView.isOpen}
 					diffScrollRef={diffScrollRef}
 					onToggleDirectory={onToggleDirectory}
 					onSelectFilePath={onSelectFilePath}
@@ -589,6 +743,17 @@ export function App(props: AppProps) {
 					error={commitSearchModalError}
 					onQueryChange={onCommitSearchQueryChange}
 					onSelectCommit={onCommitSearchSelectCommit}
+				/>
+			)}
+			{blameView.isOpen && blameView.target && (
+				<BlameView
+					theme={theme}
+					modalBackdropColor={modalBackdropColor}
+					target={blameView.target}
+					loading={blameView.loading}
+					details={Option.fromNullable(blameView.details)}
+					error={Option.fromNullable(blameView.error)}
+					scrollRef={blameScrollRef}
 				/>
 			)}
 			<RemoteSyncStatus theme={theme} state={remoteSync} />

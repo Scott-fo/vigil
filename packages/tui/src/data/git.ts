@@ -6,6 +6,13 @@ export {
 	resolveCommitBaseRef,
 } from "#data/git/compare.ts";
 export {
+	isUncommittedBlameHash,
+	loadBlameCommitDetails,
+	parseBlamePorcelainHeader,
+	parseCommitShowOutput,
+	type BlameCommitDetails,
+} from "#data/git/blame.ts";
+export {
 	type BranchDiffSelection,
 	type CommitDiffSelection,
 	type CommitSearchEntry,

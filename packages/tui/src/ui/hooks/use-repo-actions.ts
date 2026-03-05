@@ -75,6 +75,9 @@ interface UseRepoActionsOptions {
 	readonly updateBranchCompareModal: UpdateBranchCompareModal;
 	readonly updateRemoteSync: UpdateRemoteSyncState;
 	readonly updateReviewMode: UpdateReviewMode;
+	readonly closeBlameView: () => void;
+	readonly openBlameCommitCompare: () => void;
+	readonly scrollBlameView: (direction: "up" | "down") => void;
 	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
 }
@@ -123,6 +126,9 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		updateBranchCompareModal,
 		updateRemoteSync,
 		updateReviewMode,
+		closeBlameView,
+		openBlameCommitCompare,
+		scrollBlameView,
 		refreshFiles,
 		renderRepoActionError,
 	} = options;
@@ -386,6 +392,9 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				},
 				toggleSidebar,
 				toggleDiffViewMode,
+				closeBlameView,
+				openBlameCommitCompare,
+				scrollBlameView,
 				closeCommitModal,
 				openCommitModal,
 				closeDiscardModal,
@@ -420,6 +429,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			}),
 		[
 			closeBranchCompareModal,
+			closeBlameView,
 			closeCommitSearchModal,
 			closeCommitModal,
 			closeDiscardModal,
@@ -434,6 +444,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			moveCommitSearchSelection,
 			moveThemeSelection,
 			openBranchCompareModal,
+			openBlameCommitCompare,
 			openCommitSearchModal,
 			openCommitModal,
 			openDiscardModal,
@@ -443,6 +454,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			renderer.destroy,
 			resetReviewMode,
 			scrollDiffHalfPage,
+			scrollBlameView,
 			moveDiffSelection,
 			focusSidebarPane,
 			focusDiffPane,

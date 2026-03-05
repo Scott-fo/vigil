@@ -2,6 +2,7 @@ import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { Data, Effect, type Option, pipe } from "effect";
 import type { VigilDaemonConnection } from "#daemon/client.ts";
+import type { BlameTarget } from "#tui/types.ts";
 import {
 	FrontendRuntimeProvider,
 	makeFrontendRuntime,
@@ -16,6 +17,7 @@ import { App } from "#ui/app.tsx";
 
 export interface StartVigilTuiOptions {
 	readonly chooserFilePath: Option.Option<string>;
+	readonly initialBlameTarget: Option.Option<BlameTarget>;
 	readonly daemonConnection: VigilDaemonConnection;
 }
 
@@ -124,6 +126,7 @@ export function startVigilTuiProgram(
 							initialThemeName={initialThemeName}
 							initialThemeMode={themePreference.mode ?? "dark"}
 							chooserFilePath={options.chooserFilePath}
+							initialBlameTarget={options.initialBlameTarget}
 							daemonConnection={options.daemonConnection}
 						/>
 					</FrontendRuntimeProvider>,

@@ -6,6 +6,9 @@ interface KeyboardIntentRouterActions {
 	readonly destroyRenderer: () => void;
 	readonly toggleSidebar: () => void;
 	readonly toggleDiffViewMode: () => void;
+	readonly closeBlameView: () => void;
+	readonly openBlameCommitCompare: () => void;
+	readonly scrollBlameView: (direction: "up" | "down") => void;
 	readonly closeCommitModal: () => void;
 	readonly openCommitModal: () => void;
 	readonly closeDiscardModal: () => void;
@@ -48,6 +51,11 @@ export function routeKeyboardIntent(
 			DestroyRenderer: actions.destroyRenderer,
 			ToggleSidebar: actions.toggleSidebar,
 			ToggleDiffViewMode: actions.toggleDiffViewMode,
+			CloseBlameView: actions.closeBlameView,
+			OpenBlameCommitCompare: actions.openBlameCommitCompare,
+			ScrollBlameView: (typedIntent) => {
+				actions.scrollBlameView(typedIntent.direction);
+			},
 			CloseCommitModal: actions.closeCommitModal,
 			OpenCommitModal: actions.openCommitModal,
 			CloseDiscardModal: actions.closeDiscardModal,

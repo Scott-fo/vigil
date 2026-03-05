@@ -7,6 +7,8 @@ import type { FileEntry } from "#tui/types.ts";
 export type FocusedPane = "sidebar" | "diff";
 
 interface UseAppKeyboardInputOptions {
+	isBlameViewOpen: boolean;
+	canOpenBlameCommitCompare: boolean;
 	isCommitModalOpen: boolean;
 	isDiscardModalOpen: boolean;
 	isCommitSearchModalOpen: boolean;
@@ -26,6 +28,8 @@ interface UseAppKeyboardInputOptions {
 }
 
 export interface KeyboardIntentContext {
+	isBlameViewOpen: boolean;
+	canOpenBlameCommitCompare: boolean;
 	isCommitModalOpen: boolean;
 	isDiscardModalOpen: boolean;
 	isCommitSearchModalOpen: boolean;
@@ -47,6 +51,9 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "DestroyRenderer" }
 	| { readonly _tag: "ToggleSidebar" }
 	| { readonly _tag: "ToggleDiffViewMode" }
+	| { readonly _tag: "CloseBlameView" }
+	| { readonly _tag: "OpenBlameCommitCompare" }
+	| { readonly _tag: "ScrollBlameView"; readonly direction: "up" | "down" }
 	| { readonly _tag: "CloseCommitModal" }
 	| { readonly _tag: "OpenCommitModal" }
 	| { readonly _tag: "CloseDiscardModal" }
@@ -151,6 +158,26 @@ function decodeModalIntentLayer(
 	key: KeyEvent,
 	options: KeyboardIntentContext,
 ): DecoderLayerResult {
+	if (options.isBlameViewOpen) {
+		if (key.name === "escape") {
+			return handledLayer(Option.some({ _tag: "CloseBlameView" }));
+		}
+		if (isUnmodifiedKey(key, "o") && options.canOpenBlameCommitCompare) {
+			return handledLayer(Option.some({ _tag: "OpenBlameCommitCompare" }));
+		}
+		if (key.name === "down" || key.name === "j") {
+			return handledLayer(
+				Option.some({ _tag: "ScrollBlameView", direction: "down" }),
+			);
+		}
+		if (key.name === "up" || key.name === "k") {
+			return handledLayer(
+				Option.some({ _tag: "ScrollBlameView", direction: "up" }),
+			);
+		}
+		return handledLayer(Option.none());
+	}
+
 	if (options.isCommitModalOpen) {
 		return handledLayer(
 			key.name === "escape"
@@ -446,6 +473,7 @@ export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
 
 	useKeyboard((key) => {
 		const hasOpenModal =
+			options.isBlameViewOpen ||
 			options.isCommitModalOpen ||
 			options.isDiscardModalOpen ||
 			options.isCommitSearchModalOpen ||

@@ -29,6 +29,8 @@ function context(
 	overrides: Partial<KeyboardIntentContext> = {},
 ): KeyboardIntentContext {
 	return {
+		isBlameViewOpen: false,
+		canOpenBlameCommitCompare: false,
 		isCommitModalOpen: false,
 		isDiscardModalOpen: false,
 		isCommitSearchModalOpen: false,
@@ -181,6 +183,57 @@ describe("decodeKeyboardIntent", () => {
 		if (Option.isSome(intent)) {
 			expect(intent.value._tag).toBe("ResetReviewMode");
 		}
+	});
+
+	test("routes blame overlay keys with modal precedence", () => {
+		const openCompareIntent = decodeKeyboardIntent(
+			keyEvent({ name: "o" }),
+			context({
+				isBlameViewOpen: true,
+				canOpenBlameCommitCompare: true,
+			}),
+		);
+		const scrollIntent = decodeKeyboardIntent(
+			keyEvent({ name: "j" }),
+			context({
+				isBlameViewOpen: true,
+			}),
+		);
+		const closeIntent = decodeKeyboardIntent(
+			keyEvent({ name: "escape" }),
+			context({
+				isBlameViewOpen: true,
+			}),
+		);
+
+		expect(Option.isSome(openCompareIntent)).toBe(true);
+		expect(Option.isSome(scrollIntent)).toBe(true);
+		expect(Option.isSome(closeIntent)).toBe(true);
+
+		if (Option.isSome(openCompareIntent)) {
+			expect(openCompareIntent.value._tag).toBe("OpenBlameCommitCompare");
+		}
+		if (Option.isSome(scrollIntent)) {
+			expect(scrollIntent.value).toEqual({
+				_tag: "ScrollBlameView",
+				direction: "down",
+			});
+		}
+		if (Option.isSome(closeIntent)) {
+			expect(closeIntent.value._tag).toBe("CloseBlameView");
+		}
+	});
+
+	test("suppresses regular open-file intent while blame overlay is active", () => {
+		const intent = decodeKeyboardIntent(
+			keyEvent({ name: "o" }),
+			context({
+				isBlameViewOpen: true,
+				canOpenBlameCommitCompare: false,
+			}),
+		);
+
+		expect(Option.isNone(intent)).toBe(true);
 	});
 
 	test("maps escape to close theme modal when open", () => {
