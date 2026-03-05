@@ -2,6 +2,7 @@ import { Effect, Option } from "effect";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	loadBranchFilePreview,
+	loadCommitFilePreview,
 	loadFilePreview,
 	type FileDiffPreview,
 } from "#data/git.ts";
@@ -78,7 +79,9 @@ export function useDiffPreviewState(
 		let cancelled = false;
 		const previewEffect = isWorkingTreeReviewMode(reviewMode)
 			? loadFilePreview(selectedFile)
-			: loadBranchFilePreview(selectedFile.path, reviewMode.selection);
+			: reviewMode._tag === "branch-compare"
+				? loadBranchFilePreview(selectedFile.path, reviewMode.selection)
+				: loadCommitFilePreview(selectedFile.path, reviewMode.selection);
 
 		void Effect.runPromise(previewEffect).then((preview) => {
 			if (cancelled) {

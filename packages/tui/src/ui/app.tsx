@@ -9,6 +9,7 @@ import { buildDiffNavigationModel } from "#diff/navigation.ts";
 import type { ThemeMode } from "#theme/theme.ts";
 import type { AppProps } from "#tui/types.ts";
 import { BranchCompareModal } from "#ui/components/branch-compare-modal.tsx";
+import { CommitSearchModal } from "#ui/components/commit-search-modal.tsx";
 import { CommitModal } from "#ui/components/commit-modal.tsx";
 import { DiscardModal } from "#ui/components/discard-modal.tsx";
 import { HelpModal } from "#ui/components/help-modal.tsx";
@@ -27,16 +28,17 @@ import type { FocusedPane } from "#ui/inputs.ts";
 import { useAppKeyboardInput } from "#ui/inputs.ts";
 import {
 	branchCompareModalAtom,
+	commitSearchModalAtom,
 	commitModalAtom,
 	discardModalAtom,
 	fileViewStateAtom,
 	helpModalAtom,
-	isBranchCompareReviewMode,
 	isWorkingTreeReviewMode,
 	remoteSyncAtom,
 	reviewModeAtom,
 	themeModalAtom,
 	type UpdateBranchCompareModal,
+	type UpdateCommitSearchModal,
 	type UpdateCommitModal,
 	type UpdateDiscardModal,
 	type UpdateFileViewState,
@@ -76,6 +78,9 @@ export function App(props: AppProps) {
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
 	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
 	const [discardModal, setDiscardModal] = useAtom(discardModalAtom);
+	const [commitSearchModal, setCommitSearchModal] = useAtom(
+		commitSearchModalAtom,
+	);
 	const [helpModal, setHelpModal] = useAtom(helpModalAtom);
 	const [themeModal, setThemeModal] = useAtom(themeModalAtom);
 	const [branchCompareModal, setBranchCompareModal] = useAtom(
@@ -109,6 +114,13 @@ export function App(props: AppProps) {
 			setCommitModal(update);
 		},
 		[setCommitModal],
+	);
+
+	const updateCommitSearchModal = useCallback<UpdateCommitSearchModal>(
+		(update) => {
+			setCommitSearchModal(update);
+		},
+		[setCommitSearchModal],
 	);
 
 	const updateHelpModal = useCallback<UpdateHelpModal>(
@@ -163,6 +175,7 @@ export function App(props: AppProps) {
 		modalBackdropColor,
 		isCommitModalOpen,
 		isDiscardModalOpen,
+		isCommitSearchModalOpen,
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
@@ -181,6 +194,12 @@ export function App(props: AppProps) {
 		filteredThemeNames,
 		commitMessage,
 		commitError,
+		commitSearchQuery,
+		commitFilteredCommits,
+		commitSelectedCommitHash,
+		commitSelectedIndex,
+		commitSearchModalLoading,
+		commitSearchModalError,
 		canInitializeGitRepo,
 		reviewModeLabel,
 		selectedFile,
@@ -193,6 +212,7 @@ export function App(props: AppProps) {
 		uiStatus,
 		commitModal,
 		discardModal,
+		commitSearchModal,
 		helpModal,
 		themeModal,
 		branchCompareModal,
@@ -389,6 +409,8 @@ export function App(props: AppProps) {
 		onBranchDestinationQueryChange,
 		onBranchSelectRef,
 		onBranchActivateField,
+		onCommitSearchQueryChange,
+		onCommitSearchSelectCommit,
 		onKeyboardIntent,
 		onToggleDirectory,
 		onSelectFilePath,
@@ -411,6 +433,7 @@ export function App(props: AppProps) {
 		setSelectedDiffLineIndex,
 		commitModal,
 		discardModal,
+		commitSearchModal,
 		themeModal,
 		branchCompareModal,
 		canInitializeGitRepo,
@@ -418,6 +441,7 @@ export function App(props: AppProps) {
 		updateFileView,
 		updateUiStatus,
 		updateCommitModal,
+		updateCommitSearchModal,
 		updateHelpModal,
 		updateThemeModal,
 		updateBranchCompareModal,
@@ -450,10 +474,11 @@ export function App(props: AppProps) {
 	useAppKeyboardInput({
 		isCommitModalOpen,
 		isDiscardModalOpen,
+		isCommitSearchModalOpen,
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
-		isBranchCompareMode: isBranchCompareReviewMode(reviewMode),
+		isReadOnlyReviewMode: !isWorkingTreeReviewMode(reviewMode),
 		activePane,
 		canInitializeGitRepo,
 		stagedFileCount,
@@ -550,6 +575,20 @@ export function App(props: AppProps) {
 					onDestinationQueryChange={onBranchDestinationQueryChange}
 					onSelectRef={onBranchSelectRef}
 					onActivateField={onBranchActivateField}
+				/>
+			)}
+			{isCommitSearchModalOpen && (
+				<CommitSearchModal
+					theme={theme}
+					modalBackdropColor={modalBackdropColor}
+					query={commitSearchQuery}
+					commits={commitFilteredCommits}
+					selectedCommitHash={commitSelectedCommitHash}
+					selectedIndex={commitSelectedIndex}
+					loading={commitSearchModalLoading}
+					error={commitSearchModalError}
+					onQueryChange={onCommitSearchQueryChange}
+					onSelectCommit={onCommitSearchSelectCommit}
 				/>
 			)}
 			<RemoteSyncStatus theme={theme} state={remoteSync} />

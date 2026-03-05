@@ -10,9 +10,11 @@ import {
 import type { SidebarItem } from "#ui/sidebar.ts";
 import { buildSidebarTree, flattenSidebarTree } from "#ui/sidebar.ts";
 import { searchBranchRefs } from "#ui/branch-ref-search.ts";
+import { searchCommits } from "#ui/commit-search.ts";
 import type {
 	BranchCompareField,
 	BranchCompareModalState,
+	CommitSearchModalState,
 	CommitModalState,
 	DiscardModalState,
 	FileViewState,
@@ -21,13 +23,18 @@ import type {
 	ThemeModalState,
 	UiStatus,
 } from "#ui/state.ts";
-import { deriveModalVisibility, isWorkingTreeReviewMode } from "#ui/state.ts";
+import {
+	deriveModalVisibility,
+	isCommitCompareReviewMode,
+	isWorkingTreeReviewMode,
+} from "#ui/state.ts";
 
 interface UseAppSelectorsOptions {
 	readonly fileView: FileViewState;
 	readonly uiStatus: UiStatus;
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
+	readonly commitSearchModal: CommitSearchModalState;
 	readonly helpModal: HelpModalState;
 	readonly themeModal: ThemeModalState;
 	readonly branchCompareModal: BranchCompareModalState;
@@ -44,6 +51,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		uiStatus,
 		commitModal,
 		discardModal,
+		commitSearchModal,
 		helpModal,
 		themeModal,
 		branchCompareModal,
@@ -80,6 +88,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 	const {
 		isCommitModalOpen,
 		isDiscardModalOpen,
+		isCommitSearchModalOpen,
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
@@ -87,6 +96,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 	} = deriveModalVisibility({
 		commitModal,
 		discardModal,
+		commitSearchModal,
 		helpModal,
 		themeModal,
 		branchCompareModal,
@@ -182,6 +192,60 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 	const commitMessage = commitModal.isOpen ? commitModal.message : "";
 	const commitError = commitModal.isOpen ? commitModal.error : Option.none();
 
+	const commitSearchQuery = commitSearchModal.isOpen ? commitSearchModal.query : "";
+
+	const commitFilteredCommits = useMemo(() => {
+		if (!commitSearchModal.isOpen) {
+			return [] as const;
+		}
+		return searchCommits(
+			commitSearchModal.availableCommits,
+			commitSearchModal.query,
+		);
+	}, [commitSearchModal]);
+
+	const commitSelectedIndex = useMemo(() => {
+		if (!commitSearchModal.isOpen) {
+			return 0;
+		}
+		const maxIndex = Math.max(commitFilteredCommits.length - 1, 0);
+		return Math.min(Math.max(commitSearchModal.selectedIndex, 0), maxIndex);
+	}, [commitFilteredCommits.length, commitSearchModal]);
+
+	const commitSelectedCommitHash = useMemo(() => {
+		if (!commitSearchModal.isOpen) {
+			return Option.none<string>();
+		}
+
+		const selectedByIndex = commitFilteredCommits[commitSelectedIndex];
+		if (selectedByIndex) {
+			return Option.some(selectedByIndex.commitHash);
+		}
+
+		const selectedCommitHashValue = Option.match(
+			commitSearchModal.selectedCommitHash,
+			{
+				onNone: () => null,
+				onSome: (value) => value,
+			},
+		);
+
+		return selectedCommitHashValue !== null &&
+			commitFilteredCommits.some(
+				(commit) => commit.commitHash === selectedCommitHashValue,
+			)
+			? commitSearchModal.selectedCommitHash
+			: Option.fromNullable(commitFilteredCommits[0]?.commitHash);
+	}, [commitFilteredCommits, commitSearchModal, commitSelectedIndex]);
+
+	const commitSearchModalLoading = commitSearchModal.isOpen
+		? commitSearchModal.loading
+		: false;
+
+	const commitSearchModalError = commitSearchModal.isOpen
+		? commitSearchModal.error
+		: Option.none<string>();
+
 	const canInitializeGitRepo = pipe(
 		uiStatus.error,
 		Option.match({
@@ -193,7 +257,9 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 
 	const reviewModeLabel = isWorkingTreeReviewMode(reviewMode)
 		? ""
-		: `Compare ${reviewMode.selection.sourceRef} -> ${reviewMode.selection.destinationRef}`;
+		: isCommitCompareReviewMode(reviewMode)
+			? `Commit ${reviewMode.selection.shortHash}: ${reviewMode.selection.subject}`
+			: `Compare ${reviewMode.selection.sourceRef} -> ${reviewMode.selection.destinationRef}`;
 
 	const selectedFile = useMemo(() => {
 		if (files.length === 0) {
@@ -258,6 +324,7 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		modalBackdropColor,
 		isCommitModalOpen,
 		isDiscardModalOpen,
+		isCommitSearchModalOpen,
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
@@ -276,6 +343,12 @@ export function useAppSelectors(options: UseAppSelectorsOptions) {
 		filteredThemeNames,
 		commitMessage,
 		commitError,
+		commitSearchQuery,
+		commitFilteredCommits,
+		commitSelectedCommitHash,
+		commitSelectedIndex,
+		commitSearchModalLoading,
+		commitSearchModalError,
 		canInitializeGitRepo,
 		reviewModeLabel,
 		selectedFile,

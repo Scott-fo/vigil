@@ -9,10 +9,11 @@ export type FocusedPane = "sidebar" | "diff";
 interface UseAppKeyboardInputOptions {
 	isCommitModalOpen: boolean;
 	isDiscardModalOpen: boolean;
+	isCommitSearchModalOpen: boolean;
 	isHelpModalOpen: boolean;
 	isThemeModalOpen: boolean;
 	isBranchCompareModalOpen: boolean;
-	isBranchCompareMode: boolean;
+	isReadOnlyReviewMode: boolean;
 	activePane: FocusedPane;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
@@ -27,10 +28,11 @@ interface UseAppKeyboardInputOptions {
 export interface KeyboardIntentContext {
 	isCommitModalOpen: boolean;
 	isDiscardModalOpen: boolean;
+	isCommitSearchModalOpen: boolean;
 	isHelpModalOpen: boolean;
 	isThemeModalOpen: boolean;
 	isBranchCompareModalOpen: boolean;
-	isBranchCompareMode: boolean;
+	isReadOnlyReviewMode: boolean;
 	activePane: FocusedPane;
 	canInitializeGitRepo: boolean;
 	stagedFileCount: number;
@@ -55,12 +57,16 @@ export type AppKeyboardIntent =
 	| { readonly _tag: "InitGitRepository" }
 	| { readonly _tag: "OpenThemeModal" }
 	| { readonly _tag: "OpenBranchCompareModal" }
+	| { readonly _tag: "OpenCommitSearchModal" }
 	| { readonly _tag: "CloseThemeModal" }
 	| { readonly _tag: "CloseBranchCompareModal" }
+	| { readonly _tag: "CloseCommitSearchModal" }
 	| { readonly _tag: "ConfirmThemeModal" }
 	| { readonly _tag: "ConfirmBranchCompareModal" }
+	| { readonly _tag: "ConfirmCommitSearchModal" }
 	| { readonly _tag: "MoveThemeSelection"; readonly direction: 1 | -1 }
 	| { readonly _tag: "MoveBranchSelection"; readonly direction: 1 | -1 }
+	| { readonly _tag: "MoveCommitSearchSelection"; readonly direction: 1 | -1 }
 	| { readonly _tag: "SwitchBranchModalField" }
 	| { readonly _tag: "SyncRemote"; readonly direction: "pull" | "push" }
 	| { readonly _tag: "ResetReviewMode" }
@@ -214,6 +220,26 @@ function decodeModalIntentLayer(
 		return handledLayer(Option.none());
 	}
 
+	if (options.isCommitSearchModalOpen) {
+		if (key.name === "escape") {
+			return handledLayer(Option.some({ _tag: "CloseCommitSearchModal" }));
+		}
+		if (key.name === "enter" || key.name === "return") {
+			return handledLayer(Option.some({ _tag: "ConfirmCommitSearchModal" }));
+		}
+		if (key.name === "down") {
+			return handledLayer(
+				Option.some({ _tag: "MoveCommitSearchSelection", direction: 1 }),
+			);
+		}
+		if (key.name === "up") {
+			return handledLayer(
+				Option.some({ _tag: "MoveCommitSearchSelection", direction: -1 }),
+			);
+		}
+		return handledLayer(Option.none());
+	}
+
 	return passLayer();
 }
 
@@ -238,13 +264,13 @@ function decodeGlobalIntentLayer(
 	}
 
 	if (isUnmodifiedKey(key, "c") && options.stagedFileCount > 0) {
-		return options.isBranchCompareMode
+		return options.isReadOnlyReviewMode
 			? Option.none()
 			: Option.some({ _tag: "OpenCommitModal" });
 	}
 
 	if (isUnmodifiedKey(key, "d")) {
-		if (options.isBranchCompareMode) {
+		if (options.isReadOnlyReviewMode) {
 			return Option.none();
 		}
 		return pipe(
@@ -262,6 +288,10 @@ function decodeGlobalIntentLayer(
 
 	if (isUnmodifiedKey(key, "b")) {
 		return Option.some({ _tag: "OpenBranchCompareModal" });
+	}
+
+	if (isUnmodifiedKey(key, "g")) {
+		return Option.some({ _tag: "OpenCommitSearchModal" });
 	}
 
 	if (isUnmodifiedKey(key, "p")) {
@@ -355,7 +385,7 @@ function decodeSelectionIntentLayer(
 	}
 
 	if (!key.ctrl && !key.meta && (key.name === "space" || key.name === " ")) {
-		if (options.isBranchCompareMode) {
+		if (options.isReadOnlyReviewMode) {
 			return Option.none();
 		}
 		return pipe(
@@ -418,6 +448,7 @@ export function useAppKeyboardInput(options: UseAppKeyboardInputOptions) {
 		const hasOpenModal =
 			options.isCommitModalOpen ||
 			options.isDiscardModalOpen ||
+			options.isCommitSearchModalOpen ||
 			options.isHelpModalOpen ||
 			options.isThemeModalOpen ||
 			options.isBranchCompareModalOpen;

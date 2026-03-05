@@ -31,10 +31,11 @@ function context(
 	return {
 		isCommitModalOpen: false,
 		isDiscardModalOpen: false,
+		isCommitSearchModalOpen: false,
 		isHelpModalOpen: false,
 		isThemeModalOpen: false,
 		isBranchCompareModalOpen: false,
-		isBranchCompareMode: false,
+		isReadOnlyReviewMode: false,
 		activePane: "sidebar",
 		canInitializeGitRepo: false,
 		stagedFileCount: 1,
@@ -163,6 +164,14 @@ describe("decodeKeyboardIntent", () => {
 		}
 	});
 
+	test("maps g to open commit search modal", () => {
+		const intent = decodeKeyboardIntent(keyEvent({ name: "g" }), context());
+		expect(Option.isSome(intent)).toBe(true);
+		if (Option.isSome(intent)) {
+			expect(intent.value._tag).toBe("OpenCommitSearchModal");
+		}
+	});
+
 	test("maps ctrl+l to reset review mode", () => {
 		const intent = decodeKeyboardIntent(
 			keyEvent({ name: "l", ctrl: true }),
@@ -275,6 +284,36 @@ describe("decodeKeyboardIntent", () => {
 		}
 	});
 
+	test("handles commit search modal navigation keys", () => {
+		const downIntent = decodeKeyboardIntent(
+			keyEvent({ name: "down" }),
+			context({ isCommitSearchModalOpen: true }),
+		);
+		const enterIntent = decodeKeyboardIntent(
+			keyEvent({ name: "return" }),
+			context({ isCommitSearchModalOpen: true }),
+		);
+		const closeIntent = decodeKeyboardIntent(
+			keyEvent({ name: "escape" }),
+			context({ isCommitSearchModalOpen: true }),
+		);
+		expect(Option.isSome(downIntent)).toBe(true);
+		expect(Option.isSome(enterIntent)).toBe(true);
+		expect(Option.isSome(closeIntent)).toBe(true);
+		if (Option.isSome(downIntent)) {
+			expect(downIntent.value).toEqual({
+				_tag: "MoveCommitSearchSelection",
+				direction: 1,
+			});
+		}
+		if (Option.isSome(enterIntent)) {
+			expect(enterIntent.value._tag).toBe("ConfirmCommitSearchModal");
+		}
+		if (Option.isSome(closeIntent)) {
+			expect(closeIntent.value._tag).toBe("CloseCommitSearchModal");
+		}
+	});
+
 	test("does not map ctrl+l when branch compare modal is open", () => {
 		const intent = decodeKeyboardIntent(
 			keyEvent({ name: "l", ctrl: true }),
@@ -286,15 +325,15 @@ describe("decodeKeyboardIntent", () => {
 	test("blocks staging/discard/commit shortcuts in branch compare mode", () => {
 		const commitIntent = decodeKeyboardIntent(
 			keyEvent({ name: "c" }),
-			context({ isBranchCompareMode: true }),
+			context({ isReadOnlyReviewMode: true }),
 		);
 		const discardIntent = decodeKeyboardIntent(
 			keyEvent({ name: "d" }),
-			context({ isBranchCompareMode: true }),
+			context({ isReadOnlyReviewMode: true }),
 		);
 		const stageIntent = decodeKeyboardIntent(
 			keyEvent({ name: "space" }),
-			context({ isBranchCompareMode: true }),
+			context({ isReadOnlyReviewMode: true }),
 		);
 		expect(Option.isNone(commitIntent)).toBe(true);
 		expect(Option.isNone(discardIntent)).toBe(true);

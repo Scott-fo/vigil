@@ -10,17 +10,20 @@ import type { RepoActionError } from "#data/git.ts";
 import type { ThemeCatalog, ThemeMode } from "#theme/theme.ts";
 import { routeKeyboardIntent } from "#ui/hooks/keyboard-intent-router.ts";
 import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions.ts";
+import { useCommitSearchActions } from "#ui/hooks/use-commit-search-actions.ts";
 import { useGitActions } from "#ui/hooks/use-git-actions.ts";
 import { useThemeActions } from "#ui/hooks/use-theme-actions.ts";
 import type { AppKeyboardIntent, FocusedPane } from "#ui/inputs.ts";
 import type {
 	BranchCompareModalState,
+	CommitSearchModalState,
 	CommitModalState,
 	DiscardModalState,
 	RemoteSyncState,
 	ReviewMode,
 	ThemeModalState,
 	UpdateBranchCompareModal,
+	UpdateCommitSearchModal,
 	UpdateCommitModal,
 	UpdateDiscardModal,
 	UpdateFileViewState,
@@ -56,6 +59,7 @@ interface UseRepoActionsOptions {
 	readonly setSelectedDiffLineIndex: Dispatch<SetStateAction<number>>;
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
+	readonly commitSearchModal: CommitSearchModalState;
 	readonly themeModal: ThemeModalState;
 	readonly branchCompareModal: BranchCompareModalState;
 	readonly remoteSync: RemoteSyncState;
@@ -65,6 +69,7 @@ interface UseRepoActionsOptions {
 	readonly updateUiStatus: UpdateUiStatus;
 	readonly updateCommitModal: UpdateCommitModal;
 	readonly updateDiscardModal: UpdateDiscardModal;
+	readonly updateCommitSearchModal: UpdateCommitSearchModal;
 	readonly updateHelpModal: UpdateHelpModal;
 	readonly updateThemeModal: UpdateThemeModal;
 	readonly updateBranchCompareModal: UpdateBranchCompareModal;
@@ -102,6 +107,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		setSelectedDiffLineIndex,
 		commitModal,
 		discardModal,
+		commitSearchModal,
 		themeModal,
 		branchCompareModal,
 		remoteSync,
@@ -111,6 +117,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		updateUiStatus,
 		updateCommitModal,
 		updateDiscardModal,
+		updateCommitSearchModal,
 		updateHelpModal,
 		updateThemeModal,
 		updateBranchCompareModal,
@@ -279,6 +286,23 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	});
 
 	const {
+		openCommitSearchModal,
+		closeCommitSearchModal,
+		confirmCommitSearchModal,
+		moveCommitSearchSelection,
+		onCommitSearchQueryChange,
+		onCommitSearchSelectCommit,
+	} = useCommitSearchActions({
+		commitSearchModal,
+		reviewMode,
+		updateCommitSearchModal,
+		updateReviewMode,
+		clearUiError,
+		refreshFiles,
+		renderRepoActionError,
+	});
+
+	const {
 		onCommitMessageChange,
 		onCommitSubmit,
 		closeCommitModal,
@@ -372,12 +396,16 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				initializeGitRepository,
 				openThemeModal,
 				openBranchCompareModal,
+				openCommitSearchModal,
 				closeThemeModal,
 				closeBranchCompareModal,
+				closeCommitSearchModal,
 				confirmThemeModal,
 				confirmBranchCompareModal,
+				confirmCommitSearchModal,
 				moveThemeSelection,
 				moveBranchSelection,
+				moveCommitSearchSelection,
 				switchBranchField,
 				syncRemote,
 				resetReviewMode,
@@ -392,17 +420,21 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			}),
 		[
 			closeBranchCompareModal,
+			closeCommitSearchModal,
 			closeCommitModal,
 			closeDiscardModal,
 			closeHelpModal,
 			closeThemeModal,
 			confirmBranchCompareModal,
+			confirmCommitSearchModal,
 			confirmDiscardModal,
 			confirmThemeModal,
 			initializeGitRepository,
 			moveBranchSelection,
+			moveCommitSearchSelection,
 			moveThemeSelection,
 			openBranchCompareModal,
+			openCommitSearchModal,
 			openCommitModal,
 			openDiscardModal,
 			openHelpModal,
@@ -433,6 +465,8 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		onBranchDestinationQueryChange,
 		onBranchSelectRef,
 		onBranchActivateField,
+		onCommitSearchQueryChange,
+		onCommitSearchSelectCommit,
 		onKeyboardIntent,
 		onToggleDirectory: toggleCollapsedDirectory,
 		onSelectFilePath: selectFilePath,

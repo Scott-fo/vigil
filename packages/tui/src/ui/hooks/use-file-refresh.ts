@@ -2,7 +2,9 @@ import { Effect, Option, pipe } from "effect";
 import { useCallback, useEffect, useRef } from "react";
 import {
 	type BranchDiffSelection,
+	type CommitDiffSelection,
 	loadFilesWithBranchDiffs,
+	loadFilesWithCommitDiff,
 	loadFilesWithStatus,
 	type RepoActionError,
 } from "#data/git.ts";
@@ -74,20 +76,27 @@ export interface FileRefreshLoaders {
 	readonly loadBranchCompare: (
 		selection: BranchDiffSelection,
 	) => ReturnType<typeof loadFilesWithBranchDiffs>;
+	readonly loadCommitCompare: (
+		selection: CommitDiffSelection,
+	) => ReturnType<typeof loadFilesWithCommitDiff>;
 }
 
 const defaultFileRefreshLoaders: FileRefreshLoaders = {
 	loadWorkingTree: () => loadFilesWithStatus(),
 	loadBranchCompare: (selection) => loadFilesWithBranchDiffs(selection),
+	loadCommitCompare: (selection) => loadFilesWithCommitDiff(selection),
 };
 
 export function buildFilesLoadEffect(
 	reviewMode: ReviewMode,
 	loaders: FileRefreshLoaders = defaultFileRefreshLoaders,
 ) {
-	return isWorkingTreeReviewMode(reviewMode)
-		? loaders.loadWorkingTree()
-		: loaders.loadBranchCompare(reviewMode.selection);
+	if (isWorkingTreeReviewMode(reviewMode)) {
+		return loaders.loadWorkingTree();
+	}
+	return reviewMode._tag === "branch-compare"
+		? loaders.loadBranchCompare(reviewMode.selection)
+		: loaders.loadCommitCompare(reviewMode.selection);
 }
 
 export function useFileRefresh(options: UseFileRefreshOptions) {

@@ -85,6 +85,7 @@ describe("buildFilesLoadEffect", () => {
 					branchCalls += 1;
 					return Effect.succeed([entry("branch.ts")]);
 				},
+				loadCommitCompare: () => Effect.succeed([entry("commit.ts")]),
 			}),
 		);
 		expect(result.map((file) => file.path)).toEqual(["working.ts"]);
@@ -110,10 +111,39 @@ describe("buildFilesLoadEffect", () => {
 					capturedDestination = selection.destinationRef;
 					return Effect.succeed([entry("branch.ts")]);
 				},
+				loadCommitCompare: () => Effect.succeed([entry("commit.ts")]),
 			}),
 		);
 		expect(result.map((file) => file.path)).toEqual(["branch.ts"]);
 		expect(capturedSource).toBe("feature/refactor");
 		expect(capturedDestination).toBe("main");
+	});
+
+	test("uses commit loader with selected commit in commit-compare mode", () => {
+		let capturedCommitHash = "";
+		let capturedBaseRef = "";
+		const mode: ReviewMode = {
+			_tag: "commit-compare",
+			selection: {
+				commitHash: "abc1234",
+				baseRef: "abc1234^1",
+				shortHash: "abc1234",
+				subject: "feat: add commit search",
+			},
+		};
+		const result = Effect.runSync(
+			buildFilesLoadEffect(mode, {
+				loadWorkingTree: () => Effect.succeed([entry("working.ts")]),
+				loadBranchCompare: () => Effect.succeed([entry("branch.ts")]),
+				loadCommitCompare: (selection) => {
+					capturedCommitHash = selection.commitHash;
+					capturedBaseRef = selection.baseRef;
+					return Effect.succeed([entry("commit.ts")]);
+				},
+			}),
+		);
+		expect(result.map((file) => file.path)).toEqual(["commit.ts"]);
+		expect(capturedCommitHash).toBe("abc1234");
+		expect(capturedBaseRef).toBe("abc1234^1");
 	});
 });

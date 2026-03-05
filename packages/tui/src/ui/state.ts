@@ -1,6 +1,6 @@
 import { Atom } from "@effect-atom/atom-react";
 import { Option } from "effect";
-import type { BranchDiffSelection } from "#data/git.ts";
+import type { BranchDiffSelection, CommitDiffSelection } from "#data/git.ts";
 import type { FileEntry } from "#tui/types.ts";
 
 export type UiStatus = {
@@ -80,6 +80,28 @@ export const discardModalAtom = Atom.make<DiscardModalState>({
 	isOpen: false,
 });
 
+export type CommitSearchModalState =
+	| {
+			readonly isOpen: false;
+	  }
+	| {
+			readonly isOpen: true;
+			readonly loading: boolean;
+			readonly query: string;
+			readonly availableCommits: ReadonlyArray<CommitDiffSelection>;
+			readonly selectedCommitHash: Option.Option<string>;
+			readonly selectedIndex: number;
+			readonly error: Option.Option<string>;
+	  };
+
+export type UpdateCommitSearchModal = (
+	update: (current: CommitSearchModalState) => CommitSearchModalState,
+) => void;
+
+export const commitSearchModalAtom = Atom.make<CommitSearchModalState>({
+	isOpen: false,
+});
+
 export type RemoteSyncState =
 	| {
 			readonly _tag: "idle";
@@ -104,6 +126,10 @@ export type ReviewMode =
 	| {
 			readonly _tag: "branch-compare";
 			readonly selection: BranchDiffSelection;
+	  }
+	| {
+			readonly _tag: "commit-compare";
+			readonly selection: CommitDiffSelection;
 	  };
 
 export type UpdateReviewMode = (
@@ -141,6 +167,30 @@ export type UpdateBranchCompareModal = (
 export const branchCompareModalAtom = Atom.make<BranchCompareModalState>({
 	isOpen: false,
 });
+
+export function closeCommitSearchModalState(
+	current: CommitSearchModalState,
+): CommitSearchModalState {
+	return current.isOpen ? { isOpen: false } : current;
+}
+
+interface OpenCommitSearchModalLoadingOptions {
+	readonly selectedCommitHash: Option.Option<string>;
+}
+
+export function openCommitSearchModalLoadingState(
+	options: OpenCommitSearchModalLoadingOptions,
+): CommitSearchModalState {
+	return {
+		isOpen: true,
+		loading: true,
+		query: "",
+		availableCommits: [],
+		selectedCommitHash: options.selectedCommitHash,
+		selectedIndex: 0,
+		error: Option.none(),
+	};
+}
 
 export function closeCommitModalState(
 	current: CommitModalState,
@@ -296,6 +346,7 @@ export const fileViewStateAtom = Atom.make<FileViewState>({
 export interface ModalVisibility {
 	readonly isCommitModalOpen: boolean;
 	readonly isDiscardModalOpen: boolean;
+	readonly isCommitSearchModalOpen: boolean;
 	readonly isHelpModalOpen: boolean;
 	readonly isThemeModalOpen: boolean;
 	readonly isBranchCompareModalOpen: boolean;
@@ -305,6 +356,7 @@ export interface ModalVisibility {
 interface DeriveModalVisibilityOptions {
 	readonly commitModal: CommitModalState;
 	readonly discardModal: DiscardModalState;
+	readonly commitSearchModal: CommitSearchModalState;
 	readonly helpModal: HelpModalState;
 	readonly themeModal: ThemeModalState;
 	readonly branchCompareModal: BranchCompareModalState;
@@ -315,18 +367,21 @@ export function deriveModalVisibility(
 ): ModalVisibility {
 	const isCommitModalOpen = options.commitModal.isOpen;
 	const isDiscardModalOpen = options.discardModal.isOpen;
+	const isCommitSearchModalOpen = options.commitSearchModal.isOpen;
 	const isHelpModalOpen = options.helpModal.isOpen;
 	const isThemeModalOpen = options.themeModal.isOpen;
 	const isBranchCompareModalOpen = options.branchCompareModal.isOpen;
 	return {
 		isCommitModalOpen,
 		isDiscardModalOpen,
+		isCommitSearchModalOpen,
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
 		isAnyModalOpen:
 			isCommitModalOpen ||
 			isDiscardModalOpen ||
+			isCommitSearchModalOpen ||
 			isHelpModalOpen ||
 			isThemeModalOpen ||
 			isBranchCompareModalOpen,
@@ -343,4 +398,10 @@ export function isBranchCompareReviewMode(
 	reviewMode: ReviewMode,
 ): reviewMode is Extract<ReviewMode, { readonly _tag: "branch-compare" }> {
 	return reviewMode._tag === "branch-compare";
+}
+
+export function isCommitCompareReviewMode(
+	reviewMode: ReviewMode,
+): reviewMode is Extract<ReviewMode, { readonly _tag: "commit-compare" }> {
+	return reviewMode._tag === "commit-compare";
 }

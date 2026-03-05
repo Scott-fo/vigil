@@ -16,12 +16,16 @@ interface KeyboardIntentRouterActions {
 	readonly initializeGitRepository: () => void;
 	readonly openThemeModal: () => void;
 	readonly openBranchCompareModal: () => void;
+	readonly openCommitSearchModal: () => void;
 	readonly closeThemeModal: () => void;
 	readonly closeBranchCompareModal: () => void;
+	readonly closeCommitSearchModal: () => void;
 	readonly confirmThemeModal: () => void;
 	readonly confirmBranchCompareModal: () => void;
+	readonly confirmCommitSearchModal: () => void;
 	readonly moveThemeSelection: (direction: 1 | -1) => void;
 	readonly moveBranchSelection: (direction: 1 | -1) => void;
+	readonly moveCommitSearchSelection: (direction: 1 | -1) => void;
 	readonly switchBranchField: () => void;
 	readonly syncRemote: (direction: "pull" | "push") => void;
 	readonly resetReviewMode: () => void;
@@ -56,15 +60,21 @@ export function routeKeyboardIntent(
 			InitGitRepository: actions.initializeGitRepository,
 			OpenThemeModal: actions.openThemeModal,
 			OpenBranchCompareModal: actions.openBranchCompareModal,
+			OpenCommitSearchModal: actions.openCommitSearchModal,
 			CloseThemeModal: actions.closeThemeModal,
 			CloseBranchCompareModal: actions.closeBranchCompareModal,
+			CloseCommitSearchModal: actions.closeCommitSearchModal,
 			ConfirmThemeModal: actions.confirmThemeModal,
 			ConfirmBranchCompareModal: actions.confirmBranchCompareModal,
+			ConfirmCommitSearchModal: actions.confirmCommitSearchModal,
 			MoveThemeSelection: (typedIntent) => {
 				actions.moveThemeSelection(typedIntent.direction);
 			},
 			MoveBranchSelection: (typedIntent) => {
 				actions.moveBranchSelection(typedIntent.direction);
+			},
+			MoveCommitSearchSelection: (typedIntent) => {
+				actions.moveCommitSearchSelection(typedIntent.direction);
 			},
 			SwitchBranchModalField: actions.switchBranchField,
 			SyncRemote: (typedIntent) => {
