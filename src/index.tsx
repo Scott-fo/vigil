@@ -6,7 +6,6 @@ import {
 	type VigilServerStartError,
 } from "@vigil/server";
 import {
-	ensureManagedDaemonAvailable,
 	type StartVigilTuiError,
 	startVigilTuiProgram,
 } from "@vigil/tui";
@@ -80,16 +79,6 @@ function runCli(
 			port: args.serverPort,
 			token: daemonToken,
 		};
-
-		yield* ensureManagedDaemonAvailable(daemonConnection).pipe(
-			Effect.mapError(
-				(error) =>
-					new VigilDaemonEnsureError({
-						message: error.message,
-						cause: error.cause,
-					}),
-			),
-		);
 
 		yield* startVigilTuiProgram({
 			chooserFilePath: args.chooserFilePath,
