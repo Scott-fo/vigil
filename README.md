@@ -88,6 +88,16 @@ A-r = [
   ":set mouse false",
   ":set mouse true",
 ]
+
+# Open vigil blame for the current file + cursor line.
+A-b = [
+  ":write-all",
+  ":insert-output sh -c 'vigil blame \"%{buffer_name}:%{cursor_line}\" </dev/tty >/dev/tty 2>&1'",
+  ":redraw",
+  ":reload-all",
+  ":set mouse false",
+  ":set mouse true",
+]
 ```
 
 ## License
