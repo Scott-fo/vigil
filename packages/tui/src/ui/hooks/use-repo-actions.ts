@@ -39,7 +39,11 @@ import { closeHelpModalState, openHelpModalState } from "#ui/state.ts";
 
 interface RendererControls {
 	readonly height: number;
+	readonly currentRenderBuffer: {
+		clear(): void;
+	};
 	destroy(): void;
+	requestRender(): void;
 	suspend(): void;
 	resume(): void;
 }

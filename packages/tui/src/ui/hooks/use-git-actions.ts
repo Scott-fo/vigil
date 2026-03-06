@@ -43,9 +43,29 @@ import {
 
 interface RendererControls {
 	readonly height: number;
+	readonly currentRenderBuffer: {
+		clear(): void;
+	};
 	destroy(): void;
+	requestRender(): void;
 	suspend(): void;
 	resume(): void;
+}
+
+export function runWithSuspendedRenderer<T>(
+	renderer: RendererControls,
+	run: () => T,
+): T {
+	renderer.suspend();
+	renderer.currentRenderBuffer.clear();
+
+	try {
+		return run();
+	} finally {
+		renderer.currentRenderBuffer.clear();
+		renderer.resume();
+		renderer.requestRender();
+	}
 }
 
 interface UseGitActionsOptions {
@@ -190,13 +210,13 @@ export function useGitActions(options: UseGitActionsOptions) {
 				return;
 			}
 
-			renderer.suspend();
-			Effect.runSync(
-				uiController.run(openFileInEditor(filePath), renderOpenFileError, {
-					refreshOnFailure: true,
-				}),
+			runWithSuspendedRenderer(renderer, () =>
+				Effect.runSync(
+					uiController.run(openFileInEditor(filePath), renderOpenFileError, {
+						refreshOnFailure: true,
+					}),
+				),
 			);
-			renderer.resume();
 		},
 		[chooserFilePath, renderer, uiController],
 	);
@@ -224,13 +244,17 @@ export function useGitActions(options: UseGitActionsOptions) {
 				return;
 			}
 
-			renderer.suspend();
-			Effect.runSync(
-				uiController.run(openFileInEditorAtLine(filePath, lineNumber), renderOpenFileError, {
-					refreshOnFailure: true,
-				}),
+			runWithSuspendedRenderer(renderer, () =>
+				Effect.runSync(
+					uiController.run(
+						openFileInEditorAtLine(filePath, lineNumber),
+						renderOpenFileError,
+						{
+							refreshOnFailure: true,
+						},
+					),
+				),
 			);
-			renderer.resume();
 		},
 		[chooserFilePath, renderer, uiController],
 	);

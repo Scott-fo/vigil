@@ -3,7 +3,7 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { Effect, Option, pipe } from "effect";
 import { useMemo, useRef } from "react";
-import { type RepoActionError } from "#data/git.ts";
+import type { RepoActionError } from "#data/git.ts";
 import { buildDiffNavigationModel } from "#diff/navigation.ts";
 import type { AppProps } from "#tui/types.ts";
 import { AppEffects } from "#ui/components/app-effects.tsx";
@@ -17,14 +17,14 @@ import { useFileRefresh } from "#ui/hooks/use-file-refresh.ts";
 import { useModalView } from "#ui/hooks/use-modal-view.ts";
 import { useNotifications } from "#ui/hooks/use-notifications.ts";
 import { usePaneNavigationState } from "#ui/hooks/use-pane-navigation-state.ts";
+import { useRepoActions } from "#ui/hooks/use-repo-actions.ts";
 import { useReviewFileView } from "#ui/hooks/use-review-file-view.ts";
 import { useReviewStatusView } from "#ui/hooks/use-review-status-view.ts";
-import { useRepoActions } from "#ui/hooks/use-repo-actions.ts";
 import { useThemeState } from "#ui/hooks/use-theme-state.ts";
 import {
 	branchCompareModalAtom,
-	commitSearchModalAtom,
 	commitModalAtom,
+	commitSearchModalAtom,
 	discardModalAtom,
 	fileViewStateAtom,
 	helpModalAtom,
@@ -155,16 +155,13 @@ export function App(props: AppProps) {
 
 	const isWorkingTreeMode = isWorkingTreeReviewMode(reviewMode);
 
-	const {
-		refreshFiles,
-		onRefreshInstruction,
-		refreshInstructionVersion,
-	} = useFileRefresh({
-		updateFileView: setFileView,
-		updateUiStatus: setUiStatus,
-		renderRepoActionError: formatRepoActionError,
-		reviewMode,
-	});
+	const { refreshFiles, onRefreshInstruction, refreshInstructionVersion } =
+		useFileRefresh({
+			updateFileView: setFileView,
+			updateUiStatus: setUiStatus,
+			renderRepoActionError: formatRepoActionError,
+			reviewMode,
+		});
 
 	const {
 		daemonSnackbarNotice,
