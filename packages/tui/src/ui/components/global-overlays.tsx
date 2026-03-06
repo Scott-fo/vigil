@@ -15,26 +15,32 @@ import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar.tsx";
 import { ThemeModal } from "#ui/components/theme-modal.tsx";
 import type { BranchCompareField, RemoteSyncState } from "#ui/state.ts";
 
-interface GlobalOverlaysProps {
-	readonly theme: ResolvedTheme;
-	readonly modalBackdropColor: RGBA;
-	readonly isCommitModalOpen: boolean;
+interface CommitOverlayProps {
+	readonly isOpen: boolean;
 	readonly commitMessage: string;
 	readonly commitError: Option.Option<string>;
 	readonly onCommitMessageChange: (value: string) => void;
 	readonly onCommitSubmit: (payload: unknown) => void;
-	readonly isDiscardModalOpen: boolean;
+}
+
+interface DiscardOverlayProps {
+	readonly isOpen: boolean;
 	readonly discardModalFile: FileEntry | null;
 	readonly onCancelDiscardModal: () => void;
 	readonly onConfirmDiscardModal: () => void;
-	readonly isHelpModalOpen: boolean;
-	readonly isThemeModalOpen: boolean;
+}
+
+interface ThemeOverlayProps {
+	readonly isOpen: boolean;
 	readonly themeNames: ReadonlyArray<string>;
 	readonly selectedThemeName: string;
 	readonly themeSearchQuery: string;
 	readonly onSearchQueryChange: (value: string) => void;
 	readonly onSelectTheme: (themeName: string) => void;
-	readonly isBranchCompareModalOpen: boolean;
+}
+
+interface BranchCompareOverlayProps {
+	readonly isOpen: boolean;
 	readonly branchSourceQuery: string;
 	readonly branchDestinationQuery: string;
 	readonly branchSourceRef: Option.Option<string>;
@@ -48,7 +54,10 @@ interface GlobalOverlaysProps {
 	readonly onBranchDestinationQueryChange: (value: string) => void;
 	readonly onBranchSelectRef: (refName: string) => void;
 	readonly onBranchActivateField: (field: BranchCompareField) => void;
-	readonly isCommitSearchModalOpen: boolean;
+}
+
+interface CommitSearchOverlayProps {
+	readonly isOpen: boolean;
 	readonly commitSearchQuery: string;
 	readonly commitSearchCommits: ReadonlyArray<CommitDiffSelection>;
 	readonly commitSelectedCommitHash: Option.Option<string>;
@@ -57,12 +66,18 @@ interface GlobalOverlaysProps {
 	readonly commitSearchModalError: Option.Option<string>;
 	readonly onCommitSearchQueryChange: (query: string) => void;
 	readonly onCommitSearchSelectCommit: (commitHash: string) => void;
-	readonly isBlameViewOpen: boolean;
+}
+
+interface BlameOverlayProps {
+	readonly isOpen: boolean;
 	readonly blameTarget: BlameTarget | null;
 	readonly blameLoading: boolean;
 	readonly blameDetails: BlameCommitDetails | null;
 	readonly blameError: string | null;
 	readonly blameScrollRef: RefObject<ScrollBoxRenderable | null>;
+}
+
+interface NotificationsOverlayProps {
 	readonly remoteSync: RemoteSyncState;
 	readonly daemonSnackbarNotice: Option.Option<SnackbarNotice>;
 	readonly transientSnackbarNotice: Option.Option<SnackbarNotice>;
@@ -70,26 +85,39 @@ interface GlobalOverlaysProps {
 	readonly transientSnackbarTop: number;
 }
 
+interface GlobalOverlaysProps {
+	readonly theme: ResolvedTheme;
+	readonly modalBackdropColor: RGBA;
+	readonly commit: CommitOverlayProps;
+	readonly discard: DiscardOverlayProps;
+	readonly isHelpModalOpen: boolean;
+	readonly themeModal: ThemeOverlayProps;
+	readonly branchCompare: BranchCompareOverlayProps;
+	readonly commitSearch: CommitSearchOverlayProps;
+	readonly blameView: BlameOverlayProps;
+	readonly notifications: NotificationsOverlayProps;
+}
+
 export function GlobalOverlays(props: GlobalOverlaysProps) {
 	return (
 		<>
-			{props.isCommitModalOpen ? (
+			{props.commit.isOpen ? (
 				<CommitModal
 					theme={props.theme}
 					modalBackdropColor={props.modalBackdropColor}
-					commitMessage={props.commitMessage}
-					commitError={props.commitError}
-					onCommitMessageChange={props.onCommitMessageChange}
-					onCommitSubmit={props.onCommitSubmit}
+					commitMessage={props.commit.commitMessage}
+					commitError={props.commit.commitError}
+					onCommitMessageChange={props.commit.onCommitMessageChange}
+					onCommitSubmit={props.commit.onCommitSubmit}
 				/>
 			) : null}
-			{props.isDiscardModalOpen && props.discardModalFile ? (
+			{props.discard.isOpen && props.discard.discardModalFile ? (
 				<DiscardModal
 					theme={props.theme}
 					modalBackdropColor={props.modalBackdropColor}
-					file={props.discardModalFile}
-					onCancel={props.onCancelDiscardModal}
-					onConfirm={props.onConfirmDiscardModal}
+					file={props.discard.discardModalFile}
+					onCancel={props.discard.onCancelDiscardModal}
+					onConfirm={props.discard.onConfirmDiscardModal}
 				/>
 			) : null}
 			{props.isHelpModalOpen ? (
@@ -98,71 +126,76 @@ export function GlobalOverlays(props: GlobalOverlaysProps) {
 					modalBackdropColor={props.modalBackdropColor}
 				/>
 			) : null}
-			{props.isThemeModalOpen ? (
+			{props.themeModal.isOpen ? (
 				<ThemeModal
 					theme={props.theme}
 					modalBackdropColor={props.modalBackdropColor}
-					themes={props.themeNames}
-					selectedThemeName={props.selectedThemeName}
-					searchQuery={props.themeSearchQuery}
-					onSearchQueryChange={props.onSearchQueryChange}
-					onSelectTheme={props.onSelectTheme}
+					themes={props.themeModal.themeNames}
+					selectedThemeName={props.themeModal.selectedThemeName}
+					searchQuery={props.themeModal.themeSearchQuery}
+					onSearchQueryChange={props.themeModal.onSearchQueryChange}
+					onSelectTheme={props.themeModal.onSelectTheme}
 				/>
 			) : null}
-			{props.isBranchCompareModalOpen ? (
+			{props.branchCompare.isOpen ? (
 				<BranchCompareModal
 					theme={props.theme}
 					modalBackdropColor={props.modalBackdropColor}
-					sourceQuery={props.branchSourceQuery}
-					destinationQuery={props.branchDestinationQuery}
-					sourceRef={props.branchSourceRef}
-					destinationRef={props.branchDestinationRef}
-					activeField={props.branchActiveField}
-					filteredRefs={props.branchFilteredRefs}
-					selectedActiveRef={props.branchSelectedActiveRef}
-					loading={props.branchModalLoading}
-					error={props.branchModalError}
-					onSourceQueryChange={props.onBranchSourceQueryChange}
-					onDestinationQueryChange={props.onBranchDestinationQueryChange}
-					onSelectRef={props.onBranchSelectRef}
-					onActivateField={props.onBranchActivateField}
+					sourceQuery={props.branchCompare.branchSourceQuery}
+					destinationQuery={props.branchCompare.branchDestinationQuery}
+					sourceRef={props.branchCompare.branchSourceRef}
+					destinationRef={props.branchCompare.branchDestinationRef}
+					activeField={props.branchCompare.branchActiveField}
+					filteredRefs={props.branchCompare.branchFilteredRefs}
+					selectedActiveRef={props.branchCompare.branchSelectedActiveRef}
+					loading={props.branchCompare.branchModalLoading}
+					error={props.branchCompare.branchModalError}
+					onSourceQueryChange={props.branchCompare.onBranchSourceQueryChange}
+					onDestinationQueryChange={
+						props.branchCompare.onBranchDestinationQueryChange
+					}
+					onSelectRef={props.branchCompare.onBranchSelectRef}
+					onActivateField={props.branchCompare.onBranchActivateField}
 				/>
 			) : null}
-			{props.isCommitSearchModalOpen ? (
+			{props.commitSearch.isOpen ? (
 				<CommitSearchModal
 					theme={props.theme}
 					modalBackdropColor={props.modalBackdropColor}
-					query={props.commitSearchQuery}
-					commits={props.commitSearchCommits}
-					selectedCommitHash={props.commitSelectedCommitHash}
-					selectedIndex={props.commitSelectedIndex}
-					loading={props.commitSearchModalLoading}
-					error={props.commitSearchModalError}
-					onQueryChange={props.onCommitSearchQueryChange}
-					onSelectCommit={props.onCommitSearchSelectCommit}
+					query={props.commitSearch.commitSearchQuery}
+					commits={props.commitSearch.commitSearchCommits}
+					selectedCommitHash={props.commitSearch.commitSelectedCommitHash}
+					selectedIndex={props.commitSearch.commitSelectedIndex}
+					loading={props.commitSearch.commitSearchModalLoading}
+					error={props.commitSearch.commitSearchModalError}
+					onQueryChange={props.commitSearch.onCommitSearchQueryChange}
+					onSelectCommit={props.commitSearch.onCommitSearchSelectCommit}
 				/>
 			) : null}
-			{props.isBlameViewOpen && props.blameTarget ? (
+			{props.blameView.isOpen && props.blameView.blameTarget ? (
 				<BlameView
 					theme={props.theme}
 					modalBackdropColor={props.modalBackdropColor}
-					target={props.blameTarget}
-					loading={props.blameLoading}
-					details={Option.fromNullable(props.blameDetails)}
-					error={Option.fromNullable(props.blameError)}
-					scrollRef={props.blameScrollRef}
+					target={props.blameView.blameTarget}
+					loading={props.blameView.blameLoading}
+					details={Option.fromNullable(props.blameView.blameDetails)}
+					error={Option.fromNullable(props.blameView.blameError)}
+					scrollRef={props.blameView.blameScrollRef}
 				/>
 			) : null}
-			<RemoteSyncStatus theme={props.theme} state={props.remoteSync} />
-			<Snackbar
+			<RemoteSyncStatus
 				theme={props.theme}
-				notice={props.daemonSnackbarNotice}
-				top={props.snackbarTop}
+				state={props.notifications.remoteSync}
 			/>
 			<Snackbar
 				theme={props.theme}
-				notice={props.transientSnackbarNotice}
-				top={props.transientSnackbarTop}
+				notice={props.notifications.daemonSnackbarNotice}
+				top={props.notifications.snackbarTop}
+			/>
+			<Snackbar
+				theme={props.theme}
+				notice={props.notifications.transientSnackbarNotice}
+				top={props.notifications.transientSnackbarTop}
 			/>
 		</>
 	);

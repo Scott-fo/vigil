@@ -288,6 +288,35 @@ export function App(props: AppProps) {
 		renderRepoActionError: formatRepoActionError,
 	});
 
+	const keyboard = {
+		isBlameViewOpen: blameView.isOpen,
+		canOpenBlameCommitCompare: canOpenCommitCompare,
+		isCommitModalOpen,
+		isDiscardModalOpen,
+		isCommitSearchModalOpen,
+		isHelpModalOpen,
+		isThemeModalOpen,
+		isBranchCompareModalOpen,
+		isReadOnlyReviewMode: !isWorkingTreeMode,
+		activePane,
+		canInitializeGitRepo,
+		stagedFileCount,
+		visibleFilePaths,
+		selectedVisibleIndex,
+		selectedFile,
+		selectedDiffFilePath,
+		selectedDiffLineNumber,
+		onIntent: onKeyboardIntent,
+	};
+
+	const appEffectsTheme = {
+		filteredThemeNames,
+		isThemeModalOpen,
+		onSelectThemeInModal,
+		selectedThemeName,
+		setThemeSearchQuery,
+	};
+
 	const reviewerProps = {
 		theme,
 		syntaxStyle: themeBundle.syntaxStyle,
@@ -313,6 +342,76 @@ export function App(props: AppProps) {
 		onCopySelection,
 	};
 
+	const commitOverlay = {
+		isOpen: isCommitModalOpen,
+		commitMessage,
+		commitError,
+		onCommitMessageChange,
+		onCommitSubmit,
+	};
+
+	const discardOverlay = {
+		isOpen: isDiscardModalOpen,
+		discardModalFile,
+		onCancelDiscardModal,
+		onConfirmDiscardModal,
+	};
+
+	const themeOverlay = {
+		isOpen: isThemeModalOpen,
+		themeNames: filteredThemeNames,
+		selectedThemeName,
+		themeSearchQuery,
+		onSearchQueryChange: setThemeSearchQuery,
+		onSelectTheme: onSelectThemeInModal,
+	};
+
+	const branchCompareOverlay = {
+		isOpen: isBranchCompareModalOpen,
+		branchSourceQuery,
+		branchDestinationQuery,
+		branchSourceRef,
+		branchDestinationRef,
+		branchActiveField,
+		branchFilteredRefs,
+		branchSelectedActiveRef,
+		branchModalLoading,
+		branchModalError,
+		onBranchSourceQueryChange,
+		onBranchDestinationQueryChange,
+		onBranchSelectRef,
+		onBranchActivateField,
+	};
+
+	const commitSearchOverlay = {
+		isOpen: isCommitSearchModalOpen,
+		commitSearchQuery,
+		commitSearchCommits: commitFilteredCommits,
+		commitSelectedCommitHash,
+		commitSelectedIndex,
+		commitSearchModalLoading,
+		commitSearchModalError,
+		onCommitSearchQueryChange,
+		onCommitSearchSelectCommit,
+	};
+
+	const blameOverlay = {
+		isOpen: blameView.isOpen,
+		blameTarget: blameView.target,
+		blameLoading: blameView.loading,
+		blameDetails: blameView.details,
+		blameError: blameView.error,
+		blameScrollRef,
+	};
+
+	const notificationsOverlay = {
+		remoteSync,
+		daemonSnackbarNotice,
+		transientSnackbarNotice,
+		snackbarTop,
+		transientSnackbarTop,
+	};
+
 	return (
 		<box
 			flexDirection="column"
@@ -321,32 +420,13 @@ export function App(props: AppProps) {
 			backgroundColor={theme.background}
 		>
 			<AppEffects
-				activePane={activePane}
-				canInitializeGitRepo={canInitializeGitRepo}
-				canOpenBlameCommitCompare={canOpenCommitCompare}
 				daemonConnection={props.daemonConnection}
 				enabledWatch={isWorkingTreeMode}
-				filteredThemeNames={filteredThemeNames}
-				isBlameViewOpen={blameView.isOpen}
-				isBranchCompareModalOpen={isBranchCompareModalOpen}
-				isCommitModalOpen={isCommitModalOpen}
-				isCommitSearchModalOpen={isCommitSearchModalOpen}
-				isDiscardModalOpen={isDiscardModalOpen}
-				isHelpModalOpen={isHelpModalOpen}
-				isReadOnlyReviewMode={!isWorkingTreeMode}
-				isThemeModalOpen={isThemeModalOpen}
+				keyboard={keyboard}
 				notifyDaemonDisconnected={notifyDaemonDisconnected}
 				notifyDaemonReconnected={notifyDaemonReconnected}
-				onIntent={onKeyboardIntent}
 				onRefreshInstruction={onRefreshInstruction}
-				onSelectThemeInModal={onSelectThemeInModal}
-				selectedDiffFilePath={selectedDiffFilePath}
-				selectedDiffLineNumber={selectedDiffLineNumber}
-				selectedFile={selectedFile}
-				selectedThemeName={selectedThemeName}
-				selectedVisibleIndex={selectedVisibleIndex}
-				setThemeSearchQuery={setThemeSearchQuery}
-				stagedFileCount={stagedFileCount}
+				theme={appEffectsTheme}
 				updateFileView={setFileView}
 				visibleFilePaths={visibleFilePaths}
 			/>
@@ -354,56 +434,14 @@ export function App(props: AppProps) {
 			<GlobalOverlays
 				theme={theme}
 				modalBackdropColor={modalBackdropColor}
-				isCommitModalOpen={isCommitModalOpen}
-				commitMessage={commitMessage}
-				commitError={commitError}
-				onCommitMessageChange={onCommitMessageChange}
-				onCommitSubmit={onCommitSubmit}
-				isDiscardModalOpen={isDiscardModalOpen}
-				discardModalFile={discardModalFile}
-				onCancelDiscardModal={onCancelDiscardModal}
-				onConfirmDiscardModal={onConfirmDiscardModal}
+				commit={commitOverlay}
+				discard={discardOverlay}
 				isHelpModalOpen={isHelpModalOpen}
-				isThemeModalOpen={isThemeModalOpen}
-				themeNames={filteredThemeNames}
-				selectedThemeName={selectedThemeName}
-				themeSearchQuery={themeSearchQuery}
-				onSearchQueryChange={setThemeSearchQuery}
-				onSelectTheme={onSelectThemeInModal}
-				isBranchCompareModalOpen={isBranchCompareModalOpen}
-				branchSourceQuery={branchSourceQuery}
-				branchDestinationQuery={branchDestinationQuery}
-				branchSourceRef={branchSourceRef}
-				branchDestinationRef={branchDestinationRef}
-				branchActiveField={branchActiveField}
-				branchFilteredRefs={branchFilteredRefs}
-				branchSelectedActiveRef={branchSelectedActiveRef}
-				branchModalLoading={branchModalLoading}
-				branchModalError={branchModalError}
-				onBranchSourceQueryChange={onBranchSourceQueryChange}
-				onBranchDestinationQueryChange={onBranchDestinationQueryChange}
-				onBranchSelectRef={onBranchSelectRef}
-				onBranchActivateField={onBranchActivateField}
-				isCommitSearchModalOpen={isCommitSearchModalOpen}
-				commitSearchQuery={commitSearchQuery}
-				commitSearchCommits={commitFilteredCommits}
-				commitSelectedCommitHash={commitSelectedCommitHash}
-				commitSelectedIndex={commitSelectedIndex}
-				commitSearchModalLoading={commitSearchModalLoading}
-				commitSearchModalError={commitSearchModalError}
-				onCommitSearchQueryChange={onCommitSearchQueryChange}
-				onCommitSearchSelectCommit={onCommitSearchSelectCommit}
-				isBlameViewOpen={blameView.isOpen}
-				blameTarget={blameView.target}
-				blameLoading={blameView.loading}
-				blameDetails={blameView.details}
-				blameError={blameView.error}
-				blameScrollRef={blameScrollRef}
-				remoteSync={remoteSync}
-				daemonSnackbarNotice={daemonSnackbarNotice}
-				transientSnackbarNotice={transientSnackbarNotice}
-				snackbarTop={snackbarTop}
-				transientSnackbarTop={transientSnackbarTop}
+				themeModal={themeOverlay}
+				branchCompare={branchCompareOverlay}
+				commitSearch={commitSearchOverlay}
+				blameView={blameOverlay}
+				notifications={notificationsOverlay}
 			/>
 		</box>
 	);
