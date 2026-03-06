@@ -18,15 +18,20 @@ import { Reviewer } from "#ui/components/reviewer.tsx";
 import { Snackbar } from "#ui/components/snackbar.tsx";
 import { Splash } from "#ui/components/splash.tsx";
 import { ThemeModal } from "#ui/components/theme-modal.tsx";
-import { useAppSelectors } from "#ui/hooks/use-app-selectors.ts";
 import { useBlameView } from "#ui/hooks/use-blame-view.ts";
+import { useBranchCompareView } from "#ui/hooks/use-branch-compare-view.ts";
+import { useCommitSearchView } from "#ui/hooks/use-commit-search-view.ts";
 import { useDaemonSession } from "#ui/hooks/use-daemon-session.ts";
 import { useDaemonWatch } from "#ui/hooks/use-daemon-watch.ts";
 import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state.ts";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh.ts";
+import { useModalView } from "#ui/hooks/use-modal-view.ts";
 import { useNotifications } from "#ui/hooks/use-notifications.ts";
 import { usePaneNavigationState } from "#ui/hooks/use-pane-navigation-state.ts";
+import { useReviewFileView } from "#ui/hooks/use-review-file-view.ts";
+import { useReviewStatusView } from "#ui/hooks/use-review-status-view.ts";
 import { useRepoActions } from "#ui/hooks/use-repo-actions.ts";
+import { useThemeView } from "#ui/hooks/use-theme-view.ts";
 import { useAppKeyboardInput } from "#ui/inputs.ts";
 import {
 	branchCompareModalAtom,
@@ -82,61 +87,85 @@ export function App(props: AppProps) {
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
 
 	const {
-		files,
-		sidebarOpen,
 		diffViewMode,
+		files,
 		loading,
-		themeBundle,
-		theme,
+		selectedFile,
+		selectedVisibleIndex,
+		sidebarItems,
+		sidebarOpen,
+		stagedFileCount,
+		visibleFilePaths,
+	} = useReviewFileView({
+		fileView,
+	});
+
+	const {
+		canInitializeGitRepo,
+		reviewModeLabel,
+	} = useReviewStatusView({
+		reviewMode,
+		uiStatus,
+	});
+
+	const {
+		filteredThemeNames,
 		modalBackdropColor,
+		selectedThemeName,
+		theme,
+		themeBundle,
+	} = useThemeView({
+		themeCatalog: props.themeCatalog,
+		themeModal,
+		themeMode,
+		themeName,
+		themeSearchQuery,
+	});
+
+	const {
+		discardModalFile,
+		isAnyModalOpen,
 		isCommitModalOpen,
-		isDiscardModalOpen,
 		isCommitSearchModalOpen,
+		isDiscardModalOpen,
 		isHelpModalOpen,
 		isThemeModalOpen,
 		isBranchCompareModalOpen,
-		isAnyModalOpen,
-		discardModalFile,
-		selectedThemeName,
-		branchSourceQuery,
-		branchDestinationQuery,
-		branchSourceRef,
-		branchDestinationRef,
-		branchActiveField,
-		branchFilteredRefs,
-		branchSelectedActiveRef,
-		branchModalLoading,
-		branchModalError,
-		filteredThemeNames,
-		commitMessage,
-		commitError,
-		commitSearchQuery,
-		commitFilteredCommits,
-		commitSelectedCommitHash,
-		commitSelectedIndex,
-		commitSearchModalLoading,
-		commitSearchModalError,
-		canInitializeGitRepo,
-		reviewModeLabel,
-		selectedFile,
-		sidebarItems,
-		visibleFilePaths,
-		selectedVisibleIndex,
-		stagedFileCount,
-	} = useAppSelectors({
-		fileView,
-		uiStatus,
+	} = useModalView({
+		branchCompareModal,
 		commitModal,
-		discardModal,
 		commitSearchModal,
+		discardModal,
 		helpModal,
 		themeModal,
+	});
+
+	const {
+		branchActiveField,
+		branchDestinationQuery,
+		branchDestinationRef,
+		branchFilteredRefs,
+		branchModalError,
+		branchModalLoading,
+		branchSelectedActiveRef,
+		branchSourceQuery,
+		branchSourceRef,
+	} = useBranchCompareView({
 		branchCompareModal,
-		reviewMode,
-		themeCatalog: props.themeCatalog,
-		themeName,
-		themeMode,
-		themeSearchQuery,
+	});
+
+	const commitMessage = commitModal.isOpen ? commitModal.message : "";
+	const commitError = commitModal.isOpen ? commitModal.error : Option.none();
+
+	const {
+		commitFilteredCommits,
+		commitSearchModalError,
+		commitSearchModalLoading,
+		commitSearchQuery,
+		commitSelectedCommitHash,
+		commitSelectedIndex,
+	} = useCommitSearchView({
+		commitSearchModal,
 	});
 
 	const watchRepoPath = useMemo(() => process.cwd(), []);
