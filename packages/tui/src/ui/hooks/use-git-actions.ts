@@ -16,7 +16,11 @@ import {
 	toggleFileStage,
 } from "#data/git.ts";
 import type { FileEntry } from "#tui/types.ts";
-import type { ActionRunOptions, ActionRunResult } from "#ui/hooks/use-action-runner.ts";
+import type {
+	ActionRunOptions,
+	ActionRunResult,
+	UiControllerApi,
+} from "#ui/services/ui-controller.ts";
 import type {
 	CommitModalState,
 	DiscardModalState,
@@ -57,15 +61,8 @@ interface UseGitActionsOptions {
 	readonly updateDiscardModal: UpdateDiscardModal;
 	readonly updateRemoteSync: UpdateRemoteSyncState;
 	readonly updateReviewMode: UpdateReviewMode;
-	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
-	readonly clearUiError: () => void;
-	readonly setUiError: (error: string) => void;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
-	readonly runAction: <E>(
-		effect: Effect.Effect<void, E>,
-		renderError: (error: E) => string,
-		actionOptions?: ActionRunOptions,
-	) => ActionRunResult;
+	readonly uiController: UiControllerApi;
 }
 
 export function useGitActions(options: UseGitActionsOptions) {
@@ -82,23 +79,18 @@ export function useGitActions(options: UseGitActionsOptions) {
 		updateDiscardModal,
 		updateRemoteSync,
 		updateReviewMode,
-		refreshFiles,
-		clearUiError,
-		setUiError,
 		renderRepoActionError,
-		runAction,
+		uiController,
 	} = options;
 
 	const submitCommit = useCallback(
 		(rawMessage: string) => {
-			const result = runAction(
-				commitStagedChanges(rawMessage),
-				renderRepoActionError,
-				{
+			const result = Effect.runSync(
+				uiController.run(commitStagedChanges(rawMessage), renderRepoActionError, {
 					onSuccess: () => {
 						updateCommitModal(closeCommitModalState);
 					},
-				},
+				}),
 			);
 			if (!result.ok) {
 				updateCommitModal((current) =>
@@ -106,7 +98,7 @@ export function useGitActions(options: UseGitActionsOptions) {
 				);
 			}
 		},
-		[renderRepoActionError, runAction, updateCommitModal],
+		[renderRepoActionError, uiController, updateCommitModal],
 	);
 
 	const onCommitMessageChange = useCallback(
@@ -144,8 +136,8 @@ export function useGitActions(options: UseGitActionsOptions) {
 			return;
 		}
 		updateCommitModal(openCommitModalState);
-		clearUiError();
-	}, [clearUiError, reviewMode, stagedFileCount, updateCommitModal]);
+		Effect.runSync(uiController.clearError());
+	}, [reviewMode, stagedFileCount, uiController, updateCommitModal]);
 
 	const closeDiscardModal = useCallback(() => {
 		updateDiscardModal(closeDiscardModalState);
@@ -157,21 +149,23 @@ export function useGitActions(options: UseGitActionsOptions) {
 				return;
 			}
 			updateDiscardModal(() => openDiscardModalState(file));
-			clearUiError();
+			Effect.runSync(uiController.clearError());
 		},
-		[clearUiError, reviewMode, updateDiscardModal],
+		[reviewMode, uiController, updateDiscardModal],
 	);
 
 	const confirmDiscardModal = useCallback(() => {
 		if (!discardModal.isOpen) {
 			return;
 		}
-		runAction(discardFileChanges(discardModal.file), renderRepoActionError, {
-			onSuccess: () => {
-				updateDiscardModal(closeDiscardModalState);
-			},
-		});
-	}, [discardModal, renderRepoActionError, runAction, updateDiscardModal]);
+		Effect.runSync(
+			uiController.run(discardFileChanges(discardModal.file), renderRepoActionError, {
+				onSuccess: () => {
+					updateDiscardModal(closeDiscardModalState);
+				},
+			}),
+		);
+	}, [discardModal, renderRepoActionError, uiController, updateDiscardModal]);
 
 	const openSelectedFile = useCallback(
 		(filePath: string) => {
@@ -180,26 +174,31 @@ export function useGitActions(options: UseGitActionsOptions) {
 					pipe(
 						writeChooserSelection(chooserFilePath.value, filePath),
 						Effect.match({
-							onFailure: (error) => {
-								setUiError(renderOpenFileError(error));
-							},
-							onSuccess: () => {
-								clearUiError();
-								renderer.destroy();
-							},
+							onFailure: (error) =>
+								uiController.setError(renderOpenFileError(error)),
+							onSuccess: () =>
+								pipe(
+									uiController.clearError(),
+									Effect.tap(() => Effect.sync(() => {
+										renderer.destroy();
+									})),
+								),
 						}),
+						Effect.flatten,
 					),
 				);
 				return;
 			}
 
 			renderer.suspend();
-			runAction(openFileInEditor(filePath), renderOpenFileError, {
-				refreshOnFailure: true,
-			});
+			Effect.runSync(
+				uiController.run(openFileInEditor(filePath), renderOpenFileError, {
+					refreshOnFailure: true,
+				}),
+			);
 			renderer.resume();
 		},
-		[chooserFilePath, clearUiError, renderer, runAction, setUiError],
+		[chooserFilePath, renderer, uiController],
 	);
 
 	const openSelectedDiffLine = useCallback(
@@ -209,30 +208,31 @@ export function useGitActions(options: UseGitActionsOptions) {
 					pipe(
 						writeChooserSelection(chooserFilePath.value, filePath),
 						Effect.match({
-							onFailure: (error) => {
-								setUiError(renderOpenFileError(error));
-							},
-							onSuccess: () => {
-								clearUiError();
-								renderer.destroy();
-							},
+							onFailure: (error) =>
+								uiController.setError(renderOpenFileError(error)),
+							onSuccess: () =>
+								pipe(
+									uiController.clearError(),
+									Effect.tap(() => Effect.sync(() => {
+										renderer.destroy();
+									})),
+								),
 						}),
+						Effect.flatten,
 					),
 				);
 				return;
 			}
 
 			renderer.suspend();
-			runAction(
-				openFileInEditorAtLine(filePath, lineNumber),
-				renderOpenFileError,
-				{
+			Effect.runSync(
+				uiController.run(openFileInEditorAtLine(filePath, lineNumber), renderOpenFileError, {
 					refreshOnFailure: true,
-				},
+				}),
 			);
 			renderer.resume();
 		},
-		[chooserFilePath, clearUiError, renderer, runAction, setUiError],
+		[chooserFilePath, renderer, uiController],
 	);
 
 	const toggleSelectedFileStage = useCallback(
@@ -240,28 +240,31 @@ export function useGitActions(options: UseGitActionsOptions) {
 			if (!isWorkingTreeReviewMode(reviewMode)) {
 				return;
 			}
-			runAction(toggleFileStage(file), renderRepoActionError);
+			Effect.runSync(uiController.run(toggleFileStage(file), renderRepoActionError));
 		},
-		[renderRepoActionError, reviewMode, runAction],
+		[renderRepoActionError, reviewMode, uiController],
 	);
 
 	const initializeGitRepository = useCallback(() => {
 		if (!canInitializeGitRepo) {
 			return;
 		}
-		runAction(initGitRepository(), renderRepoActionError, {
-			refreshOnFailure: true,
-		});
-	}, [canInitializeGitRepo, renderRepoActionError, runAction]);
+		Effect.runSync(
+			uiController.run(initGitRepository(), renderRepoActionError, {
+				refreshOnFailure: true,
+			}),
+		);
+	}, [canInitializeGitRepo, renderRepoActionError, uiController]);
 
 	const resetReviewMode = useCallback(() => {
 		if (isWorkingTreeReviewMode(reviewMode)) {
 			return;
 		}
 		updateReviewMode(() => ({ _tag: "working-tree" }));
-		clearUiError();
-		void refreshFiles(true);
-	}, [clearUiError, refreshFiles, reviewMode, updateReviewMode]);
+		void Effect.runPromise(
+			pipe(uiController.clearError(), Effect.zipRight(uiController.refresh(true))),
+		);
+	}, [reviewMode, uiController, updateReviewMode]);
 
 	const syncRemote = useCallback(
 		(direction: "pull" | "push") => {
@@ -273,20 +276,21 @@ export function useGitActions(options: UseGitActionsOptions) {
 				_tag: "running",
 				direction,
 			}));
-			clearUiError();
+			Effect.runSync(uiController.clearError());
 
 			void Effect.runPromise(
 				pipe(
 					direction === "push" ? pushToRemote() : pullFromRemote(),
 					Effect.match({
-						onFailure: (error) => {
-							setUiError(renderRepoActionError(error));
-						},
-						onSuccess: () => {
-							clearUiError();
-							void refreshFiles(false);
-						},
+						onFailure: (error) =>
+							uiController.setError(renderRepoActionError(error)),
+						onSuccess: () =>
+							pipe(
+								uiController.clearError(),
+								Effect.zipRight(uiController.refresh(false)),
+							),
 					}),
+					Effect.flatten,
 					Effect.ensuring(
 						Effect.sync(() => {
 							updateRemoteSync(() => ({ _tag: "idle" }));
@@ -296,11 +300,9 @@ export function useGitActions(options: UseGitActionsOptions) {
 			);
 		},
 		[
-			clearUiError,
-			refreshFiles,
 			remoteSync,
 			renderRepoActionError,
-			setUiError,
+			uiController,
 			updateRemoteSync,
 		],
 	);

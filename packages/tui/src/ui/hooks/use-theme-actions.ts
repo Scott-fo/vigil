@@ -7,6 +7,7 @@ import {
 	type ThemeModalState,
 	type UpdateThemeModal,
 } from "#ui/state.ts";
+import type { UiControllerApi } from "#ui/services/ui-controller.ts";
 import {
 	persistThemePreferenceToTuiConfig,
 	type ThemeCatalog,
@@ -22,8 +23,7 @@ interface UseThemeActionsOptions {
 	readonly themeMode: ThemeMode;
 	readonly setThemeName: Dispatch<SetStateAction<string>>;
 	readonly updateThemeModal: UpdateThemeModal;
-	readonly clearUiError: () => void;
-	readonly setUiError: (error: string) => void;
+	readonly uiController: UiControllerApi;
 }
 
 function renderThemePreferencePersistError(
@@ -46,8 +46,7 @@ export function useThemeActions(options: UseThemeActionsOptions) {
 		themeMode,
 		setThemeName,
 		updateThemeModal,
-		clearUiError,
-		setUiError,
+		uiController,
 	} = options;
 
 	const openThemeModal = useCallback(() => {
@@ -79,21 +78,18 @@ export function useThemeActions(options: UseThemeActionsOptions) {
 					mode: themeMode,
 				}),
 				Effect.match({
-					onFailure: (error) => {
-						setUiError(renderThemePreferencePersistError(error));
-					},
-					onSuccess: () => {
-						clearUiError();
-					},
+					onFailure: (error) =>
+						uiController.setError(renderThemePreferencePersistError(error)),
+					onSuccess: () => uiController.clearError(),
 				}),
+				Effect.flatten,
 			),
 		);
 	}, [
-		clearUiError,
 		setThemeName,
-		setUiError,
 		themeModal,
 		themeMode,
+		uiController,
 		updateThemeModal,
 	]);
 

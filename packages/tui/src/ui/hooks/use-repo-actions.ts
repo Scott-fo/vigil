@@ -7,8 +7,8 @@ import {
 	useCallback,
 } from "react";
 import type { RepoActionError } from "#data/git.ts";
-import { useActionRunner } from "#ui/hooks/use-action-runner.ts";
 import { useKeyboardIntentHandler } from "#ui/hooks/use-keyboard-intent-handler.ts";
+import { useUiController } from "#ui/hooks/use-ui-controller.ts";
 import type { ThemeCatalog, ThemeMode } from "#theme/theme.ts";
 import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions.ts";
 import { useCommitSearchActions } from "#ui/hooks/use-commit-search-actions.ts";
@@ -125,7 +125,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		renderRepoActionError,
 	} = options;
 
-	const { clearUiError, runAction, setUiError } = useActionRunner({
+	const uiController = useUiController({
 		updateUiStatus,
 		refreshFiles,
 	});
@@ -152,8 +152,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		themeMode,
 		setThemeName,
 		updateThemeModal,
-		clearUiError,
-		setUiError,
+		uiController,
 	});
 
 	const {
@@ -171,9 +170,8 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		reviewMode,
 		updateBranchCompareModal,
 		updateReviewMode,
-		clearUiError,
-		refreshFiles,
 		renderRepoActionError,
+		uiController,
 	});
 
 	const {
@@ -188,9 +186,8 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		reviewMode,
 		updateCommitSearchModal,
 		updateReviewMode,
-		clearUiError,
-		refreshFiles,
 		renderRepoActionError,
+		uiController,
 	});
 
 	const {
@@ -220,11 +217,8 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		updateDiscardModal,
 		updateRemoteSync,
 		updateReviewMode,
-		refreshFiles,
-		clearUiError,
-		setUiError,
 		renderRepoActionError,
-		runAction,
+		uiController,
 	});
 
 	const {

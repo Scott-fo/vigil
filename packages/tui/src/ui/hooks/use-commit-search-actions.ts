@@ -7,6 +7,7 @@ import {
 	type RepoActionError,
 } from "#data/git.ts";
 import { searchCommits } from "#ui/commit-search.ts";
+import type { UiControllerApi } from "#ui/services/ui-controller.ts";
 import type {
 	CommitSearchModalState,
 	ReviewMode,
@@ -24,9 +25,8 @@ interface UseCommitSearchActionsOptions {
 	readonly reviewMode: ReviewMode;
 	readonly updateCommitSearchModal: UpdateCommitSearchModal;
 	readonly updateReviewMode: UpdateReviewMode;
-	readonly clearUiError: () => void;
-	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
+	readonly uiController: UiControllerApi;
 }
 
 export function useCommitSearchActions(options: UseCommitSearchActionsOptions) {
@@ -35,9 +35,8 @@ export function useCommitSearchActions(options: UseCommitSearchActionsOptions) {
 		reviewMode,
 		updateCommitSearchModal,
 		updateReviewMode,
-		clearUiError,
-		refreshFiles,
 		renderRepoActionError,
+		uiController,
 	} = options;
 
 	const resolveSelection = useCallback(
@@ -282,12 +281,12 @@ export function useCommitSearchActions(options: UseCommitSearchActionsOptions) {
 			selection: selectedCommit,
 		}));
 		updateCommitSearchModal(closeCommitSearchModalState);
-		clearUiError();
-		void refreshFiles(true);
+		void Effect.runPromise(
+			pipe(uiController.clearError(), Effect.zipRight(uiController.refresh(true))),
+		);
 	}, [
-		clearUiError,
 		commitSearchModal,
-		refreshFiles,
+		uiController,
 		updateCommitSearchModal,
 		updateReviewMode,
 	]);

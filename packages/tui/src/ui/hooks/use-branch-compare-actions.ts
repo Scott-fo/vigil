@@ -1,6 +1,7 @@
 import { Effect, Option, pipe } from "effect";
 import { useCallback } from "react";
 import { listComparableRefs, type RepoActionError } from "#data/git.ts";
+import type { UiControllerApi } from "#ui/services/ui-controller.ts";
 import type {
 	BranchCompareField,
 	BranchCompareModalState,
@@ -20,9 +21,8 @@ interface UseBranchCompareActionsOptions {
 	readonly reviewMode: ReviewMode;
 	readonly updateBranchCompareModal: UpdateBranchCompareModal;
 	readonly updateReviewMode: UpdateReviewMode;
-	readonly clearUiError: () => void;
-	readonly refreshFiles: (showLoading: boolean) => Promise<void>;
 	readonly renderRepoActionError: (error: RepoActionError) => string;
+	readonly uiController: UiControllerApi;
 }
 
 function resolveDestinationRef(
@@ -55,9 +55,8 @@ export function useBranchCompareActions(
 		reviewMode,
 		updateBranchCompareModal,
 		updateReviewMode,
-		clearUiError,
-		refreshFiles,
 		renderRepoActionError,
+		uiController,
 	} = options;
 
 	const openBranchCompareModal = useCallback(() => {
@@ -342,12 +341,12 @@ export function useBranchCompareActions(
 			},
 		}));
 		updateBranchCompareModal(closeBranchCompareModalState);
-		clearUiError();
-		void refreshFiles(true);
+		void Effect.runPromise(
+			pipe(uiController.clearError(), Effect.zipRight(uiController.refresh(true))),
+		);
 	}, [
 		branchCompareModal,
-		clearUiError,
-		refreshFiles,
+		uiController,
 		updateBranchCompareModal,
 		updateReviewMode,
 	]);
