@@ -1,17 +1,12 @@
 import { useAtom } from "@effect-atom/atom-react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import { Effect, Match, Option, pipe } from "effect";
+import { Effect, Option, pipe } from "effect";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { copyTextToClipboard } from "#data/clipboard.ts";
-import {
-	loadBlameCommitDetails,
-	type BlameCommitDetails,
-	type RepoActionError,
-} from "#data/git.ts";
+import { type RepoActionError } from "#data/git.ts";
 import { buildDiffNavigationModel } from "#diff/navigation.ts";
 import type { ThemeMode } from "#theme/theme.ts";
-import type { AppProps, BlameTarget } from "#tui/types.ts";
+import type { AppProps } from "#tui/types.ts";
 import { BlameView } from "#ui/components/blame-view.tsx";
 import { BranchCompareModal } from "#ui/components/branch-compare-modal.tsx";
 import { CommitSearchModal } from "#ui/components/commit-search-modal.tsx";
@@ -20,16 +15,18 @@ import { DiscardModal } from "#ui/components/discard-modal.tsx";
 import { HelpModal } from "#ui/components/help-modal.tsx";
 import { RemoteSyncStatus } from "#ui/components/remote-sync-status.tsx";
 import { Reviewer } from "#ui/components/reviewer.tsx";
-import { Snackbar, type SnackbarNotice } from "#ui/components/snackbar.tsx";
+import { Snackbar } from "#ui/components/snackbar.tsx";
 import { Splash } from "#ui/components/splash.tsx";
 import { ThemeModal } from "#ui/components/theme-modal.tsx";
 import { useAppSelectors } from "#ui/hooks/use-app-selectors.ts";
+import { useBlameView } from "#ui/hooks/use-blame-view.ts";
 import { useDaemonSession } from "#ui/hooks/use-daemon-session.ts";
 import { useDaemonWatch } from "#ui/hooks/use-daemon-watch.ts";
 import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state.ts";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh.ts";
+import { useNotifications } from "#ui/hooks/use-notifications.ts";
+import { usePaneNavigationState } from "#ui/hooks/use-pane-navigation-state.ts";
 import { useRepoActions } from "#ui/hooks/use-repo-actions.ts";
-import type { FocusedPane } from "#ui/inputs.ts";
 import { useAppKeyboardInput } from "#ui/inputs.ts";
 import {
 	branchCompareModalAtom,
@@ -72,41 +69,10 @@ function formatRepoActionError(error: RepoActionError): string {
 	);
 }
 
-interface BlameViewState {
-	readonly isOpen: boolean;
-	readonly target: BlameTarget | null;
-	readonly loading: boolean;
-	readonly details: BlameCommitDetails | null;
-	readonly error: string | null;
-}
-
-function createBlameViewState(
-	initialTarget: Option.Option<BlameTarget>,
-): BlameViewState {
-	return Option.match(initialTarget, {
-		onNone: () => ({
-			isOpen: false,
-			target: null,
-			loading: false,
-			details: null,
-			error: null,
-		}),
-		onSome: (target) => ({
-			isOpen: true,
-			target,
-			loading: true,
-			details: null,
-			error: null,
-		}),
-	});
-}
-
 export function App(props: AppProps) {
 	const renderer = useRenderer();
 	const [themeName, setThemeName] = useState(props.initialThemeName);
 	const [themeSearchQuery, setThemeSearchQuery] = useState("");
-	const [activePane, setActivePane] = useState<FocusedPane>("sidebar");
-	const [selectedDiffLineIndex, setSelectedDiffLineIndex] = useState(0);
 	const [themeMode] = useState<ThemeMode>(props.initialThemeMode);
 	const [fileView, setFileView] = useAtom(fileViewStateAtom);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
@@ -122,19 +88,8 @@ export function App(props: AppProps) {
 	);
 	const [remoteSync, setRemoteSync] = useAtom(remoteSyncAtom);
 	const [reviewMode, setReviewMode] = useAtom(reviewModeAtom);
-	const [blameView, setBlameView] = useState<BlameViewState>(() =>
-		createBlameViewState(props.initialBlameTarget),
-	);
 	const [refreshInstructionVersion, setRefreshInstructionVersion] = useState(0);
-	const [daemonSnackbarNotice, setDaemonSnackbarNotice] = useState<
-		Option.Option<SnackbarNotice>
-	>(Option.none());
-	const [transientSnackbarNotice, setTransientSnackbarNotice] = useState<
-		Option.Option<SnackbarNotice>
-	>(Option.none());
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
-	const blameScrollRef = useRef<ScrollBoxRenderable | null>(null);
-	const snackbarTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const updateFileView = useCallback<UpdateFileViewState>(
 		(update) => {
@@ -287,40 +242,24 @@ export function App(props: AppProps) {
 		[refreshFilesEffect],
 	);
 
-	const showSnackbar = useCallback((notice: SnackbarNotice) => {
-		if (snackbarTimeoutRef.current) {
-			clearTimeout(snackbarTimeoutRef.current);
-		}
-		setTransientSnackbarNotice(Option.some(notice));
-		const timeoutHandle = setTimeout(() => {
-			setTransientSnackbarNotice(Option.none());
-		}, 2000);
-		timeoutHandle.unref?.();
-		snackbarTimeoutRef.current = timeoutHandle;
-	}, []);
-
-	const showDaemonDisconnected = useCallback((message: string) => {
-		setDaemonSnackbarNotice(
-			Option.some({
-				message,
-				variant: "error",
-			}),
-		);
-	}, []);
-
-	const clearDaemonDisconnected = useCallback(() => {
-		setDaemonSnackbarNotice(Option.none());
-		showSnackbar({
-			message: "Reconnected to background daemon",
-			variant: "info",
-		});
-	}, [showSnackbar]);
+	const {
+		daemonSnackbarNotice,
+		notifyDaemonDisconnected,
+		notifyDaemonReconnected,
+		onCopySelection,
+		snackbarTop,
+		transientSnackbarNotice,
+		transientSnackbarTop,
+	} = useNotifications({
+		renderer,
+		hasRemoteSyncRunning: remoteSync._tag === "running",
+	});
 
 	useDaemonSession({
 		daemonConnection: props.daemonConnection,
 		enabled: true,
-		onDisconnect: showDaemonDisconnected,
-		onReconnect: clearDaemonDisconnected,
+		onDisconnect: notifyDaemonDisconnected,
+		onReconnect: notifyDaemonReconnected,
 	});
 
 	useDaemonWatch({
@@ -329,54 +268,6 @@ export function App(props: AppProps) {
 		enabled: isWorkingTreeMode,
 		onRefreshInstruction,
 	});
-
-	const copyAndNotify = useCallback(
-		(text: string) => {
-			if (text.length === 0) {
-				return;
-			}
-
-			void Effect.runPromise(
-				pipe(
-					copyTextToClipboard(renderer, text),
-					Effect.match({
-						onFailure: (error) => {
-							showSnackbar({
-								message: Match.value(error).pipe(
-									Match.tag(
-										"NativeClipboardCopyError",
-										(typedError) => typedError.message,
-									),
-									Match.tag(
-										"ClipboardUnavailableError",
-										(typedError) => typedError.message,
-									),
-									Match.exhaustive,
-								),
-								variant: "error",
-							});
-						},
-						onSuccess: () => {
-							showSnackbar({
-								message: "Text copied to clipboard",
-								variant: "info",
-							});
-						},
-					}),
-				),
-			);
-		},
-		[renderer, showSnackbar],
-	);
-
-	const onCopySelection = useCallback(() => {
-		const text = renderer.getSelection()?.getSelectedText();
-		if (!text) {
-			return;
-		}
-		copyAndNotify(text);
-		renderer.clearSelection();
-	}, [copyAndNotify, renderer]);
 
 	useEffect(() => {
 		if (!isThemeModalOpen) {
@@ -405,28 +296,6 @@ export function App(props: AppProps) {
 		});
 	}, [updateFileView, visibleFilePaths]);
 
-	useEffect(
-		() => () => {
-			if (snackbarTimeoutRef.current) {
-				clearTimeout(snackbarTimeoutRef.current);
-			}
-		},
-		[],
-	);
-
-	useEffect(() => {
-		renderer.console.onCopySelection = (text: string) => {
-			if (!text) {
-				return;
-			}
-			copyAndNotify(text);
-			renderer.clearSelection();
-		};
-		return () => {
-			renderer.console.onCopySelection = undefined;
-		};
-	}, [copyAndNotify, renderer]);
-
 	const { selectedFileDiff, selectedFileDiffNote, selectedFileDiffLoading } =
 		useDiffPreviewState({
 			files,
@@ -439,10 +308,15 @@ export function App(props: AppProps) {
 		() => buildDiffNavigationModel(selectedFileDiff),
 		[selectedFileDiff],
 	);
-	const snackbarTop = remoteSync._tag === "running" ? 4 : 1;
-	const transientSnackbarTop = Option.isSome(daemonSnackbarNotice)
-		? snackbarTop + 4
-		: snackbarTop;
+	const {
+		activePane,
+		selectedDiffLineIndex,
+		setActivePane,
+		setSelectedDiffLineIndex,
+	} = usePaneNavigationState({
+		selectedFilePath: selectedFile?.path,
+		diffLineCount: diffNavigationModel.lines.length,
+	});
 
 	const diffLineCount = diffNavigationModel.lines.length;
 	const selectedDiffLine =
@@ -450,130 +324,20 @@ export function App(props: AppProps) {
 	const selectedDiffLineNumber =
 		selectedDiffLine?.newLine ?? selectedDiffLine?.oldLine ?? null;
 	const selectedDiffFilePath = selectedFile?.path ?? null;
-	const canOpenBlameCommitCompare =
-		blameView.isOpen &&
-		blameView.details !== null &&
-		Option.isSome(blameView.details.compareSelection);
-
-	useEffect(() => {
-		setSelectedDiffLineIndex(0);
-	}, [selectedFile?.path]);
-
-	useEffect(() => {
-		setSelectedDiffLineIndex((current) => {
-			if (diffLineCount === 0) {
-				return 0;
-			}
-			return Math.min(current, diffLineCount - 1);
-		});
-	}, [diffLineCount]);
-
-	useEffect(() => {
-		if (!blameView.isOpen || !blameView.loading || !blameView.target) {
-			return;
-		}
-
-		const target = blameView.target;
-		let cancelled = false;
-
-		void Effect.runPromise(
-			pipe(
-				loadBlameCommitDetails(target),
-				Effect.match({
-					onFailure: (error) => ({
-						ok: false as const,
-						error: formatRepoActionError(error),
-					}),
-					onSuccess: (details) => ({
-						ok: true as const,
-						details,
-					}),
-				}),
-			),
-		).then((result) => {
-			if (cancelled) {
-				return;
-			}
-			setBlameView((current) => {
-				if (
-					!current.isOpen ||
-					!current.loading ||
-					!current.target ||
-					current.target.filePath !== target.filePath ||
-					current.target.lineNumber !== target.lineNumber
-				) {
-					return current;
-				}
-
-				return result.ok
-					? {
-							...current,
-							loading: false,
-							details: result.details,
-							error: null,
-						}
-					: {
-							...current,
-							loading: false,
-							details: null,
-							error: result.error,
-						};
-			});
-		});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [blameView.isOpen, blameView.loading, blameView.target]);
-
-	const closeBlameView = useCallback(() => {
-		setBlameView((current) =>
-			current.isOpen ? { ...current, isOpen: false } : current,
-		);
-	}, []);
-
-	const openBlameCommitCompare = useCallback(() => {
-		if (!blameView.isOpen || !blameView.details) {
-			return;
-		}
-		if (Option.isNone(blameView.details.compareSelection)) {
-			setBlameView((current) =>
-				current.isOpen
-					? {
-							...current,
-							error: "No committed change is available for this line.",
-						}
-					: current,
-			);
-			return;
-		}
-
-		const selection = blameView.details.compareSelection.value;
-		updateReviewMode(() => ({
-			_tag: "commit-compare",
-			selection,
-		}));
-		updateUiStatus((current) =>
-			Option.isNone(current.error)
-				? current
-				: { ...current, error: Option.none() },
-		);
-		setBlameView((current) =>
-			current.isOpen ? { ...current, isOpen: false } : current,
-		);
-		void refreshFiles(true);
-	}, [blameView, refreshFiles, updateReviewMode, updateUiStatus]);
-
-	const scrollBlameView = useCallback((direction: "up" | "down") => {
-		const scroll = blameScrollRef.current;
-		if (!scroll) {
-			return;
-		}
-		scroll.scrollBy({
-			x: 0,
-			y: direction === "up" ? -3 : 3,
-		});
-	}, []);
+	const {
+		blameView,
+		canOpenCommitCompare,
+		close: closeBlameView,
+		openCommitCompare: openBlameCommitCompare,
+		scroll: scrollBlameView,
+		scrollRef: blameScrollRef,
+	} = useBlameView({
+		initialTarget: props.initialBlameTarget,
+		refreshFiles,
+		renderRepoActionError: formatRepoActionError,
+		updateReviewMode,
+		updateUiStatus,
+	});
 
 	const {
 		onCommitMessageChange,
@@ -651,7 +415,7 @@ export function App(props: AppProps) {
 
 	useAppKeyboardInput({
 		isBlameViewOpen: blameView.isOpen,
-		canOpenBlameCommitCompare,
+		canOpenBlameCommitCompare: canOpenCommitCompare,
 		isCommitModalOpen,
 		isDiscardModalOpen,
 		isCommitSearchModalOpen,
