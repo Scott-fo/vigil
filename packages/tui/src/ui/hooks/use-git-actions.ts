@@ -16,6 +16,7 @@ import {
 	toggleFileStage,
 } from "#data/git.ts";
 import type { FileEntry } from "#tui/types.ts";
+import type { ActionRunOptions, ActionRunResult } from "#ui/hooks/use-action-runner.ts";
 import type {
 	CommitModalState,
 	DiscardModalState,
@@ -43,16 +44,6 @@ interface RendererControls {
 	resume(): void;
 }
 
-interface RunActionOptions {
-	readonly refreshOnSuccess?: boolean;
-	readonly refreshOnFailure?: boolean;
-	readonly onSuccess?: () => void;
-}
-
-type RunActionResult =
-	| { readonly ok: true }
-	| { readonly ok: false; readonly error: string };
-
 interface UseGitActionsOptions {
 	readonly chooserFilePath: Option.Option<string>;
 	readonly renderer: RendererControls;
@@ -73,8 +64,8 @@ interface UseGitActionsOptions {
 	readonly runAction: <E>(
 		effect: Effect.Effect<void, E>,
 		renderError: (error: E) => string,
-		actionOptions?: RunActionOptions,
-	) => RunActionResult;
+		actionOptions?: ActionRunOptions,
+	) => ActionRunResult;
 }
 
 export function useGitActions(options: UseGitActionsOptions) {
