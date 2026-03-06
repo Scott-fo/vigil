@@ -2,7 +2,7 @@ import { Match } from "effect";
 import type { FileEntry } from "#tui/types.ts";
 import type { AppKeyboardIntent } from "#ui/inputs.ts";
 
-interface KeyboardIntentRouterActions {
+export interface KeyboardIntentRouterActions {
 	readonly destroyRenderer: () => void;
 	readonly toggleSidebar: () => void;
 	readonly toggleDiffViewMode: () => void;
