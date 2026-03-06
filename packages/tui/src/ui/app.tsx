@@ -101,8 +101,8 @@ export function App(props: AppProps) {
 		setThemeName,
 		setThemeSearchQuery,
 	} = useThemeState({
-		initialThemeMode: props.initialThemeMode,
-		initialThemeName: props.initialThemeName,
+		themeMode: props.themeMode,
+		themeName: props.themeName,
 		themeCatalog: props.themeCatalog,
 		themeModal,
 	});

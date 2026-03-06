@@ -1,39 +1,19 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { Data, Effect, type Option, pipe } from "effect";
+import { Data, Effect, type Option } from "effect";
 import type { VigilDaemonConnection } from "#daemon/client.ts";
 import type { BlameTarget } from "#tui/types.ts";
 import {
 	FrontendRuntimeProvider,
 	makeFrontendRuntime,
 } from "#runtime/frontend-runtime.tsx";
-import { initializeTreeSitterClient } from "#syntax/tree-sitter.ts";
-import {
-	loadThemeCatalog,
-	readThemePreferenceFromTuiConfig,
-	type ThemeCatalog,
-} from "#theme/theme.ts";
-import { App } from "#ui/app.tsx";
+import { BootApp } from "#ui/components/boot-app.tsx";
 
 export interface StartVigilTuiOptions {
 	readonly chooserFilePath: Option.Option<string>;
 	readonly initialBlameTarget: Option.Option<BlameTarget>;
 	readonly daemonConnection: VigilDaemonConnection;
 }
-
-export class ThemeCatalogLoadError extends Data.TaggedError(
-	"ThemeCatalogLoadError",
-)<{
-	readonly message: string;
-	readonly cause: unknown;
-}> {}
-
-export class ThemePreferenceLoadError extends Data.TaggedError(
-	"ThemePreferenceLoadError",
-)<{
-	readonly message: string;
-	readonly cause: unknown;
-}> {}
 
 export class RendererCreateError extends Data.TaggedError(
 	"RendererCreateError",
@@ -47,65 +27,12 @@ export class AppRenderError extends Data.TaggedError("AppRenderError")<{
 	readonly cause: unknown;
 }> {}
 
-export type StartVigilTuiError =
-	| ThemeCatalogLoadError
-	| ThemePreferenceLoadError
-	| RendererCreateError
-	| AppRenderError;
-
-function selectInitialThemeName(
-	themeCatalog: ThemeCatalog,
-	themePreference: Awaited<ReturnType<typeof readThemePreferenceFromTuiConfig>>,
-): string {
-	if (themePreference.theme && themeCatalog.themes[themePreference.theme]) {
-		return themePreference.theme;
-	}
-	if (themeCatalog.themes["catppuccin-macchiato"]) {
-		return "catppuccin-macchiato";
-	}
-	if (themeCatalog.themes.opencode) {
-		return "opencode";
-	}
-	return themeCatalog.order[0] ?? "opencode";
-}
+export type StartVigilTuiError = RendererCreateError | AppRenderError;
 
 export function startVigilTuiProgram(
 	options: StartVigilTuiOptions,
 ): Effect.Effect<void, StartVigilTuiError> {
 	return Effect.gen(function* () {
-		const themeCatalog = yield* Effect.tryPromise({
-			try: () => loadThemeCatalog(),
-			catch: (cause) =>
-				new ThemeCatalogLoadError({
-					message: "Failed to load theme catalog.",
-					cause,
-				}),
-		});
-		const themePreference = yield* Effect.tryPromise({
-			try: () => readThemePreferenceFromTuiConfig(),
-			catch: (cause) =>
-				new ThemePreferenceLoadError({
-					message: "Failed to read theme preference configuration.",
-					cause,
-				}),
-		});
-
-		yield* pipe(
-			initializeTreeSitterClient(),
-			Effect.catchTag("TreeSitterInitializeError", (typedError) =>
-				Effect.sync(() => {
-					console.error(
-						`Failed to initialize Tree-sitter syntax parsers: ${typedError.cause ? String(typedError.cause) : typedError.message}`,
-					);
-				}),
-			),
-			Effect.asVoid,
-		);
-
-		const initialThemeName = selectInitialThemeName(
-			themeCatalog,
-			themePreference,
-		);
 		const frontendRuntime = makeFrontendRuntime(options.daemonConnection);
 
 		const renderer = yield* Effect.tryPromise({
@@ -121,10 +48,7 @@ export function startVigilTuiProgram(
 			try: () =>
 				createRoot(renderer).render(
 					<FrontendRuntimeProvider runtime={frontendRuntime}>
-						<App
-							themeCatalog={themeCatalog}
-							initialThemeName={initialThemeName}
-							initialThemeMode={themePreference.mode ?? "dark"}
+						<BootApp
 							chooserFilePath={options.chooserFilePath}
 							initialBlameTarget={options.initialBlameTarget}
 							daemonConnection={options.daemonConnection}

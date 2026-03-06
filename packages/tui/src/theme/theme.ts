@@ -115,6 +115,8 @@ export type ThemeCatalog = {
 	order: string[];
 };
 
+export const DEFAULT_THEME_NAME = "opencode";
+
 export type ThemeBundle = {
 	name: string;
 	mode: ThemeMode;
@@ -534,14 +536,40 @@ export async function loadThemeCatalog(): Promise<ThemeCatalog> {
 	};
 }
 
+export function getFallbackThemeCatalog(): ThemeCatalog {
+	return {
+		themes: { [DEFAULT_THEME_NAME]: FALLBACK_THEME_JSON },
+		order: [DEFAULT_THEME_NAME],
+	};
+}
+
+export function selectStartupThemeName(
+	catalog: ThemeCatalog,
+	preferredThemeName?: string,
+): string {
+	if (preferredThemeName && catalog.themes[preferredThemeName]) {
+		return preferredThemeName;
+	}
+
+	if (catalog.themes["catppuccin-macchiato"]) {
+		return "catppuccin-macchiato";
+	}
+
+	if (catalog.themes[DEFAULT_THEME_NAME]) {
+		return DEFAULT_THEME_NAME;
+	}
+
+	return catalog.order[0] ?? DEFAULT_THEME_NAME;
+}
+
 export function resolveThemeBundle(
 	catalog: ThemeCatalog,
 	requestedName: string,
 	mode: ThemeMode,
 ): ThemeBundle {
-	const fallbackName = catalog.themes.opencode
-		? "opencode"
-		: (catalog.order[0] ?? "opencode");
+	const fallbackName = catalog.themes[DEFAULT_THEME_NAME]
+		? DEFAULT_THEME_NAME
+		: (catalog.order[0] ?? DEFAULT_THEME_NAME);
 	const selectedName = catalog.themes[requestedName]
 		? requestedName
 		: fallbackName;

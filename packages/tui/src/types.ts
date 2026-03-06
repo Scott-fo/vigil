@@ -31,8 +31,8 @@ export class FileEntry extends Schema.Class<FileEntry>("FileEntry")({
 
 export interface AppProps {
 	readonly themeCatalog: ThemeCatalog;
-	readonly initialThemeName: string;
-	readonly initialThemeMode: ThemeMode;
+	readonly themeName: string;
+	readonly themeMode: ThemeMode;
 	readonly chooserFilePath: Option.Option<string>;
 	readonly initialBlameTarget: Option.Option<BlameTarget>;
 	readonly daemonConnection: VigilDaemonConnection;
