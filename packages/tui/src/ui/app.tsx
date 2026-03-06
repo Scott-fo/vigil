@@ -2,27 +2,17 @@ import { useAtom } from "@effect-atom/atom-react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { Effect, Option, pipe } from "effect";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { type RepoActionError } from "#data/git.ts";
 import { buildDiffNavigationModel } from "#diff/navigation.ts";
 import type { ThemeMode } from "#theme/theme.ts";
 import type { AppProps } from "#tui/types.ts";
-import { BlameView } from "#ui/components/blame-view.tsx";
-import { BranchCompareModal } from "#ui/components/branch-compare-modal.tsx";
-import { CommitSearchModal } from "#ui/components/commit-search-modal.tsx";
-import { CommitModal } from "#ui/components/commit-modal.tsx";
-import { DiscardModal } from "#ui/components/discard-modal.tsx";
-import { HelpModal } from "#ui/components/help-modal.tsx";
-import { RemoteSyncStatus } from "#ui/components/remote-sync-status.tsx";
-import { Reviewer } from "#ui/components/reviewer.tsx";
-import { Snackbar } from "#ui/components/snackbar.tsx";
-import { Splash } from "#ui/components/splash.tsx";
-import { ThemeModal } from "#ui/components/theme-modal.tsx";
+import { AppEffects } from "#ui/components/app-effects.tsx";
+import { GlobalOverlays } from "#ui/components/global-overlays.tsx";
+import { Layout } from "#ui/components/layout.tsx";
 import { useBlameView } from "#ui/hooks/use-blame-view.ts";
 import { useBranchCompareView } from "#ui/hooks/use-branch-compare-view.ts";
 import { useCommitSearchView } from "#ui/hooks/use-commit-search-view.ts";
-import { useDaemonSession } from "#ui/hooks/use-daemon-session.ts";
-import { useDaemonWatch } from "#ui/hooks/use-daemon-watch.ts";
 import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state.ts";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh.ts";
 import { useModalView } from "#ui/hooks/use-modal-view.ts";
@@ -32,7 +22,6 @@ import { useReviewFileView } from "#ui/hooks/use-review-file-view.ts";
 import { useReviewStatusView } from "#ui/hooks/use-review-status-view.ts";
 import { useRepoActions } from "#ui/hooks/use-repo-actions.ts";
 import { useThemeView } from "#ui/hooks/use-theme-view.ts";
-import { useAppKeyboardInput } from "#ui/inputs.ts";
 import {
 	branchCompareModalAtom,
 	commitSearchModalAtom,
@@ -100,10 +89,7 @@ export function App(props: AppProps) {
 		fileView,
 	});
 
-	const {
-		canInitializeGitRepo,
-		reviewModeLabel,
-	} = useReviewStatusView({
+	const { canInitializeGitRepo, reviewModeLabel } = useReviewStatusView({
 		reviewMode,
 		uiStatus,
 	});
@@ -168,7 +154,6 @@ export function App(props: AppProps) {
 		commitSearchModal,
 	});
 
-	const watchRepoPath = useMemo(() => process.cwd(), []);
 	const isWorkingTreeMode = isWorkingTreeReviewMode(reviewMode);
 
 	const { refreshFiles, refreshFilesEffect } = useFileRefresh({
@@ -203,47 +188,6 @@ export function App(props: AppProps) {
 		renderer,
 		hasRemoteSyncRunning: remoteSync._tag === "running",
 	});
-
-	useDaemonSession({
-		daemonConnection: props.daemonConnection,
-		enabled: true,
-		onDisconnect: notifyDaemonDisconnected,
-		onReconnect: notifyDaemonReconnected,
-	});
-
-	useDaemonWatch({
-		daemonConnection: props.daemonConnection,
-		repoPath: watchRepoPath,
-		enabled: isWorkingTreeMode,
-		onRefreshInstruction,
-	});
-
-	useEffect(() => {
-		if (!isThemeModalOpen) {
-			return;
-		}
-		setThemeSearchQuery("");
-	}, [isThemeModalOpen]);
-
-	useEffect(() => {
-		setFileView((current) => {
-			if (visibleFilePaths.length === 0) {
-				return Option.isNone(current.selectedPath)
-					? current
-					: { ...current, selectedPath: Option.none() };
-			}
-			if (
-				Option.isSome(current.selectedPath) &&
-				visibleFilePaths.includes(current.selectedPath.value)
-			) {
-				return current;
-			}
-			return {
-				...current,
-				selectedPath: Option.fromNullable(visibleFilePaths[0]),
-			};
-		});
-	}, [setFileView, visibleFilePaths]);
 
 	const { selectedFileDiff, selectedFileDiffNote, selectedFileDiffLoading } =
 		useDiffPreviewState({
@@ -344,44 +288,30 @@ export function App(props: AppProps) {
 		renderRepoActionError: formatRepoActionError,
 	});
 
-	useEffect(() => {
-		if (!isThemeModalOpen || filteredThemeNames.length === 0) {
-			return;
-		}
-		if (filteredThemeNames.includes(selectedThemeName)) {
-			return;
-		}
-		const firstFilteredThemeName = filteredThemeNames[0];
-		if (firstFilteredThemeName) {
-			onSelectThemeInModal(firstFilteredThemeName);
-		}
-	}, [
-		filteredThemeNames,
-		isThemeModalOpen,
-		onSelectThemeInModal,
-		selectedThemeName,
-	]);
-
-	useAppKeyboardInput({
-		isBlameViewOpen: blameView.isOpen,
-		canOpenBlameCommitCompare: canOpenCommitCompare,
-		isCommitModalOpen,
-		isDiscardModalOpen,
-		isCommitSearchModalOpen,
-		isHelpModalOpen,
-		isThemeModalOpen,
-		isBranchCompareModalOpen,
-		isReadOnlyReviewMode: !isWorkingTreeReviewMode(reviewMode),
-		activePane,
-		canInitializeGitRepo,
-		stagedFileCount,
-		visibleFilePaths,
-		selectedVisibleIndex,
+	const reviewerProps = {
+		theme,
+		syntaxStyle: themeBundle.syntaxStyle,
+		reviewModeLabel,
+		files,
+		sidebarItems,
 		selectedFile,
-		selectedDiffFilePath,
-		selectedDiffLineNumber,
-		onIntent: onKeyboardIntent,
-	});
+		selectedFileDiff,
+		selectedFileDiffNote,
+		selectedFileDiffLoading,
+		selectedDiffLineIndex,
+		diffNavigationLines: diffNavigationModel.lines,
+		loading,
+		diffViewMode,
+		error: uiStatus.error,
+		isCommitModalOpen: isAnyModalOpen || blameView.isOpen,
+		diffScrollRef,
+		onToggleDirectory,
+		onSelectFilePath,
+		sidebarOpen,
+		activePane,
+		onToggleSidebar,
+		onCopySelection,
+	};
 
 	return (
 		<box
@@ -390,121 +320,90 @@ export function App(props: AppProps) {
 			padding={1}
 			backgroundColor={theme.background}
 		>
-			{uiStatus.showSplash ? (
-				<Splash theme={theme} error={uiStatus.error} />
-			) : (
-				<Reviewer
-					theme={theme}
-					syntaxStyle={themeBundle.syntaxStyle}
-					reviewModeLabel={reviewModeLabel}
-					files={files}
-					sidebarItems={sidebarItems}
-					selectedFile={selectedFile}
-					selectedFileDiff={selectedFileDiff}
-					selectedFileDiffNote={selectedFileDiffNote}
-					selectedFileDiffLoading={selectedFileDiffLoading}
-					selectedDiffLineIndex={selectedDiffLineIndex}
-					diffNavigationLines={diffNavigationModel.lines}
-					loading={loading}
-					diffViewMode={diffViewMode}
-					error={uiStatus.error}
-					isCommitModalOpen={isAnyModalOpen || blameView.isOpen}
-					diffScrollRef={diffScrollRef}
-					onToggleDirectory={onToggleDirectory}
-					onSelectFilePath={onSelectFilePath}
-					sidebarOpen={sidebarOpen}
-					onToggleSidebar={onToggleSidebar}
-					activePane={activePane}
-					onCopySelection={onCopySelection}
-				/>
-			)}
-			{isCommitModalOpen && (
-				<CommitModal
-					theme={theme}
-					modalBackdropColor={modalBackdropColor}
-					commitMessage={commitMessage}
-					commitError={commitError}
-					onCommitMessageChange={onCommitMessageChange}
-					onCommitSubmit={onCommitSubmit}
-				/>
-			)}
-			{isDiscardModalOpen && discardModalFile && (
-				<DiscardModal
-					theme={theme}
-					modalBackdropColor={modalBackdropColor}
-					file={discardModalFile}
-					onCancel={onCancelDiscardModal}
-					onConfirm={onConfirmDiscardModal}
-				/>
-			)}
-			{isHelpModalOpen && (
-				<HelpModal theme={theme} modalBackdropColor={modalBackdropColor} />
-			)}
-			{isThemeModalOpen && (
-				<ThemeModal
-					theme={theme}
-					modalBackdropColor={modalBackdropColor}
-					themes={filteredThemeNames}
-					selectedThemeName={selectedThemeName}
-					searchQuery={themeSearchQuery}
-					onSearchQueryChange={setThemeSearchQuery}
-					onSelectTheme={onSelectThemeInModal}
-				/>
-			)}
-			{isBranchCompareModalOpen && (
-				<BranchCompareModal
-					theme={theme}
-					modalBackdropColor={modalBackdropColor}
-					sourceQuery={branchSourceQuery}
-					destinationQuery={branchDestinationQuery}
-					sourceRef={branchSourceRef}
-					destinationRef={branchDestinationRef}
-					activeField={branchActiveField}
-					filteredRefs={branchFilteredRefs}
-					selectedActiveRef={branchSelectedActiveRef}
-					loading={branchModalLoading}
-					error={branchModalError}
-					onSourceQueryChange={onBranchSourceQueryChange}
-					onDestinationQueryChange={onBranchDestinationQueryChange}
-					onSelectRef={onBranchSelectRef}
-					onActivateField={onBranchActivateField}
-				/>
-			)}
-			{isCommitSearchModalOpen && (
-				<CommitSearchModal
-					theme={theme}
-					modalBackdropColor={modalBackdropColor}
-					query={commitSearchQuery}
-					commits={commitFilteredCommits}
-					selectedCommitHash={commitSelectedCommitHash}
-					selectedIndex={commitSelectedIndex}
-					loading={commitSearchModalLoading}
-					error={commitSearchModalError}
-					onQueryChange={onCommitSearchQueryChange}
-					onSelectCommit={onCommitSearchSelectCommit}
-				/>
-			)}
-			{blameView.isOpen && blameView.target && (
-				<BlameView
-					theme={theme}
-					modalBackdropColor={modalBackdropColor}
-					target={blameView.target}
-					loading={blameView.loading}
-					details={Option.fromNullable(blameView.details)}
-					error={Option.fromNullable(blameView.error)}
-					scrollRef={blameScrollRef}
-				/>
-			)}
-			<RemoteSyncStatus theme={theme} state={remoteSync} />
-			<Snackbar
-				theme={theme}
-				notice={daemonSnackbarNotice}
-				top={snackbarTop}
+			<AppEffects
+				activePane={activePane}
+				canInitializeGitRepo={canInitializeGitRepo}
+				canOpenBlameCommitCompare={canOpenCommitCompare}
+				daemonConnection={props.daemonConnection}
+				enabledWatch={isWorkingTreeMode}
+				filteredThemeNames={filteredThemeNames}
+				isBlameViewOpen={blameView.isOpen}
+				isBranchCompareModalOpen={isBranchCompareModalOpen}
+				isCommitModalOpen={isCommitModalOpen}
+				isCommitSearchModalOpen={isCommitSearchModalOpen}
+				isDiscardModalOpen={isDiscardModalOpen}
+				isHelpModalOpen={isHelpModalOpen}
+				isReadOnlyReviewMode={!isWorkingTreeMode}
+				isThemeModalOpen={isThemeModalOpen}
+				notifyDaemonDisconnected={notifyDaemonDisconnected}
+				notifyDaemonReconnected={notifyDaemonReconnected}
+				onIntent={onKeyboardIntent}
+				onRefreshInstruction={onRefreshInstruction}
+				onSelectThemeInModal={onSelectThemeInModal}
+				selectedDiffFilePath={selectedDiffFilePath}
+				selectedDiffLineNumber={selectedDiffLineNumber}
+				selectedFile={selectedFile}
+				selectedThemeName={selectedThemeName}
+				selectedVisibleIndex={selectedVisibleIndex}
+				setThemeSearchQuery={setThemeSearchQuery}
+				stagedFileCount={stagedFileCount}
+				updateFileView={setFileView}
+				visibleFilePaths={visibleFilePaths}
 			/>
-			<Snackbar
+			<Layout reviewerProps={reviewerProps} theme={theme} uiStatus={uiStatus} />
+			<GlobalOverlays
 				theme={theme}
-				notice={transientSnackbarNotice}
-				top={transientSnackbarTop}
+				modalBackdropColor={modalBackdropColor}
+				isCommitModalOpen={isCommitModalOpen}
+				commitMessage={commitMessage}
+				commitError={commitError}
+				onCommitMessageChange={onCommitMessageChange}
+				onCommitSubmit={onCommitSubmit}
+				isDiscardModalOpen={isDiscardModalOpen}
+				discardModalFile={discardModalFile}
+				onCancelDiscardModal={onCancelDiscardModal}
+				onConfirmDiscardModal={onConfirmDiscardModal}
+				isHelpModalOpen={isHelpModalOpen}
+				isThemeModalOpen={isThemeModalOpen}
+				themeNames={filteredThemeNames}
+				selectedThemeName={selectedThemeName}
+				themeSearchQuery={themeSearchQuery}
+				onSearchQueryChange={setThemeSearchQuery}
+				onSelectTheme={onSelectThemeInModal}
+				isBranchCompareModalOpen={isBranchCompareModalOpen}
+				branchSourceQuery={branchSourceQuery}
+				branchDestinationQuery={branchDestinationQuery}
+				branchSourceRef={branchSourceRef}
+				branchDestinationRef={branchDestinationRef}
+				branchActiveField={branchActiveField}
+				branchFilteredRefs={branchFilteredRefs}
+				branchSelectedActiveRef={branchSelectedActiveRef}
+				branchModalLoading={branchModalLoading}
+				branchModalError={branchModalError}
+				onBranchSourceQueryChange={onBranchSourceQueryChange}
+				onBranchDestinationQueryChange={onBranchDestinationQueryChange}
+				onBranchSelectRef={onBranchSelectRef}
+				onBranchActivateField={onBranchActivateField}
+				isCommitSearchModalOpen={isCommitSearchModalOpen}
+				commitSearchQuery={commitSearchQuery}
+				commitSearchCommits={commitFilteredCommits}
+				commitSelectedCommitHash={commitSelectedCommitHash}
+				commitSelectedIndex={commitSelectedIndex}
+				commitSearchModalLoading={commitSearchModalLoading}
+				commitSearchModalError={commitSearchModalError}
+				onCommitSearchQueryChange={onCommitSearchQueryChange}
+				onCommitSearchSelectCommit={onCommitSearchSelectCommit}
+				isBlameViewOpen={blameView.isOpen}
+				blameTarget={blameView.target}
+				blameLoading={blameView.loading}
+				blameDetails={blameView.details}
+				blameError={blameView.error}
+				blameScrollRef={blameScrollRef}
+				remoteSync={remoteSync}
+				daemonSnackbarNotice={daemonSnackbarNotice}
+				transientSnackbarNotice={transientSnackbarNotice}
+				snackbarTop={snackbarTop}
+				transientSnackbarTop={transientSnackbarTop}
 			/>
 		</box>
 	);
