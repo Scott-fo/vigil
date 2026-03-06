@@ -359,6 +359,7 @@ const SidebarRail = memo(function SidebarRail(props: SidebarRailProps) {
 
 interface DiffPanelProps {
 	readonly theme: ResolvedTheme;
+	readonly themeKey: string;
 	readonly syntaxStyle: SyntaxStyle;
 	readonly reviewModeLabel: string;
 	readonly diffViewMode: "split" | "unified";
@@ -508,6 +509,7 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 									flexDirection="column"
 								>
 									<diff
+										key={`${props.themeKey}:${props.selectedFile?.path ?? "none"}:${hunkIndex}`}
 										diff={hunkDiff}
 										{...(props.isFocused && hunkIndex === 0
 											? { ref: diffRef }
@@ -553,6 +555,7 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 
 export interface ReviewerProps {
 	readonly theme: ResolvedTheme;
+	readonly themeKey: string;
 	readonly syntaxStyle: SyntaxStyle;
 	readonly reviewModeLabel: string;
 	readonly files: FileEntry[];
@@ -612,6 +615,7 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 			)}
 			<DiffPanel
 				theme={props.theme}
+				themeKey={props.themeKey}
 				syntaxStyle={props.syntaxStyle}
 				reviewModeLabel={props.reviewModeLabel}
 				diffViewMode={props.diffViewMode}

@@ -306,6 +306,7 @@ export function App(props: AppProps) {
 
 	const reviewerProps = {
 		theme,
+		themeKey: `${themeBundle.name}:${themeBundle.mode}`,
 		syntaxStyle: themeBundle.syntaxStyle,
 		reviewModeLabel,
 		files,
