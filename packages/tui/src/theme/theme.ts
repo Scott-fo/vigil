@@ -115,14 +115,14 @@ export type ThemeCatalog = {
 	order: string[];
 };
 
-export const DEFAULT_THEME_NAME = "opencode";
-
 export type ThemeBundle = {
 	name: string;
 	mode: ThemeMode;
 	theme: ResolvedTheme;
 	syntaxStyle: SyntaxStyle;
 };
+
+export const DEFAULT_THEME_NAME = "catppuccin-macchiato";
 
 class ThemeResolutionError extends Data.TaggedError("ThemeResolutionError")<{
 	readonly message: string;
@@ -206,57 +206,85 @@ const REQUIRED_THEME_KEYS = [
 ] as const;
 
 const FALLBACK_THEME_JSON: ThemeJson = {
+	defs: {
+		macRosewater: "#f4dbd6",
+		macFlamingo: "#f0c6c6",
+		macPink: "#f5bde6",
+		macMauve: "#c6a0f6",
+		macRed: "#ed8796",
+		macMaroon: "#ee99a0",
+		macPeach: "#f5a97f",
+		macYellow: "#eed49f",
+		macGreen: "#a6da95",
+		macTeal: "#8bd5ca",
+		macSky: "#91d7e3",
+		macSapphire: "#7dc4e4",
+		macBlue: "#8aadf4",
+		macLavender: "#b7bdf8",
+		macText: "#cad3f5",
+		macSubtext1: "#b8c0e0",
+		macSubtext0: "#a5adcb",
+		macOverlay2: "#939ab7",
+		macOverlay1: "#8087a2",
+		macOverlay0: "#6e738d",
+		macSurface2: "#5b6078",
+		macSurface1: "#494d64",
+		macSurface0: "#363a4f",
+		macBase: "#24273a",
+		macMantle: "#1e2030",
+		macCrust: "#181926",
+	},
 	theme: {
-		primary: "#fab283",
-		secondary: "#5c9cf5",
-		accent: "#9d7cd8",
-		error: "#e06c75",
-		warning: "#f5a742",
-		success: "#7fd88f",
-		info: "#56b6c2",
-		text: "#eeeeee",
-		textMuted: "#808080",
-		background: "#0a0a0a",
-		backgroundPanel: "#141414",
-		backgroundElement: "#1e1e1e",
-		border: "#484848",
-		borderActive: "#606060",
-		borderSubtle: "#3c3c3c",
-		diffAdded: "#4fd6be",
-		diffRemoved: "#c53b53",
-		diffContext: "#828bb8",
-		diffHunkHeader: "#828bb8",
-		diffHighlightAdded: "#b8db87",
-		diffHighlightRemoved: "#e26a75",
-		diffAddedBg: "#20303b",
-		diffRemovedBg: "#37222c",
-		diffContextBg: "#141414",
-		diffLineNumber: "#1e1e1e",
-		diffAddedLineNumberBg: "#1b2b34",
-		diffRemovedLineNumberBg: "#2d1f26",
-		markdownText: "#eeeeee",
-		markdownHeading: "#9d7cd8",
-		markdownLink: "#fab283",
-		markdownLinkText: "#56b6c2",
-		markdownCode: "#7fd88f",
-		markdownBlockQuote: "#e5c07b",
-		markdownEmph: "#e5c07b",
-		markdownStrong: "#f5a742",
-		markdownHorizontalRule: "#808080",
-		markdownListItem: "#fab283",
-		markdownListEnumeration: "#56b6c2",
-		markdownImage: "#fab283",
-		markdownImageText: "#56b6c2",
-		markdownCodeBlock: "#eeeeee",
-		syntaxComment: "#808080",
-		syntaxKeyword: "#9d7cd8",
-		syntaxFunction: "#fab283",
-		syntaxVariable: "#e06c75",
-		syntaxString: "#7fd88f",
-		syntaxNumber: "#f5a742",
-		syntaxType: "#e5c07b",
-		syntaxOperator: "#56b6c2",
-		syntaxPunctuation: "#eeeeee",
+		primary: { dark: "macBlue", light: "macBlue" },
+		secondary: { dark: "macMauve", light: "macMauve" },
+		accent: { dark: "macPink", light: "macPink" },
+		error: { dark: "macRed", light: "macRed" },
+		warning: { dark: "macYellow", light: "macYellow" },
+		success: { dark: "macGreen", light: "macGreen" },
+		info: { dark: "macTeal", light: "macTeal" },
+		text: { dark: "macText", light: "macText" },
+		textMuted: { dark: "macSubtext1", light: "macSubtext1" },
+		background: { dark: "macBase", light: "macBase" },
+		backgroundPanel: { dark: "macMantle", light: "macMantle" },
+		backgroundElement: { dark: "macCrust", light: "macCrust" },
+		border: { dark: "macSurface0", light: "macSurface0" },
+		borderActive: { dark: "macSurface1", light: "macSurface1" },
+		borderSubtle: { dark: "macSurface2", light: "macSurface2" },
+		diffAdded: { dark: "macGreen", light: "macGreen" },
+		diffRemoved: { dark: "macRed", light: "macRed" },
+		diffContext: { dark: "macOverlay2", light: "macOverlay2" },
+		diffHunkHeader: { dark: "macPeach", light: "macPeach" },
+		diffHighlightAdded: { dark: "macGreen", light: "macGreen" },
+		diffHighlightRemoved: { dark: "macRed", light: "macRed" },
+		diffAddedBg: { dark: "#29342b", light: "#29342b" },
+		diffRemovedBg: { dark: "#3a2a31", light: "#3a2a31" },
+		diffContextBg: { dark: "macMantle", light: "macMantle" },
+		diffLineNumber: { dark: "macSurface1", light: "macSurface1" },
+		diffAddedLineNumberBg: { dark: "#223025", light: "#223025" },
+		diffRemovedLineNumberBg: { dark: "#2f242b", light: "#2f242b" },
+		markdownText: { dark: "macText", light: "macText" },
+		markdownHeading: { dark: "macMauve", light: "macMauve" },
+		markdownLink: { dark: "macBlue", light: "macBlue" },
+		markdownLinkText: { dark: "macSky", light: "macSky" },
+		markdownCode: { dark: "macGreen", light: "macGreen" },
+		markdownBlockQuote: { dark: "macYellow", light: "macYellow" },
+		markdownEmph: { dark: "macYellow", light: "macYellow" },
+		markdownStrong: { dark: "macPeach", light: "macPeach" },
+		markdownHorizontalRule: { dark: "macSubtext0", light: "macSubtext0" },
+		markdownListItem: { dark: "macBlue", light: "macBlue" },
+		markdownListEnumeration: { dark: "macSky", light: "macSky" },
+		markdownImage: { dark: "macBlue", light: "macBlue" },
+		markdownImageText: { dark: "macSky", light: "macSky" },
+		markdownCodeBlock: { dark: "macText", light: "macText" },
+		syntaxComment: { dark: "macOverlay2", light: "macOverlay2" },
+		syntaxKeyword: { dark: "macMauve", light: "macMauve" },
+		syntaxFunction: { dark: "macBlue", light: "macBlue" },
+		syntaxVariable: { dark: "macRed", light: "macRed" },
+		syntaxString: { dark: "macGreen", light: "macGreen" },
+		syntaxNumber: { dark: "macPeach", light: "macPeach" },
+		syntaxType: { dark: "macYellow", light: "macYellow" },
+		syntaxOperator: { dark: "macSky", light: "macSky" },
+		syntaxPunctuation: { dark: "macText", light: "macText" },
 	},
 };
 
@@ -502,8 +530,8 @@ function getCustomThemeDirectories(): string[] {
 
 function normalizeThemeOrder(names: string[]): string[] {
 	return [...names].sort((a, b) => {
-		if (a === "opencode") return -1;
-		if (b === "opencode") return 1;
+		if (a === DEFAULT_THEME_NAME) return -1;
+		if (b === DEFAULT_THEME_NAME) return 1;
 		return a.localeCompare(b);
 	});
 }
@@ -527,7 +555,7 @@ export async function loadThemeCatalog(): Promise<ThemeCatalog> {
 
 	const resolvedThemes =
 		Object.keys(themes).length === 0
-			? { opencode: FALLBACK_THEME_JSON }
+			? { [DEFAULT_THEME_NAME]: FALLBACK_THEME_JSON }
 			: themes;
 
 	return {
@@ -549,10 +577,6 @@ export function selectStartupThemeName(
 ): string {
 	if (preferredThemeName && catalog.themes[preferredThemeName]) {
 		return preferredThemeName;
-	}
-
-	if (catalog.themes["catppuccin-macchiato"]) {
-		return "catppuccin-macchiato";
 	}
 
 	if (catalog.themes[DEFAULT_THEME_NAME]) {

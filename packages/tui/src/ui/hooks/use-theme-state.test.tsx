@@ -3,6 +3,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { useEffect, useState } from "react";
 import { act } from "react";
 import {
+	DEFAULT_THEME_NAME,
 	getFallbackThemeCatalog,
 	type ThemeCatalog,
 	type ThemeMode,
@@ -11,14 +12,14 @@ import { useThemeState } from "#ui/hooks/use-theme-state.ts";
 
 const fallbackThemeCatalog = getFallbackThemeCatalog();
 const fallbackTheme =
-	fallbackThemeCatalog.themes.opencode ??
-	fallbackThemeCatalog.themes[fallbackThemeCatalog.order[0] ?? "opencode"]!;
+	fallbackThemeCatalog.themes[DEFAULT_THEME_NAME] ??
+	fallbackThemeCatalog.themes[fallbackThemeCatalog.order[0] ?? DEFAULT_THEME_NAME]!;
 const progressiveThemeCatalog: ThemeCatalog = {
 	themes: {
 		...fallbackThemeCatalog.themes,
 		gruvbox: fallbackTheme,
 	},
-	order: ["opencode", "gruvbox"],
+	order: [DEFAULT_THEME_NAME, "gruvbox"],
 };
 
 function ThemeStateProbe(props: {
@@ -44,7 +45,7 @@ function ProgressiveThemeProbe() {
 	const [state, setState] = useState({
 		themeCatalog: fallbackThemeCatalog,
 		themeMode: "dark" as ThemeMode,
-		themeName: "opencode",
+		themeName: DEFAULT_THEME_NAME,
 	});
 
 	useEffect(() => {
