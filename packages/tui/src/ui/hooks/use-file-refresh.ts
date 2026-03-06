@@ -1,5 +1,5 @@
 import { Effect, Option, pipe } from "effect";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	type BranchDiffSelection,
 	type CommitDiffSelection,
@@ -102,6 +102,7 @@ export function buildFilesLoadEffect(
 export function useFileRefresh(options: UseFileRefreshOptions) {
 	const { updateFileView, updateUiStatus, renderRepoActionError, reviewMode } =
 		options;
+	const [refreshInstructionVersion, setRefreshInstructionVersion] = useState(0);
 	const isRefreshingRef = useRef(false);
 	const queuedRefreshRef = useRef(false);
 	const queuedShowLoadingRef = useRef(false);
@@ -313,9 +314,27 @@ export function useFileRefresh(options: UseFileRefreshOptions) {
 		[refreshFilesEffect],
 	);
 
+	const onRefreshInstruction = useMemo(
+		() =>
+			pipe(
+				refreshFilesEffect(false),
+				Effect.tap(() =>
+					Effect.sync(() => {
+						setRefreshInstructionVersion((current) => current + 1);
+					}),
+				),
+			),
+		[refreshFilesEffect],
+	);
+
 	useEffect(() => {
 		void Effect.runPromise(refreshFilesEffect(true));
 	}, [refreshFilesEffect, reviewMode]);
 
-	return { refreshFiles, refreshFilesEffect };
+	return {
+		refreshFiles,
+		refreshFilesEffect,
+		refreshInstructionVersion,
+		onRefreshInstruction,
+	};
 }

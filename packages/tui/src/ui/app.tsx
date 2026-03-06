@@ -2,10 +2,9 @@ import { useAtom } from "@effect-atom/atom-react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { Effect, Option, pipe } from "effect";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import { type RepoActionError } from "#data/git.ts";
 import { buildDiffNavigationModel } from "#diff/navigation.ts";
-import type { ThemeMode } from "#theme/theme.ts";
 import type { AppProps } from "#tui/types.ts";
 import { AppEffects } from "#ui/components/app-effects.tsx";
 import { GlobalOverlays } from "#ui/components/global-overlays.tsx";
@@ -21,7 +20,7 @@ import { usePaneNavigationState } from "#ui/hooks/use-pane-navigation-state.ts";
 import { useReviewFileView } from "#ui/hooks/use-review-file-view.ts";
 import { useReviewStatusView } from "#ui/hooks/use-review-status-view.ts";
 import { useRepoActions } from "#ui/hooks/use-repo-actions.ts";
-import { useThemeView } from "#ui/hooks/use-theme-view.ts";
+import { useThemeState } from "#ui/hooks/use-theme-state.ts";
 import {
 	branchCompareModalAtom,
 	commitSearchModalAtom,
@@ -55,9 +54,6 @@ function formatRepoActionError(error: RepoActionError): string {
 
 export function App(props: AppProps) {
 	const renderer = useRenderer();
-	const [themeName, setThemeName] = useState(props.initialThemeName);
-	const [themeSearchQuery, setThemeSearchQuery] = useState("");
-	const [themeMode] = useState<ThemeMode>(props.initialThemeMode);
 	const [fileView, setFileView] = useAtom(fileViewStateAtom);
 	const [uiStatus, setUiStatus] = useAtom(uiStatusAtom);
 	const [commitModal, setCommitModal] = useAtom(commitModalAtom);
@@ -72,7 +68,6 @@ export function App(props: AppProps) {
 	);
 	const [remoteSync, setRemoteSync] = useAtom(remoteSyncAtom);
 	const [reviewMode, setReviewMode] = useAtom(reviewModeAtom);
-	const [refreshInstructionVersion, setRefreshInstructionVersion] = useState(0);
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
 
 	const {
@@ -100,12 +95,16 @@ export function App(props: AppProps) {
 		selectedThemeName,
 		theme,
 		themeBundle,
-	} = useThemeView({
-		themeCatalog: props.themeCatalog,
-		themeModal,
 		themeMode,
 		themeName,
 		themeSearchQuery,
+		setThemeName,
+		setThemeSearchQuery,
+	} = useThemeState({
+		initialThemeMode: props.initialThemeMode,
+		initialThemeName: props.initialThemeName,
+		themeCatalog: props.themeCatalog,
+		themeModal,
 	});
 
 	const {
@@ -156,25 +155,16 @@ export function App(props: AppProps) {
 
 	const isWorkingTreeMode = isWorkingTreeReviewMode(reviewMode);
 
-	const { refreshFiles, refreshFilesEffect } = useFileRefresh({
+	const {
+		refreshFiles,
+		onRefreshInstruction,
+		refreshInstructionVersion,
+	} = useFileRefresh({
 		updateFileView: setFileView,
 		updateUiStatus: setUiStatus,
 		renderRepoActionError: formatRepoActionError,
 		reviewMode,
 	});
-
-	const onRefreshInstruction = useMemo(
-		() =>
-			pipe(
-				refreshFilesEffect(false),
-				Effect.tap(() =>
-					Effect.sync(() => {
-						setRefreshInstructionVersion((current) => current + 1);
-					}),
-				),
-			),
-		[refreshFilesEffect],
-	);
 
 	const {
 		daemonSnackbarNotice,
