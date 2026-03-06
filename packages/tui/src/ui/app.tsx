@@ -2,7 +2,7 @@ import { useAtom } from "@effect-atom/atom-react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { Effect, Option, pipe } from "effect";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type RepoActionError } from "#data/git.ts";
 import { buildDiffNavigationModel } from "#diff/navigation.ts";
 import type { ThemeMode } from "#theme/theme.ts";
@@ -39,16 +39,6 @@ import {
 	remoteSyncAtom,
 	reviewModeAtom,
 	themeModalAtom,
-	type UpdateBranchCompareModal,
-	type UpdateCommitSearchModal,
-	type UpdateCommitModal,
-	type UpdateDiscardModal,
-	type UpdateFileViewState,
-	type UpdateHelpModal,
-	type UpdateRemoteSyncState,
-	type UpdateReviewMode,
-	type UpdateThemeModal,
-	type UpdateUiStatus,
 	uiStatusAtom,
 } from "#ui/state.ts";
 
@@ -90,76 +80,6 @@ export function App(props: AppProps) {
 	const [reviewMode, setReviewMode] = useAtom(reviewModeAtom);
 	const [refreshInstructionVersion, setRefreshInstructionVersion] = useState(0);
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null);
-
-	const updateFileView = useCallback<UpdateFileViewState>(
-		(update) => {
-			setFileView(update);
-		},
-		[setFileView],
-	);
-
-	const updateUiStatus = useCallback<UpdateUiStatus>(
-		(update) => {
-			setUiStatus(update);
-		},
-		[setUiStatus],
-	);
-
-	const updateCommitModal = useCallback<UpdateCommitModal>(
-		(update) => {
-			setCommitModal(update);
-		},
-		[setCommitModal],
-	);
-
-	const updateCommitSearchModal = useCallback<UpdateCommitSearchModal>(
-		(update) => {
-			setCommitSearchModal(update);
-		},
-		[setCommitSearchModal],
-	);
-
-	const updateHelpModal = useCallback<UpdateHelpModal>(
-		(update) => {
-			setHelpModal(update);
-		},
-		[setHelpModal],
-	);
-
-	const updateThemeModal = useCallback<UpdateThemeModal>(
-		(update) => {
-			setThemeModal(update);
-		},
-		[setThemeModal],
-	);
-
-	const updateBranchCompareModal = useCallback<UpdateBranchCompareModal>(
-		(update) => {
-			setBranchCompareModal(update);
-		},
-		[setBranchCompareModal],
-	);
-
-	const updateRemoteSync = useCallback<UpdateRemoteSyncState>(
-		(update) => {
-			setRemoteSync(update);
-		},
-		[setRemoteSync],
-	);
-
-	const updateReviewMode = useCallback<UpdateReviewMode>(
-		(update) => {
-			setReviewMode(update);
-		},
-		[setReviewMode],
-	);
-
-	const updateDiscardModal = useCallback<UpdateDiscardModal>(
-		(update) => {
-			setDiscardModal(update);
-		},
-		[setDiscardModal],
-	);
 
 	const {
 		files,
@@ -223,8 +143,8 @@ export function App(props: AppProps) {
 	const isWorkingTreeMode = isWorkingTreeReviewMode(reviewMode);
 
 	const { refreshFiles, refreshFilesEffect } = useFileRefresh({
-		updateFileView,
-		updateUiStatus,
+		updateFileView: setFileView,
+		updateUiStatus: setUiStatus,
 		renderRepoActionError: formatRepoActionError,
 		reviewMode,
 	});
@@ -277,7 +197,7 @@ export function App(props: AppProps) {
 	}, [isThemeModalOpen]);
 
 	useEffect(() => {
-		updateFileView((current) => {
+		setFileView((current) => {
 			if (visibleFilePaths.length === 0) {
 				return Option.isNone(current.selectedPath)
 					? current
@@ -294,7 +214,7 @@ export function App(props: AppProps) {
 				selectedPath: Option.fromNullable(visibleFilePaths[0]),
 			};
 		});
-	}, [updateFileView, visibleFilePaths]);
+	}, [setFileView, visibleFilePaths]);
 
 	const { selectedFileDiff, selectedFileDiffNote, selectedFileDiffLoading } =
 		useDiffPreviewState({
@@ -335,8 +255,8 @@ export function App(props: AppProps) {
 		initialTarget: props.initialBlameTarget,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
-		updateReviewMode,
-		updateUiStatus,
+		updateReviewMode: setReviewMode,
+		updateUiStatus: setUiStatus,
 	});
 
 	const {
@@ -377,20 +297,20 @@ export function App(props: AppProps) {
 		branchCompareModal,
 		canInitializeGitRepo,
 		reviewMode,
-		updateFileView,
-		updateUiStatus,
-		updateCommitModal,
-		updateCommitSearchModal,
-		updateHelpModal,
-		updateThemeModal,
-		updateBranchCompareModal,
+		updateFileView: setFileView,
+		updateUiStatus: setUiStatus,
+		updateCommitModal: setCommitModal,
+		updateCommitSearchModal: setCommitSearchModal,
+		updateHelpModal: setHelpModal,
+		updateThemeModal: setThemeModal,
+		updateBranchCompareModal: setBranchCompareModal,
 		remoteSync,
-		updateRemoteSync,
-		updateReviewMode,
+		updateRemoteSync: setRemoteSync,
+		updateReviewMode: setReviewMode,
 		closeBlameView,
 		openBlameCommitCompare,
 		scrollBlameView,
-		updateDiscardModal,
+		updateDiscardModal: setDiscardModal,
 		refreshFiles,
 		renderRepoActionError: formatRepoActionError,
 	});

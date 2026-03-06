@@ -12,6 +12,7 @@ import { routeKeyboardIntent } from "#ui/hooks/keyboard-intent-router.ts";
 import { useBranchCompareActions } from "#ui/hooks/use-branch-compare-actions.ts";
 import { useCommitSearchActions } from "#ui/hooks/use-commit-search-actions.ts";
 import { useGitActions } from "#ui/hooks/use-git-actions.ts";
+import { useNavigationActions } from "#ui/hooks/use-navigation-actions.ts";
 import { useThemeActions } from "#ui/hooks/use-theme-actions.ts";
 import type { AppKeyboardIntent, FocusedPane } from "#ui/inputs.ts";
 import type {
@@ -191,60 +192,6 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		[clearUiError, refreshFiles, setUiError],
 	);
 
-	const toggleCollapsedDirectory = useCallback(
-		(path: string) => {
-			updateFileView((current) => {
-				const next = new Set(current.collapsedDirectories);
-				if (next.has(path)) {
-					next.delete(path);
-				} else {
-					next.add(path);
-				}
-				return { ...current, collapsedDirectories: next };
-			});
-		},
-		[updateFileView],
-	);
-
-	const toggleSidebar = useCallback(() => {
-		if (sidebarOpen && activePane === "sidebar") {
-			setActivePane("diff");
-		}
-
-		updateFileView((current) => ({
-			...current,
-			sidebarOpen: !current.sidebarOpen,
-		}));
-	}, [activePane, setActivePane, sidebarOpen, updateFileView]);
-
-	const focusSidebarPane = useCallback(() => {
-		setActivePane("sidebar");
-		updateFileView((current) =>
-			current.sidebarOpen ? current : { ...current, sidebarOpen: true },
-		);
-	}, [setActivePane, updateFileView]);
-
-	const focusDiffPane = useCallback(() => {
-		setActivePane("diff");
-	}, [setActivePane]);
-
-	const toggleDiffViewMode = useCallback(() => {
-		updateFileView((current) => ({
-			...current,
-			diffViewMode: current.diffViewMode === "split" ? "unified" : "split",
-		}));
-	}, [updateFileView]);
-
-	const selectFilePath = useCallback(
-		(path: string) => {
-			updateFileView((current) => ({
-				...current,
-				selectedPath: Option.some(path),
-			}));
-		},
-		[updateFileView],
-	);
-
 	const closeHelpModal = useCallback(() => {
 		updateHelpModal(closeHelpModalState);
 	}, [updateHelpModal]);
@@ -342,47 +289,25 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		runAction,
 	});
 
-	const scrollDiffHalfPage = useCallback(
-		(direction: "up" | "down") => {
-			const diffScroll = diffScrollRef.current;
-			if (!diffScroll) {
-				return;
-			}
-
-			const step = Math.max(6, Math.floor(renderer.height * 0.45));
-			diffScroll.scrollBy({
-				x: 0,
-				y: direction === "up" ? -step : step,
-			});
-
-			if (activePane !== "diff" || diffLineCount <= 0) {
-				return;
-			}
-
-			const topVisibleLine = Math.max(0, Math.floor(diffScroll.scrollTop));
-			setSelectedDiffLineIndex(Math.min(topVisibleLine, diffLineCount - 1));
-		},
-		[
-			activePane,
-			diffLineCount,
-			diffScrollRef,
-			renderer.height,
-			setSelectedDiffLineIndex,
-		],
-	);
-
-	const moveDiffSelection = useCallback(
-		(direction: 1 | -1) => {
-			if (activePane !== "diff" || diffLineCount <= 0) {
-				return;
-			}
-
-			setSelectedDiffLineIndex((current) =>
-				Math.max(0, Math.min(current + direction, diffLineCount - 1)),
-			);
-		},
-		[activePane, diffLineCount, setSelectedDiffLineIndex],
-	);
+	const {
+		focusDiffPane,
+		focusSidebarPane,
+		moveDiffSelection,
+		onSelectFilePath,
+		onToggleDirectory,
+		onToggleSidebar,
+		scrollDiffHalfPage,
+		toggleDiffViewMode,
+	} = useNavigationActions({
+		diffScrollRef,
+		diffLineCount,
+		rendererHeight: renderer.height,
+		sidebarOpen,
+		activePane,
+		setActivePane,
+		setSelectedDiffLineIndex,
+		updateFileView,
+	});
 
 	const onKeyboardIntent = useCallback(
 		(intent: AppKeyboardIntent) =>
@@ -390,7 +315,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				destroyRenderer: () => {
 					renderer.destroy();
 				},
-				toggleSidebar,
+				toggleSidebar: onToggleSidebar,
 				toggleDiffViewMode,
 				closeBlameView,
 				openBlameCommitCompare,
@@ -425,7 +350,7 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 				openSelectedFile,
 				openSelectedDiffLine,
 				toggleSelectedFileStage,
-				selectFilePath,
+				selectFilePath: onSelectFilePath,
 			}),
 		[
 			closeBranchCompareModal,
@@ -458,13 +383,13 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 			moveDiffSelection,
 			focusSidebarPane,
 			focusDiffPane,
-			selectFilePath,
+			onSelectFilePath,
 			switchBranchField,
 			syncRemote,
 			toggleDiffViewMode,
 			openSelectedDiffLine,
 			toggleSelectedFileStage,
-			toggleSidebar,
+			onToggleSidebar,
 		],
 	);
 
@@ -480,9 +405,9 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 		onCommitSearchQueryChange,
 		onCommitSearchSelectCommit,
 		onKeyboardIntent,
-		onToggleDirectory: toggleCollapsedDirectory,
-		onSelectFilePath: selectFilePath,
+		onToggleDirectory,
+		onSelectFilePath,
 		onSelectThemeInModal: selectThemeInModal,
-		onToggleSidebar: toggleSidebar,
+		onToggleSidebar,
 	};
 }
