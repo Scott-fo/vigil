@@ -242,7 +242,9 @@ export function useRepoActions(options: UseRepoActionsOptions) {
 	});
 
 	const { onKeyboardIntent } = useKeyboardIntentHandler({
-		destroyRenderer: renderer.destroy,
+		destroyRenderer: () => {
+			renderer.destroy();
+		},
 		toggleSidebar: onToggleSidebar,
 		toggleDiffViewMode,
 		closeBlameView,
