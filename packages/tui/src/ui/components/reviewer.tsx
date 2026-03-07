@@ -14,11 +14,14 @@ import {
 	useState,
 } from "react";
 import { isFileStaged } from "#data/git.ts";
-import { splitDiffIntoHunkBlocks } from "#diff/hunks.ts";
 import type { DiffNavigationLine } from "#diff/navigation.ts";
 import type { ResolvedTheme } from "#theme/theme.ts";
 import type { FileEntry } from "#tui/types.ts";
 import type { FocusedPane } from "#ui/inputs.ts";
+import type {
+	DiffDisplayBlock,
+	DiffDisplayGap,
+} from "#ui/hooks/use-diff-expansion-state.ts";
 import { getStatusColor, type SidebarItem } from "#ui/sidebar.ts";
 import {
 	calculateSidebarVirtualWindow,
@@ -370,10 +373,12 @@ interface DiffPanelProps {
 	readonly selectedFileDiff: string;
 	readonly selectedFileDiffNote: Option.Option<string>;
 	readonly selectedFileDiffLoading: boolean;
+	readonly splitViewDisplayBlocks: ReadonlyArray<DiffDisplayBlock>;
 	readonly loading: boolean;
 	readonly error: Option.Option<string>;
 	readonly isCommitModalOpen: boolean;
 	readonly diffScrollRef: RefObject<ScrollBoxRenderable | null>;
+	readonly onExpandGap: (gap: DiffDisplayGap["gap"], direction: "up" | "down") => void;
 }
 
 const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
@@ -383,15 +388,6 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 	const effectiveDiffViewMode: "split" | "unified" = props.isFocused
 		? "unified"
 		: props.diffViewMode;
-
-	const selectedFileDiffBlocks = useMemo(() => {
-		if (!props.selectedFileDiff.trim()) {
-			return [];
-		}
-		return props.isFocused
-			? [props.selectedFileDiff]
-			: splitDiffIntoHunkBlocks(props.selectedFileDiff);
-	}, [props.isFocused, props.selectedFileDiff]);
 
 	useEffect(() => {
 		highlightedLineRef.current = null;
@@ -501,43 +497,125 @@ const DiffPanel = memo(function DiffPanel(props: DiffPanelProps) {
 								foregroundColor: props.theme.borderActive,
 							},
 						}}
-					>
-						<box flexDirection="column">
-							{selectedFileDiffBlocks.map((hunkDiff, hunkIndex) => (
-								<box
-									key={`${props.selectedFile?.path}:${hunkIndex}`}
-									flexDirection="column"
-								>
+						>
+							<box flexDirection="column">
+								{props.isFocused || props.splitViewDisplayBlocks.length === 0 ? (
 									<diff
-										key={`${props.themeKey}:${props.selectedFile?.path ?? "none"}:${hunkIndex}`}
-										diff={hunkDiff}
-										{...(props.isFocused && hunkIndex === 0
-											? { ref: diffRef }
-											: {})}
-										{...(props.selectedFile?.filetype
-											? { filetype: props.selectedFile.filetype }
-											: {})}
-										syntaxStyle={props.syntaxStyle}
-										view={effectiveDiffViewMode}
-										showLineNumbers
-										width="100%"
-										wrapMode="word"
-										fg={props.theme.text}
-										addedBg={props.theme.diffAddedBg}
-										removedBg={props.theme.diffRemovedBg}
-										contextBg={props.theme.diffContextBg}
-										addedSignColor={props.theme.diffHighlightAdded}
-										removedSignColor={props.theme.diffHighlightRemoved}
-										lineNumberFg={props.theme.diffLineNumber}
-										lineNumberBg={props.theme.diffContextBg}
-										addedLineNumberBg={props.theme.diffAddedLineNumberBg}
+										key={`${props.themeKey}:${props.selectedFile?.path ?? "none"}:full`}
+										diff={props.selectedFileDiff}
+									{...(props.isFocused ? { ref: diffRef } : {})}
+									{...(props.selectedFile?.filetype
+										? { filetype: props.selectedFile.filetype }
+										: {})}
+									syntaxStyle={props.syntaxStyle}
+									view={effectiveDiffViewMode}
+									showLineNumbers
+									width="100%"
+									wrapMode="word"
+									fg={props.theme.text}
+									addedBg={props.theme.diffAddedBg}
+									removedBg={props.theme.diffRemovedBg}
+									contextBg={props.theme.diffContextBg}
+									addedSignColor={props.theme.diffHighlightAdded}
+									removedSignColor={props.theme.diffHighlightRemoved}
+									lineNumberFg={props.theme.diffLineNumber}
+									lineNumberBg={props.theme.diffContextBg}
+									addedLineNumberBg={props.theme.diffAddedLineNumberBg}
 										removedLineNumberBg={props.theme.diffRemovedLineNumberBg}
 									/>
-									{hunkIndex < selectedFileDiffBlocks.length - 1 ? (
-										<box height={1} backgroundColor={props.theme.background} />
-									) : null}
-								</box>
-							))}
+								) : (
+									props.splitViewDisplayBlocks.map((displayBlock, blockIndex) => {
+										return (
+											<box
+												key={`${props.selectedFile?.path}:${displayBlock.key}`}
+												flexDirection="column"
+											>
+												<diff
+													key={`${props.themeKey}:${props.selectedFile?.path ?? "none"}:${displayBlock.key}`}
+													diff={displayBlock.diff}
+													{...(props.selectedFile?.filetype
+														? { filetype: props.selectedFile.filetype }
+														: {})}
+												syntaxStyle={props.syntaxStyle}
+												view={effectiveDiffViewMode}
+												showLineNumbers
+												width="100%"
+												wrapMode="word"
+												fg={props.theme.text}
+												addedBg={props.theme.diffAddedBg}
+												removedBg={props.theme.diffRemovedBg}
+												contextBg={props.theme.diffContextBg}
+												addedSignColor={props.theme.diffHighlightAdded}
+												removedSignColor={props.theme.diffHighlightRemoved}
+												lineNumberFg={props.theme.diffLineNumber}
+												lineNumberBg={props.theme.diffContextBg}
+												addedLineNumberBg={props.theme.diffAddedLineNumberBg}
+												removedLineNumberBg={
+													props.theme.diffRemovedLineNumberBg
+												}
+											/>
+													{displayBlock.gapAfter ? (
+														<box flexDirection="column">
+															<box
+															height={1}
+															paddingX={2}
+																backgroundColor={props.theme.backgroundElement}
+																onMouseDown={(event) => {
+																	if (!displayBlock.gapAfter?.canExpandDown) {
+																		return;
+																	}
+																	event.preventDefault();
+																	props.onExpandGap(displayBlock.gapAfter.gap, "down");
+																}}
+															>
+																<text wrapMode="none" truncate>
+																	<span
+																		fg={
+																			displayBlock.gapAfter.canExpandDown
+																				? props.theme.primary
+																				: props.theme.textMuted
+																	}
+																>
+																	↓↓
+																</span>
+															</text>
+														</box>
+														<box
+															height={1}
+															paddingX={2}
+																backgroundColor={props.theme.backgroundElement}
+																onMouseDown={(event) => {
+																	if (!displayBlock.gapAfter?.canExpandUp) {
+																		return;
+																	}
+																	event.preventDefault();
+																	props.onExpandGap(displayBlock.gapAfter.gap, "up");
+																}}
+															>
+																<text wrapMode="none" truncate>
+																	<span
+																		fg={
+																			displayBlock.gapAfter.canExpandUp
+																				? props.theme.primary
+																				: props.theme.textMuted
+																	}
+																>
+																	↑↑
+																</span>
+															</text>
+														</box>
+													</box>
+													) : blockIndex <
+														props.splitViewDisplayBlocks.length - 1 ? (
+													<box
+														height={1}
+														backgroundColor={props.theme.background}
+												/>
+											) : null}
+										</box>
+									);
+								})
+							)}
 						</box>
 					</scrollbox>
 				) : (
@@ -564,6 +642,7 @@ export interface ReviewerProps {
 	readonly selectedFileDiff: string;
 	readonly selectedFileDiffNote: Option.Option<string>;
 	readonly selectedFileDiffLoading: boolean;
+	readonly splitViewDisplayBlocks: ReadonlyArray<DiffDisplayBlock>;
 	readonly selectedDiffLineIndex: number;
 	readonly diffNavigationLines: ReadonlyArray<DiffNavigationLine>;
 	readonly loading: boolean;
@@ -576,6 +655,7 @@ export interface ReviewerProps {
 	readonly sidebarOpen: boolean;
 	readonly activePane: FocusedPane;
 	readonly onToggleSidebar: () => void;
+	readonly onExpandGap: (gap: DiffDisplayGap["gap"], direction: "up" | "down") => void;
 	readonly onCopySelection: () => void;
 }
 
@@ -626,10 +706,12 @@ export const Reviewer = memo(function Reviewer(props: ReviewerProps) {
 				selectedFileDiff={props.selectedFileDiff}
 				selectedFileDiffNote={props.selectedFileDiffNote}
 				selectedFileDiffLoading={props.selectedFileDiffLoading}
+				splitViewDisplayBlocks={props.splitViewDisplayBlocks}
 				loading={props.loading}
 				error={props.error}
 				isCommitModalOpen={props.isCommitModalOpen}
 				diffScrollRef={props.diffScrollRef}
+				onExpandGap={props.onExpandGap}
 			/>
 		</box>
 	);
