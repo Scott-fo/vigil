@@ -22,9 +22,13 @@ export {
 	type RepoActionError,
 } from "#data/git/core.ts";
 export {
+	type FileDiffContextLines,
 	type FileDiffPreview,
+	loadBranchFileContextLines,
 	loadBranchFilePreview,
+	loadCommitFileContextLines,
 	loadCommitFilePreview,
+	loadFileContextLines,
 	loadFilePreview,
 } from "#data/git/preview.ts";
 export {
