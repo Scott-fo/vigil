@@ -179,7 +179,9 @@ export function App(props: AppProps) {
 	const { selectedFileDiff, selectedFileDiffNote, selectedFileDiffLoading } =
 		useDiffPreviewState({
 			files,
+			visibleFilePaths,
 			selectedFile,
+			selectedVisibleIndex,
 			reviewMode,
 			externalRefreshVersion: refreshInstructionVersion,
 		});
