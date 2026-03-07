@@ -13,6 +13,7 @@ import { useBlameView } from "#ui/hooks/use-blame-view.ts";
 import { useBranchCompareView } from "#ui/hooks/use-branch-compare-view.ts";
 import { useCommitSearchView } from "#ui/hooks/use-commit-search-view.ts";
 import { useDiffPreviewState } from "#ui/hooks/use-diff-preview-state.ts";
+import { useDiffExpansionState } from "#ui/hooks/use-diff-expansion-state.ts";
 import { useFileRefresh } from "#ui/hooks/use-file-refresh.ts";
 import { useModalView } from "#ui/hooks/use-modal-view.ts";
 import { useNotifications } from "#ui/hooks/use-notifications.ts";
@@ -185,6 +186,11 @@ export function App(props: AppProps) {
 			reviewMode,
 			externalRefreshVersion: refreshInstructionVersion,
 		});
+	const { splitViewDisplayBlocks, onExpandGap } = useDiffExpansionState({
+		selectedFile,
+		selectedFileDiff,
+		reviewMode,
+	});
 
 	const diffNavigationModel = useMemo(
 		() => buildDiffNavigationModel(selectedFileDiff),
@@ -317,6 +323,7 @@ export function App(props: AppProps) {
 		selectedFileDiff,
 		selectedFileDiffNote,
 		selectedFileDiffLoading,
+		splitViewDisplayBlocks,
 		selectedDiffLineIndex,
 		diffNavigationLines: diffNavigationModel.lines,
 		loading,
@@ -329,6 +336,7 @@ export function App(props: AppProps) {
 		sidebarOpen,
 		activePane,
 		onToggleSidebar,
+		onExpandGap,
 		onCopySelection,
 	};
 
