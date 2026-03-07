@@ -1,5 +1,12 @@
 import { Effect, Option } from "effect";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import {
 	type BranchDiffSelection,
 	type CommitDiffSelection,
@@ -250,7 +257,7 @@ export function useDiffPreviewState(
 		setSelectedFilePreview(null);
 	}, [reviewModeCacheKey]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (!selectedFile) {
 			setSelectedFilePreview(null);
 			return;
@@ -271,6 +278,12 @@ export function useDiffPreviewState(
 				loading: true,
 				preview: { diff: "", note: Option.none() },
 			});
+		}
+	}, [selectedFile]);
+
+	useEffect(() => {
+		if (!selectedFile) {
+			return;
 		}
 
 		const prefetchPaths = buildDiffPrefetchPaths(
