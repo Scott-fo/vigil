@@ -195,6 +195,8 @@ fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
         frame,
         &mut app.diff_scroll,
         &mut app.diff_view,
+        app.selected_diff_line_index,
+        app.active_pane == ActivePane::Diff,
         app.diff_view_mode,
         chunks[0],
     );
@@ -205,6 +207,8 @@ fn render_diff_body(
     frame: &mut Frame,
     diff_scroll: &mut u16,
     diff_view: &mut DiffView,
+    selected_diff_line_index: usize,
+    diff_focused: bool,
     mode: DiffViewMode,
     area: Rect,
 ) {
@@ -218,9 +222,36 @@ fn render_diff_body(
         *diff_scroll = max_scroll;
     }
 
+    let selected_index = selected_diff_line_index.min(rendered_lines.len().saturating_sub(1));
+    if diff_focused {
+        if selected_index < *diff_scroll as usize {
+            *diff_scroll = selected_index.min(max_scroll as usize) as u16;
+        } else {
+            let visible_end = (*diff_scroll as usize).saturating_add(viewport_height);
+            if viewport_height > 0 && selected_index >= visible_end {
+                *diff_scroll = selected_index
+                    .saturating_add(1)
+                    .saturating_sub(viewport_height)
+                    .min(max_scroll as usize) as u16;
+            }
+        }
+    }
+
     let visible_start = (*diff_scroll as usize).min(max_scroll as usize);
     let visible_end = (visible_start + viewport_height).min(rendered_lines.len());
-    let paragraph = Paragraph::new(Text::from(rendered_lines[visible_start..visible_end].to_vec()))
+    let visible_lines = rendered_lines[visible_start..visible_end]
+        .iter()
+        .enumerate()
+        .map(|(offset, line)| {
+            let display_index = visible_start + offset;
+            if diff_focused && display_index == selected_index {
+                highlight_line(line)
+            } else {
+                line.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let paragraph = Paragraph::new(Text::from(visible_lines))
         .style(Style::new().fg(TEXT).bg(PANEL))
         .scroll((0, 0));
     frame.render_widget(paragraph, area);
@@ -243,7 +274,7 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         .status_message
         .clone()
         .unwrap_or_else(|| {
-            "q quit  tab switch panes  enter open  space stage  d discard  c commit  p pull  P push  r refresh  v view"
+            "q quit  tab switch panes  enter open  j/k move  space stage  d discard  c commit  p pull  P push  r refresh  v view"
                 .to_string()
         });
     let line = Paragraph::new(Line::from(vec![
@@ -253,6 +284,8 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(" switch panes  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("space", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" stage  ", Style::new().fg(TEXT_MUTED)),
+        Span::styled("j/k", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+        Span::styled(" move  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("enter", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" open  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("d", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
@@ -464,6 +497,17 @@ fn diff_mode_label(mode: DiffViewMode) -> &'static str {
         DiffViewMode::Unified => "unified",
         DiffViewMode::Split => "split",
     }
+}
+
+fn highlight_line(line: &Line<'static>) -> Line<'static> {
+    Line::from(
+        line.spans
+            .iter()
+            .cloned()
+            .map(|span| Span::styled(span.content, span.style.add_modifier(Modifier::REVERSED)))
+            .collect::<Vec<_>>(),
+    )
+    .style(line.style.add_modifier(Modifier::REVERSED))
 }
 
 pub fn diff_meta_style() -> Style {

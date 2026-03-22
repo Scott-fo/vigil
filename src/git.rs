@@ -30,6 +30,7 @@ pub struct DiffView {
     rows: Vec<DiffRow>,
     pub note: Option<String>,
     render_cache: DiffRenderCache,
+    nav_cache: DiffNavCache,
 }
 
 impl DiffView {
@@ -38,6 +39,7 @@ impl DiffView {
             rows: Vec::new(),
             note: Some(message.into()),
             render_cache: DiffRenderCache::default(),
+            nav_cache: DiffNavCache::default(),
         }
     }
 
@@ -70,6 +72,79 @@ impl DiffView {
 
         &self.render_cache.entry(mode).lines
     }
+
+    pub fn first_selectable_index(&mut self, mode: DiffViewMode) -> usize {
+        self.nav_entries(mode)
+            .iter()
+            .position(Option::is_some)
+            .unwrap_or(0)
+    }
+
+    pub fn last_selectable_index(&mut self, mode: DiffViewMode) -> usize {
+        self.nav_entries(mode)
+            .iter()
+            .rposition(Option::is_some)
+            .unwrap_or(0)
+    }
+
+    pub fn move_selection(&mut self, mode: DiffViewMode, current: usize, delta: i32) -> usize {
+        let nav = self.nav_entries(mode);
+        if nav.is_empty() {
+            return 0;
+        }
+
+        let mut index = current.min(nav.len().saturating_sub(1));
+        if nav[index].is_none() {
+            index = nav.iter().position(Option::is_some).unwrap_or(0);
+        }
+
+        if delta > 0 {
+            for _ in 0..delta {
+                let mut probe = index.saturating_add(1);
+                while probe < nav.len() && nav[probe].is_none() {
+                    probe += 1;
+                }
+                if probe < nav.len() {
+                    index = probe;
+                }
+            }
+        } else if delta < 0 {
+            for _ in 0..delta.unsigned_abs() {
+                let mut probe = index.saturating_sub(1);
+                while probe > 0 && nav[probe].is_none() {
+                    probe = probe.saturating_sub(1);
+                }
+                if nav[probe].is_some() {
+                    index = probe;
+                }
+            }
+        }
+
+        index
+    }
+
+    pub fn selected_line_number(&mut self, mode: DiffViewMode, index: usize) -> Option<usize> {
+        self.nav_entries(mode).get(index).copied().flatten()
+    }
+
+    pub fn display_line_count(&mut self, mode: DiffViewMode) -> usize {
+        self.nav_entries(mode).len()
+    }
+
+    fn nav_entries(&mut self, mode: DiffViewMode) -> &[Option<usize>] {
+        let cache = self.nav_cache.entry(mode);
+        let needs_build = !cache.valid;
+        if needs_build {
+            let entries = match mode {
+                DiffViewMode::Unified => build_unified_nav_entries(&self.rows),
+                DiffViewMode::Split => build_split_nav_entries(&self.rows),
+            };
+            let cache = self.nav_cache.entry_mut(mode);
+            cache.entries = entries;
+            cache.valid = true;
+        }
+        &self.nav_cache.entry(mode).entries
+    }
 }
 
 #[derive(Debug, Default)]
@@ -98,6 +173,34 @@ impl DiffRenderCache {
 struct CachedLines {
     width: usize,
     lines: Vec<Line<'static>>,
+    valid: bool,
+}
+
+#[derive(Debug, Default)]
+struct DiffNavCache {
+    unified: CachedNav,
+    split: CachedNav,
+}
+
+impl DiffNavCache {
+    fn entry(&self, mode: DiffViewMode) -> &CachedNav {
+        match mode {
+            DiffViewMode::Unified => &self.unified,
+            DiffViewMode::Split => &self.split,
+        }
+    }
+
+    fn entry_mut(&mut self, mode: DiffViewMode) -> &mut CachedNav {
+        match mode {
+            DiffViewMode::Unified => &mut self.unified,
+            DiffViewMode::Split => &mut self.split,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct CachedNav {
+    entries: Vec<Option<usize>>,
     valid: bool,
 }
 
@@ -280,6 +383,7 @@ pub async fn load_diff_view(
         rows: build_diff_rows(&preview.diff, file.filetype, &mut highlighter),
         note: preview.note,
         render_cache: DiffRenderCache::default(),
+        nav_cache: DiffNavCache::default(),
     })
 }
 
@@ -621,6 +725,74 @@ fn render_diff_row(
         new_line,
         content: highlighter.highlight_line(filetype, content, base_style(kind)),
     }
+}
+
+fn build_unified_nav_entries(rows: &[DiffRow]) -> Vec<Option<usize>> {
+    let mut entries = Vec::with_capacity(rows.len());
+    let mut last_hunk_index = None;
+
+    for row in rows {
+        if let Some(previous_hunk_index) = last_hunk_index {
+            if row.hunk_index != previous_hunk_index {
+                entries.push(None);
+            }
+        }
+
+        entries.push(match row.kind {
+            DiffLineKind::Added | DiffLineKind::Context => row.new_line,
+            DiffLineKind::Removed => row.old_line,
+        });
+        last_hunk_index = Some(row.hunk_index);
+    }
+
+    entries
+}
+
+fn build_split_nav_entries(rows: &[DiffRow]) -> Vec<Option<usize>> {
+    let mut entries = Vec::with_capacity(rows.len());
+    let mut pending_removed: Vec<&DiffRow> = Vec::new();
+    let mut pending_added: Vec<&DiffRow> = Vec::new();
+    let mut last_hunk_index = None;
+
+    let flush_pending = |entries: &mut Vec<Option<usize>>,
+                         removed: &mut Vec<&DiffRow>,
+                         added: &mut Vec<&DiffRow>| {
+        let row_count = removed.len().max(added.len());
+        for index in 0..row_count {
+            let left = removed.get(index).copied();
+            let right = added.get(index).copied();
+            entries.push(resolve_split_target_line(left, right));
+        }
+        removed.clear();
+        added.clear();
+    };
+
+    for row in rows {
+        if let Some(previous_hunk_index) = last_hunk_index {
+            if row.hunk_index != previous_hunk_index {
+                flush_pending(&mut entries, &mut pending_removed, &mut pending_added);
+                entries.push(None);
+            }
+        }
+        last_hunk_index = Some(row.hunk_index);
+
+        match row.kind {
+            DiffLineKind::Removed => pending_removed.push(row),
+            DiffLineKind::Added => pending_added.push(row),
+            DiffLineKind::Context => {
+                flush_pending(&mut entries, &mut pending_removed, &mut pending_added);
+                entries.push(resolve_split_target_line(Some(row), Some(row)));
+            }
+        }
+    }
+
+    flush_pending(&mut entries, &mut pending_removed, &mut pending_added);
+    entries
+}
+
+fn resolve_split_target_line(left: Option<&DiffRow>, right: Option<&DiffRow>) -> Option<usize> {
+    right.and_then(|row| row.new_line)
+        .or_else(|| left.and_then(|row| row.old_line))
 }
 
 fn render_unified_lines(rows: &[DiffRow], width: usize) -> Vec<Line<'static>> {

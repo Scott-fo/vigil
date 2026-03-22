@@ -31,6 +31,7 @@ pub enum DiffViewMode {
 
 enum AppCommand {
     OpenFileInEditor(String),
+    OpenFileInEditorAtLine(String, usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +66,7 @@ pub struct App {
     pub diff_view: DiffView,
     pub diff_view_mode: DiffViewMode,
     pub diff_scroll: u16,
+    pub selected_diff_line_index: usize,
     pub highlight_registry: Option<SharedHighlightRegistry>,
     pub commit_modal_open: bool,
     pub commit_message: String,
@@ -94,6 +96,7 @@ impl App {
             diff_view: DiffView::default(),
             diff_view_mode: DiffViewMode::Unified,
             diff_scroll: 0,
+            selected_diff_line_index: 0,
             highlight_registry: None,
             commit_modal_open: false,
             commit_message: String::new(),
@@ -256,20 +259,22 @@ impl App {
                     DiffViewMode::Split => DiffViewMode::Unified,
                 };
                 self.diff_scroll = 0;
+                self.selected_diff_line_index =
+                    self.diff_view.first_selectable_index(self.diff_view_mode);
             }
             KeyCode::Char('d') if key_event.modifiers == KeyModifiers::CONTROL => {
-                self.scroll_diff(12);
+                self.page_or_scroll_diff(12);
             }
             KeyCode::Char('u') if key_event.modifiers == KeyModifiers::CONTROL => {
-                self.scroll_diff(-12);
+                self.page_or_scroll_diff(-12);
             }
             KeyCode::Down | KeyCode::Char('j') => match self.active_pane {
                 ActivePane::Sidebar => self.select_next_file().await?,
-                ActivePane::Diff => self.scroll_diff(1),
+                ActivePane::Diff => self.move_diff_selection(1),
             },
             KeyCode::Up | KeyCode::Char('k') => match self.active_pane {
                 ActivePane::Sidebar => self.select_previous_file().await?,
-                ActivePane::Diff => self.scroll_diff(-1),
+                ActivePane::Diff => self.move_diff_selection(-1),
             },
             KeyCode::Char(' ') => {
                 if self.active_pane == ActivePane::Sidebar {
@@ -277,8 +282,20 @@ impl App {
                 }
             }
             KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('e') => {
-                if let Some(file) = self.selected_file() {
-                    return Ok(Some(AppCommand::OpenFileInEditor(file.path.clone())));
+                if let Some(file_path) = self.selected_file().map(|file| file.path.clone()) {
+                    if self.active_pane == ActivePane::Diff {
+                        if let Some(line_number) = self
+                            .diff_view
+                            .selected_line_number(self.diff_view_mode, self.selected_diff_line_index)
+                        {
+                            return Ok(Some(AppCommand::OpenFileInEditorAtLine(
+                                file_path,
+                                line_number,
+                            )));
+                        }
+                    }
+
+                    return Ok(Some(AppCommand::OpenFileInEditor(file_path)));
                 }
             }
             KeyCode::Char('d') => {
@@ -286,15 +303,19 @@ impl App {
             }
             KeyCode::PageDown => match self.active_pane {
                 ActivePane::Sidebar => self.page_files_down().await?,
-                ActivePane::Diff => self.scroll_diff(12),
+                ActivePane::Diff => self.page_diff(12),
             },
             KeyCode::PageUp => match self.active_pane {
                 ActivePane::Sidebar => self.page_files_up().await?,
-                ActivePane::Diff => self.scroll_diff(-12),
+                ActivePane::Diff => self.page_diff(-12),
             },
             KeyCode::Home => match self.active_pane {
                 ActivePane::Sidebar => self.select_file_at(0).await?,
-                ActivePane::Diff => self.diff_scroll = 0,
+                ActivePane::Diff => {
+                    self.selected_diff_line_index =
+                        self.diff_view.first_selectable_index(self.diff_view_mode);
+                    self.diff_scroll = 0;
+                }
             },
             KeyCode::End => match self.active_pane {
                 ActivePane::Sidebar => {
@@ -302,7 +323,11 @@ impl App {
                         self.select_file_at(last_index).await?;
                     }
                 }
-                ActivePane::Diff => self.diff_scroll = u16::MAX,
+                ActivePane::Diff => {
+                    self.selected_diff_line_index =
+                        self.diff_view.last_selectable_index(self.diff_view_mode);
+                    self.diff_scroll = u16::MAX;
+                }
             },
             KeyCode::Char('g') => {
                 let branch = self
@@ -331,8 +356,8 @@ impl App {
         }
 
         match mouse_event.kind {
-            MouseEventKind::ScrollDown => self.scroll_diff(3),
-            MouseEventKind::ScrollUp => self.scroll_diff(-3),
+            MouseEventKind::ScrollDown => self.page_or_scroll_diff(3),
+            MouseEventKind::ScrollUp => self.page_or_scroll_diff(-3),
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                 let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
                 if let Some(path) =
@@ -432,6 +457,7 @@ impl App {
             }
             None => DiffView::empty("No changed files found."),
         };
+        self.selected_diff_line_index = self.diff_view.first_selectable_index(self.diff_view_mode);
         Ok(())
     }
 
@@ -528,6 +554,10 @@ impl App {
             AppCommand::OpenFileInEditor(path) => {
                 self.open_file_in_editor(&path, terminal).await?;
             }
+            AppCommand::OpenFileInEditorAtLine(path, line_number) => {
+                self.open_file_in_editor_at_line(&path, line_number, terminal)
+                    .await?;
+            }
         }
         Ok(())
     }
@@ -574,6 +604,71 @@ impl App {
             Ok(Ok(status)) if status.success() => {
                 self.refresh().await?;
                 self.status_message = Some(format!("opened {}", file_path));
+            }
+            Ok(Ok(status)) => {
+                self.status_message = Some(format!(
+                    "editor exited with code {}",
+                    status.code().unwrap_or(1)
+                ));
+            }
+            Ok(Err(error)) => {
+                self.status_message = Some(format!("failed to launch editor: {error}"));
+            }
+            Err(error) => {
+                self.status_message = Some(format!("editor task failed: {error}"));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn open_file_in_editor_at_line(
+        &mut self,
+        file_path: &str,
+        line_number: usize,
+        terminal: &mut ratatui::DefaultTerminal,
+    ) -> color_eyre::Result<()> {
+        let editor_command = std::env::var("VISUAL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("EDITOR")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            });
+
+        let Some(editor_command) = editor_command else {
+            self.status_message = Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
+            return Ok(());
+        };
+
+        let full_path = self.repo_root.join(file_path);
+        let quoted_target = format!(
+            "{}:{}",
+            quote_shell_arg(&full_path.to_string_lossy()),
+            line_number
+        );
+
+        let _ = execute!(stdout(), DisableMouseCapture);
+        ratatui::restore();
+
+        let result = task::spawn_blocking(move || {
+            std::process::Command::new("sh")
+                .args(["-lc", &format!("{editor_command} {quoted_target}")])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+        })
+        .await;
+
+        *terminal = ratatui::init();
+        let _ = execute!(stdout(), EnableMouseCapture);
+
+        match result {
+            Ok(Ok(status)) if status.success() => {
+                self.refresh().await?;
+                self.status_message = Some(format!("opened {}:{}", file_path, line_number));
             }
             Ok(Ok(status)) => {
                 self.status_message = Some(format!(
@@ -702,12 +797,29 @@ impl App {
         });
     }
 
+    fn move_diff_selection(&mut self, delta: i32) {
+        self.selected_diff_line_index = self
+            .diff_view
+            .move_selection(self.diff_view_mode, self.selected_diff_line_index, delta);
+    }
+
+    fn page_diff(&mut self, delta: i32) {
+        self.move_diff_selection(delta);
+    }
+
     fn scroll_diff(&mut self, delta: i32) {
         self.diff_scroll = if delta.is_negative() {
             self.diff_scroll.saturating_sub(delta.unsigned_abs() as u16)
         } else {
             self.diff_scroll.saturating_add(delta as u16)
         };
+    }
+
+    fn page_or_scroll_diff(&mut self, delta: i32) {
+        match self.active_pane {
+            ActivePane::Diff => self.page_diff(delta),
+            ActivePane::Sidebar => self.scroll_diff(delta),
+        }
     }
 
     fn spawn_highlight_registry_init(&self) {
