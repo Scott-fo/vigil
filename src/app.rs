@@ -1287,14 +1287,15 @@ impl App {
         match command {
             AppCommand::OpenFileInEditor(path) => {
                 if self.chooser_file_path.is_some() {
-                    self.write_chooser_selection_and_exit(&path).await?;
+                    self.write_chooser_selection_and_exit(&path, None).await?;
                 } else {
                     self.open_file_in_editor(&path, terminal).await?;
                 }
             }
             AppCommand::OpenFileInEditorAtLine(path, line_number) => {
                 if self.chooser_file_path.is_some() {
-                    self.write_chooser_selection_and_exit(&path).await?;
+                    self.write_chooser_selection_and_exit(&path, Some(line_number))
+                        .await?;
                 } else {
                     self.open_file_in_editor_at_line(&path, line_number, terminal)
                         .await?;
@@ -1307,13 +1308,18 @@ impl App {
     async fn write_chooser_selection_and_exit(
         &mut self,
         file_path: &str,
+        line_number: Option<usize>,
     ) -> color_eyre::Result<()> {
         let Some(chooser_file_path) = self.chooser_file_path.as_ref() else {
             return Ok(());
         };
 
         let absolute_path = self.repo_root.join(file_path);
-        fs::write(chooser_file_path, format!("{}\n", absolute_path.display()))
+        let payload = match line_number {
+            Some(line_number) => format!("{}\n{}\n", absolute_path.display(), line_number),
+            None => format!("{}\n\n", absolute_path.display()),
+        };
+        fs::write(chooser_file_path, payload)
             .await
             .wrap_err_with(|| {
                 format!(
