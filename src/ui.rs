@@ -14,6 +14,7 @@ use crate::{
     git::{self, DiffView},
     sidebar::SidebarItem,
 };
+use ratatui::layout::Position;
 
 const BACKGROUND: Color = Color::Rgb(36, 39, 58);
 const PANEL: Color = Color::Rgb(30, 32, 48);
@@ -47,6 +48,36 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     render_sidebar(frame, app, layout[0]);
     render_diff(frame, app, layout[1]);
+}
+
+pub fn sidebar_file_at(
+    app: &App,
+    mouse_column: u16,
+    mouse_row: u16,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> Option<String> {
+    let terminal_area = Rect::new(0, 0, terminal_width, terminal_height);
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(38), Constraint::Min(40)])
+        .split(terminal_area);
+    let sidebar_area = layout[0];
+    let sidebar_inner = bordered_panel("Changed Files", false, None).inner(sidebar_area);
+    let point = Position::new(mouse_column, mouse_row);
+
+    if !sidebar_inner.contains(point) {
+        return None;
+    }
+
+    let relative_row = mouse_row.saturating_sub(sidebar_inner.y) as usize;
+    let item_index = app.sidebar_state.offset().saturating_add(relative_row);
+    let item = app.sidebar_items.get(item_index)?;
+
+    match item {
+        SidebarItem::File { file, .. } => Some(file.path.clone()),
+        SidebarItem::Header { .. } => None,
+    }
 }
 
 fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {

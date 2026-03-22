@@ -546,14 +546,14 @@ fn render_unified_code_line(row: &DiffRow) -> Line<'static> {
         DiffLineKind::Added => '+',
         DiffLineKind::Removed => '-',
     };
+    let unified_line_number = match row.kind {
+        DiffLineKind::Added | DiffLineKind::Context => row.new_line,
+        DiffLineKind::Removed => row.old_line,
+    };
 
     let mut spans = vec![
         Span::styled(
-            format_line_number(row.old_line),
-            ui::line_number_style().patch(base_style),
-        ),
-        Span::styled(
-            format_line_number(row.new_line),
+            format_line_number(unified_line_number),
             ui::line_number_style().patch(base_style),
         ),
         Span::styled(format!("{marker} "), sign_style),

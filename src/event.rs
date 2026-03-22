@@ -17,14 +17,20 @@ pub struct EventHandler {
     receiver: mpsc::UnboundedReceiver<Event>,
 }
 
-impl EventHandler {
-    pub fn new() -> Self {
+impl Default for EventHandler {
+    fn default() -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let actor = EventTask::new(sender.clone());
         tokio::spawn(async move {
             let _ = actor.run().await;
         });
         Self { receiver }
+    }
+}
+
+impl EventHandler {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub async fn next(&mut self) -> color_eyre::Result<Event> {

@@ -1,7 +1,8 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use color_eyre::eyre::WrapErr;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::terminal;
 use ratatui::widgets::ListState;
 use tokio::process::Command;
 
@@ -41,6 +42,8 @@ pub struct App {
     pub status_message: Option<String>,
 }
 
+//
+
 impl App {
     pub async fn new() -> color_eyre::Result<Self> {
         let repo_root = git::resolve_repo_root().await?;
@@ -75,6 +78,9 @@ impl App {
                     {
                         self.handle_key_event(key_event).await?;
                     }
+                    crossterm::event::Event::Mouse(mouse_event) => {
+                        self.handle_mouse_event(mouse_event).await?;
+                    }
                     _ => {}
                 },
             }
@@ -104,6 +110,12 @@ impl App {
                     DiffViewMode::Split => DiffViewMode::Unified,
                 };
                 self.diff_scroll = 0;
+            }
+            KeyCode::Char('d') if key_event.modifiers == KeyModifiers::CONTROL => {
+                self.scroll_diff(12);
+            }
+            KeyCode::Char('u') if key_event.modifiers == KeyModifiers::CONTROL => {
+                self.scroll_diff(-12);
             }
             KeyCode::Down | KeyCode::Char('j') => match self.active_pane {
                 ActivePane::Sidebar => self.select_next_file().await?,
@@ -147,6 +159,23 @@ impl App {
             _ => {}
         }
 
+        Ok(())
+    }
+
+    async fn handle_mouse_event(&mut self, mouse_event: MouseEvent) -> color_eyre::Result<()> {
+        match mouse_event.kind {
+            MouseEventKind::ScrollDown => self.scroll_diff(3),
+            MouseEventKind::ScrollUp => self.scroll_diff(-3),
+            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
+                if let Some(path) =
+                    ui::sidebar_file_at(self, mouse_event.column, mouse_event.row, width, height)
+                {
+                    self.select_file_by_path(&path).await?;
+                }
+            }
+            _ => {}
+        }
         Ok(())
     }
 
