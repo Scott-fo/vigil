@@ -48,6 +48,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     render_sidebar(frame, app, layout[0]);
     render_diff(frame, app, layout[1]);
+
+    if app.commit_modal_open {
+        render_commit_modal(frame, app);
+    }
+
+    if app.discard_target.is_some() {
+        render_discard_modal(frame, app);
+    }
 }
 
 pub fn sidebar_file_at(
@@ -231,12 +239,21 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
     let footer = app
         .status_message
         .clone()
-        .unwrap_or_else(|| "q quit  tab switch panes  r refresh  v view".to_string());
+        .unwrap_or_else(|| {
+            "q quit  tab switch panes  space stage  d discard  c commit  r refresh  v view"
+                .to_string()
+        });
     let line = Paragraph::new(Line::from(vec![
         Span::styled("q", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" quit  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("tab", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" switch panes  ", Style::new().fg(TEXT_MUTED)),
+        Span::styled("space", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+        Span::styled(" stage  ", Style::new().fg(TEXT_MUTED)),
+        Span::styled("d", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+        Span::styled(" discard  ", Style::new().fg(TEXT_MUTED)),
+        Span::styled("c", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+        Span::styled(" commit  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("r", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" refresh  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("v", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
@@ -248,6 +265,102 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
     .style(Style::new().bg(PANEL))
     .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(line, area);
+}
+
+fn render_commit_modal(frame: &mut Frame, app: &App) {
+    let area = centered_rect(72, 9, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(BORDER_ACTIVE))
+        .style(Style::new().bg(PANEL))
+        .title(Line::from(Span::styled(
+            " Commit Staged Changes ",
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        )));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let message_label = Line::from(Span::styled(
+        "Message:",
+        Style::new().fg(TEXT),
+    ));
+    let input_line = Line::from(Span::styled(
+        if app.commit_message.is_empty() {
+            "Enter commit message..."
+        } else {
+            app.commit_message.as_str()
+        },
+        if app.commit_message.is_empty() {
+            Style::new().fg(TEXT_MUTED).bg(ELEMENT)
+        } else {
+            Style::new().fg(TEXT).bg(ELEMENT)
+        },
+    ));
+    let hint_or_error = Line::from(Span::styled(
+        app.commit_error
+            .as_deref()
+            .unwrap_or("Enter commits. Esc closes without committing."),
+        if app.commit_error.is_some() {
+            Style::new().fg(RED)
+        } else {
+            Style::new().fg(TEXT_MUTED)
+        },
+    ));
+
+    let content = vec![message_label, Line::default(), input_line, Line::default(), hint_or_error];
+    let paragraph = Paragraph::new(Text::from(content))
+        .style(Style::new().bg(PANEL))
+        .block(Block::new().padding(Padding::horizontal(1)));
+    frame.render_widget(paragraph, inner);
+}
+
+fn render_discard_modal(frame: &mut Frame, app: &App) {
+    let Some(file) = app.discard_target.as_ref() else {
+        return;
+    };
+
+    let area = centered_rect(72, 9, frame.area());
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(RED))
+        .style(Style::new().bg(PANEL))
+        .title(Line::from(Span::styled(
+            " Discard File Changes? ",
+            Style::new().fg(RED).add_modifier(Modifier::BOLD),
+        )));
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+
+    let text = vec![
+        Line::from(Span::styled(
+            "This will remove all local changes in:",
+            Style::new().fg(TEXT),
+        )),
+        Line::default(),
+        Line::from(Span::styled(file.label.clone(), Style::new().fg(YELLOW))),
+        Line::default(),
+        Line::from(Span::styled(
+            "Enter confirms discard. Esc cancels.",
+            Style::new().fg(TEXT_MUTED),
+        )),
+    ];
+    let paragraph = Paragraph::new(Text::from(text)).style(Style::new().bg(PANEL));
+    frame.render_widget(paragraph, inner);
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let popup_width = width.min(area.width.saturating_sub(2)).max(1);
+    let popup_height = height.min(area.height.saturating_sub(2)).max(1);
+    Rect::new(
+        area.x + area.width.saturating_sub(popup_width) / 2,
+        area.y + area.height.saturating_sub(popup_height) / 2,
+        popup_width,
+        popup_height,
+    )
 }
 
 fn bordered_panel(title: &str, active: bool, right_title: Option<String>) -> Block<'static> {

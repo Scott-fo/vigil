@@ -180,6 +180,45 @@ pub fn status_color(status: &str) -> ratatui::style::Color {
     Color::Rgb(184, 192, 224)
 }
 
+pub async fn toggle_file_stage(repo_root: &Path, file: &FileEntry) -> color_eyre::Result<()> {
+    let args: Vec<&str> = if is_file_staged(&file.status) {
+        vec!["restore", "--staged", "--", file.path.as_str()]
+    } else {
+        vec!["add", "--", file.path.as_str()]
+    };
+
+    let _ = git_output(repo_root, &args).await?;
+    Ok(())
+}
+
+pub async fn discard_file_changes(repo_root: &Path, file: &FileEntry) -> color_eyre::Result<()> {
+    let args: Vec<&str> = if file.status == "??" {
+        vec!["clean", "-f", "--", file.path.as_str()]
+    } else {
+        vec![
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "--",
+            file.path.as_str(),
+        ]
+    };
+
+    let _ = git_output(repo_root, &args).await?;
+    Ok(())
+}
+
+pub async fn commit_staged_changes(repo_root: &Path, message: &str) -> color_eyre::Result<()> {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return Err(eyre!("Commit message is required."));
+    }
+
+    let _ = git_output(repo_root, &["commit", "-m", trimmed]).await?;
+    Ok(())
+}
+
 pub async fn resolve_repo_root() -> color_eyre::Result<PathBuf> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])

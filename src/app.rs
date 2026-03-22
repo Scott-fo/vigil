@@ -40,6 +40,10 @@ pub struct App {
     pub diff_view_mode: DiffViewMode,
     pub diff_scroll: u16,
     pub highlight_registry: Option<SharedHighlightRegistry>,
+    pub commit_modal_open: bool,
+    pub commit_message: String,
+    pub commit_error: Option<String>,
+    pub discard_target: Option<FileEntry>,
     pub status_message: Option<String>,
 }
 
@@ -62,6 +66,10 @@ impl App {
             diff_view_mode: DiffViewMode::Unified,
             diff_scroll: 0,
             highlight_registry: None,
+            commit_modal_open: false,
+            commit_message: String::new(),
+            commit_error: None,
+            discard_target: None,
             status_message: None,
         };
         app.spawn_highlight_registry_init();
@@ -122,6 +130,43 @@ impl App {
     }
 
     async fn handle_key_event(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+        if self.commit_modal_open {
+            match key_event.code {
+                KeyCode::Esc => {
+                    self.close_commit_modal();
+                }
+                KeyCode::Enter => {
+                    self.confirm_commit().await?;
+                }
+                KeyCode::Backspace => {
+                    self.commit_message.pop();
+                    self.commit_error = None;
+                }
+                KeyCode::Char(ch)
+                    if !key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key_event.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.commit_message.push(ch);
+                    self.commit_error = None;
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        if self.discard_target.is_some() {
+            match key_event.code {
+                KeyCode::Esc => {
+                    self.discard_target = None;
+                }
+                KeyCode::Enter => {
+                    self.confirm_discard().await?;
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => self.quit(),
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
@@ -135,6 +180,9 @@ impl App {
             }
             KeyCode::Char('r') => {
                 self.refresh().await?;
+            }
+            KeyCode::Char('c') => {
+                self.open_commit_modal();
             }
             KeyCode::Char('v') => {
                 self.diff_view_mode = match self.diff_view_mode {
@@ -157,6 +205,14 @@ impl App {
                 ActivePane::Sidebar => self.select_previous_file().await?,
                 ActivePane::Diff => self.scroll_diff(-1),
             },
+            KeyCode::Char(' ') => {
+                if self.active_pane == ActivePane::Sidebar {
+                    self.toggle_selected_file_stage().await?;
+                }
+            }
+            KeyCode::Char('d') => {
+                self.open_discard_modal();
+            }
             KeyCode::PageDown => match self.active_pane {
                 ActivePane::Sidebar => self.page_files_down().await?,
                 ActivePane::Diff => self.scroll_diff(12),
@@ -195,6 +251,14 @@ impl App {
     }
 
     async fn handle_mouse_event(&mut self, mouse_event: MouseEvent) -> color_eyre::Result<()> {
+        if self.commit_modal_open {
+            return Ok(());
+        }
+
+        if self.discard_target.is_some() {
+            return Ok(());
+        }
+
         match mouse_event.kind {
             MouseEventKind::ScrollDown => self.scroll_diff(3),
             MouseEventKind::ScrollUp => self.scroll_diff(-3),
@@ -300,6 +364,71 @@ impl App {
         Ok(())
     }
 
+    async fn toggle_selected_file_stage(&mut self) -> color_eyre::Result<()> {
+        let Some(file) = self.selected_file().cloned() else {
+            return Ok(());
+        };
+
+        git::toggle_file_stage(&self.repo_root, &file).await?;
+        self.refresh().await?;
+        self.status_message = Some(format!(
+            "{} {}",
+            if git::is_file_staged(&file.status) {
+                "unstaged"
+            } else {
+                "staged"
+            },
+            file.path
+        ));
+        Ok(())
+    }
+
+    fn open_commit_modal(&mut self) {
+        if self.staged_file_count() == 0 {
+            return;
+        }
+
+        self.commit_modal_open = true;
+        self.commit_message.clear();
+        self.commit_error = None;
+    }
+
+    fn close_commit_modal(&mut self) {
+        self.commit_modal_open = false;
+        self.commit_message.clear();
+        self.commit_error = None;
+    }
+
+    async fn confirm_commit(&mut self) -> color_eyre::Result<()> {
+        match git::commit_staged_changes(&self.repo_root, &self.commit_message).await {
+            Ok(()) => {
+                let committed_message = self.commit_message.trim().to_string();
+                self.close_commit_modal();
+                self.refresh().await?;
+                self.status_message = Some(format!("committed {}", committed_message));
+            }
+            Err(error) => {
+                self.commit_error = Some(error.to_string());
+            }
+        }
+        Ok(())
+    }
+
+    fn open_discard_modal(&mut self) {
+        self.discard_target = self.selected_file().cloned();
+    }
+
+    async fn confirm_discard(&mut self) -> color_eyre::Result<()> {
+        let Some(file) = self.discard_target.take() else {
+            return Ok(());
+        };
+
+        git::discard_file_changes(&self.repo_root, &file).await?;
+        self.refresh().await?;
+        self.status_message = Some(format!("discarded {}", file.path));
+        Ok(())
+    }
+
     async fn select_file_at(&mut self, index: usize) -> color_eyre::Result<()> {
         if self.files.is_empty() {
             self.selected_file_index = 0;
@@ -374,6 +503,13 @@ impl App {
             )
         });
         self.sidebar_state.select(selected_row);
+    }
+
+    fn staged_file_count(&self) -> usize {
+        self.files
+            .iter()
+            .filter(|file| git::is_file_staged(&file.status))
+            .count()
     }
 
     fn scroll_diff(&mut self, delta: i32) {
