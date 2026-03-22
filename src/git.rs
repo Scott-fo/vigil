@@ -566,8 +566,8 @@ pub async fn load_diff_view_for_working_tree(
     file: &FileEntry,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_file_preview(repo_root, file).await?;
-    build_diff_view_from_preview(preview, file, highlight_registry)
+    let preview = load_diff_preview_for_working_tree(repo_root, file).await?;
+    build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
 pub async fn load_diff_view_for_commit_compare(
@@ -576,8 +576,8 @@ pub async fn load_diff_view_for_commit_compare(
     selection: &CommitCompareSelection,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_commit_preview(repo_root, file, selection).await?;
-    build_diff_view_from_preview(preview, file, highlight_registry)
+    let preview = load_diff_preview_for_commit_compare(repo_root, file, selection).await?;
+    build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
 pub async fn load_diff_view_for_branch_compare(
@@ -586,18 +586,42 @@ pub async fn load_diff_view_for_branch_compare(
     selection: &BranchCompareSelection,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_branch_preview(repo_root, file, selection).await?;
-    build_diff_view_from_preview(preview, file, highlight_registry)
+    let preview = load_diff_preview_for_branch_compare(repo_root, file, selection).await?;
+    build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
-fn build_diff_view_from_preview(
-    preview: FilePreview,
+pub async fn load_diff_preview_for_working_tree(
+    repo_root: &Path,
+    file: &FileEntry,
+) -> color_eyre::Result<DiffPreviewData> {
+    load_file_preview(repo_root, file).await
+}
+
+pub async fn load_diff_preview_for_commit_compare(
+    repo_root: &Path,
+    file: &FileEntry,
+    selection: &CommitCompareSelection,
+) -> color_eyre::Result<DiffPreviewData> {
+    load_commit_preview(repo_root, file, selection).await
+}
+
+pub async fn load_diff_preview_for_branch_compare(
+    repo_root: &Path,
+    file: &FileEntry,
+    selection: &BranchCompareSelection,
+) -> color_eyre::Result<DiffPreviewData> {
+    load_branch_preview(repo_root, file, selection).await
+}
+
+pub fn build_diff_view_from_preview_data(
+    preview: &DiffPreviewData,
     file: &FileEntry,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
     if preview.diff.trim().is_empty() {
         let message = preview
             .note
+            .clone()
             .unwrap_or_else(|| "No textual diff available.".to_string());
         return Ok(DiffView::empty(message));
     }
@@ -605,18 +629,22 @@ fn build_diff_view_from_preview(
     let mut highlighter = SyntaxHighlighter::new(highlight_registry);
     Ok(DiffView {
         rows: build_diff_rows(&preview.diff, file.filetype, &mut highlighter),
-        note: preview.note,
+        note: preview.note.clone(),
         render_cache: DiffRenderCache::default(),
         nav_cache: DiffNavCache::default(),
     })
 }
 
-struct FilePreview {
+#[derive(Debug, Clone)]
+pub struct DiffPreviewData {
     diff: String,
     note: Option<String>,
 }
 
-async fn load_file_preview(repo_root: &Path, file: &FileEntry) -> color_eyre::Result<FilePreview> {
+async fn load_file_preview(
+    repo_root: &Path,
+    file: &FileEntry,
+) -> color_eyre::Result<DiffPreviewData> {
     if file.status == "??" {
         load_untracked_preview(repo_root, &file.path).await
     } else {
@@ -628,7 +656,7 @@ async fn load_commit_preview(
     repo_root: &Path,
     file: &FileEntry,
     selection: &CommitCompareSelection,
-) -> color_eyre::Result<FilePreview> {
+) -> color_eyre::Result<DiffPreviewData> {
     let output = git_output(
         repo_root,
         &[
@@ -643,7 +671,7 @@ async fn load_commit_preview(
     )
     .await?;
 
-    Ok(FilePreview {
+    Ok(DiffPreviewData {
         diff: output,
         note: None,
     })
@@ -653,7 +681,7 @@ async fn load_branch_preview(
     repo_root: &Path,
     file: &FileEntry,
     selection: &BranchCompareSelection,
-) -> color_eyre::Result<FilePreview> {
+) -> color_eyre::Result<DiffPreviewData> {
     let output = git_output(
         repo_root,
         &[
@@ -667,7 +695,7 @@ async fn load_branch_preview(
     )
     .await?;
 
-    Ok(FilePreview {
+    Ok(DiffPreviewData {
         diff: output,
         note: None,
     })
@@ -676,7 +704,7 @@ async fn load_branch_preview(
 async fn load_tracked_preview(
     repo_root: &Path,
     file_path: &str,
-) -> color_eyre::Result<FilePreview> {
+) -> color_eyre::Result<DiffPreviewData> {
     let output = git_output(
         repo_root,
         &[
@@ -689,7 +717,7 @@ async fn load_tracked_preview(
         ],
     )
     .await?;
-    Ok(FilePreview {
+    Ok(DiffPreviewData {
         diff: output,
         note: None,
     })
@@ -698,18 +726,18 @@ async fn load_tracked_preview(
 async fn load_untracked_preview(
     repo_root: &Path,
     file_path: &str,
-) -> color_eyre::Result<FilePreview> {
+) -> color_eyre::Result<DiffPreviewData> {
     let full_path = repo_root.join(file_path);
     match fs::metadata(&full_path).await {
         Ok(metadata) if metadata.is_dir() => {
-            return Ok(FilePreview {
+            return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Directory or symlinked directory; no preview available.".to_string()),
             });
         }
         Ok(_) => {}
         Err(_) => {
-            return Ok(FilePreview {
+            return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Unable to read untracked file content.".to_string()),
             });
@@ -719,7 +747,7 @@ async fn load_untracked_preview(
     let bytes = match fs::read(&full_path).await {
         Ok(bytes) => bytes,
         Err(_) => {
-            return Ok(FilePreview {
+            return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Unable to read untracked file content.".to_string()),
             });
@@ -727,7 +755,7 @@ async fn load_untracked_preview(
     };
 
     if bytes.contains(&0) {
-        return Ok(FilePreview {
+        return Ok(DiffPreviewData {
             diff: String::new(),
             note: Some("Binary or non-text file; no preview available.".to_string()),
         });
@@ -736,12 +764,12 @@ async fn load_untracked_preview(
     let content = String::from_utf8_lossy(&bytes);
     let diff = create_untracked_file_diff(file_path, &content);
     Ok(if diff.trim().is_empty() {
-        FilePreview {
+        DiffPreviewData {
             diff,
             note: Some("Untracked empty file; no textual hunk to preview.".to_string()),
         }
     } else {
-        FilePreview { diff, note: None }
+        DiffPreviewData { diff, note: None }
     })
 }
 

@@ -107,6 +107,8 @@ pub struct App {
     pub diff_view_mode: DiffViewMode,
     pub diff_scroll: u16,
     pub selected_diff_line_index: usize,
+    pub diff_request_id: u64,
+    diff_load_task: Option<task::JoinHandle<()>>,
     pub highlight_registry: Option<SharedHighlightRegistry>,
     pub repo_watcher: Option<RepoWatcher>,
     pub repo_watcher_loading: bool,
@@ -171,6 +173,8 @@ impl App {
             diff_view_mode: DiffViewMode::Unified,
             diff_scroll: 0,
             selected_diff_line_index: 0,
+            diff_request_id: 0,
+            diff_load_task: None,
             highlight_registry: None,
             repo_watcher: None,
             repo_watcher_loading: false,
@@ -247,7 +251,7 @@ impl App {
                     match result {
                         Ok(registry) => {
                             self.highlight_registry = Some(registry);
-                            self.load_selected_diff().await?;
+                            self.queue_selected_diff_load(false, false);
                             self.status_message = Some(self.current_status_message());
                         }
                         Err(error) => {
@@ -258,6 +262,35 @@ impl App {
 
                     if self.running {
                         terminal.draw(|frame| ui::render(frame, &mut self))?;
+                    }
+                }
+                Event::DiffLoaded {
+                    request_id,
+                    highlighted,
+                    result,
+                } => {
+                    if request_id == self.diff_request_id {
+                        match result {
+                            Ok(mut diff_view) => {
+                                let max_index =
+                                    diff_view.last_selectable_index(self.diff_view_mode);
+                                self.selected_diff_line_index =
+                                    self.selected_diff_line_index.min(max_index);
+                                self.diff_view = diff_view;
+                                self.status_message = Some(self.current_status_message());
+                            }
+                            Err(error) => {
+                                self.diff_view = DiffView::empty(error);
+                            }
+                        }
+
+                        if highlighted {
+                            self.diff_load_task = None;
+                        }
+
+                        if self.running {
+                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        }
                     }
                 }
                 Event::CommitSearchLoaded(result) => {
@@ -707,7 +740,7 @@ impl App {
             .unwrap_or(0);
 
         self.sync_sidebar_state();
-        self.load_selected_diff().await?;
+        self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
         Ok(())
     }
@@ -748,41 +781,97 @@ impl App {
         Ok(())
     }
 
-    async fn load_selected_diff(&mut self) -> color_eyre::Result<()> {
-        self.diff_scroll = 0;
-        self.diff_view = match self.selected_file() {
-            Some(file) => match &self.review_mode {
+    fn queue_selected_diff_load(&mut self, show_loading: bool, reset_viewport: bool) {
+        self.cancel_inflight_diff_load();
+        self.diff_request_id = self.diff_request_id.saturating_add(1);
+        let request_id = self.diff_request_id;
+
+        if reset_viewport {
+            self.diff_scroll = 0;
+            self.selected_diff_line_index = 0;
+        }
+
+        let Some(file) = self.selected_file().cloned() else {
+            self.diff_view = DiffView::empty("No changed files found.");
+            return;
+        };
+
+        if show_loading {
+            self.diff_view = DiffView::empty("Loading diff...");
+        }
+
+        let review_mode = self.review_mode.clone();
+        let repo_root = self.repo_root.clone();
+        let highlight_registry = self.highlight_registry.clone();
+        let sender = self.events.sender();
+
+        self.diff_load_task = Some(task::spawn(async move {
+            let preview_result = match &review_mode {
                 ReviewMode::WorkingTree => {
-                    git::load_diff_view_for_working_tree(
-                        &self.repo_root,
-                        file,
-                        self.highlight_registry.as_deref(),
-                    )
-                    .await?
+                    git::load_diff_preview_for_working_tree(&repo_root, &file).await
                 }
                 ReviewMode::CommitCompare(selection) => {
-                    git::load_diff_view_for_commit_compare(
-                        &self.repo_root,
-                        file,
-                        selection,
-                        self.highlight_registry.as_deref(),
-                    )
-                    .await?
+                    git::load_diff_preview_for_commit_compare(&repo_root, &file, selection).await
                 }
                 ReviewMode::BranchCompare(selection) => {
-                    git::load_diff_view_for_branch_compare(
-                        &self.repo_root,
-                        file,
-                        selection,
-                        self.highlight_registry.as_deref(),
-                    )
-                    .await?
+                    git::load_diff_preview_for_branch_compare(&repo_root, &file, selection).await
                 }
-            },
-            None => DiffView::empty("No changed files found."),
-        };
-        self.selected_diff_line_index = self.diff_view.first_selectable_index(self.diff_view_mode);
-        Ok(())
+            };
+
+            let preview = match preview_result {
+                Ok(preview) => preview,
+                Err(error) => {
+                    let _ = sender.send(Event::DiffLoaded {
+                        request_id,
+                        highlighted: false,
+                        result: Err(error.to_string()),
+                    });
+                    return;
+                }
+            };
+
+            let plain_preview = preview.clone();
+            let plain_file = file.clone();
+            let plain_result = task::spawn_blocking(move || {
+                git::build_diff_view_from_preview_data(&plain_preview, &plain_file, None)
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+            let _ = sender.send(Event::DiffLoaded {
+                request_id,
+                highlighted: false,
+                result: plain_result,
+            });
+
+            let Some(highlight_registry) = highlight_registry else {
+                return;
+            };
+
+            let highlighted_preview = preview;
+            let highlighted_file = file;
+            let highlighted_result = task::spawn_blocking(move || {
+                git::build_diff_view_from_preview_data(
+                    &highlighted_preview,
+                    &highlighted_file,
+                    Some(highlight_registry.as_ref()),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+            let _ = sender.send(Event::DiffLoaded {
+                request_id,
+                highlighted: true,
+                result: highlighted_result,
+            });
+        }));
+    }
+
+    fn cancel_inflight_diff_load(&mut self) {
+        if let Some(task) = self.diff_load_task.take() {
+            task.abort();
+        }
     }
 
     async fn toggle_selected_file_stage(&mut self) -> color_eyre::Result<()> {
@@ -845,7 +934,7 @@ impl App {
         theme::set_active_theme(&self.theme_name, self.theme_mode);
         self.theme_modal_open = false;
         self.theme_modal_query.clear();
-        self.load_selected_diff().await?;
+        self.queue_selected_diff_load(false, false);
         self.status_message = Some(self.current_status_message());
         Ok(())
     }
@@ -1185,7 +1274,7 @@ impl App {
         if self.files.is_empty() {
             self.selected_file_index = 0;
             self.sync_sidebar_state();
-            self.load_selected_diff().await?;
+            self.queue_selected_diff_load(true, true);
             return Ok(());
         }
 
@@ -1193,7 +1282,7 @@ impl App {
         if bounded_index != self.selected_file_index {
             self.selected_file_index = bounded_index;
             self.sync_sidebar_state();
-            self.load_selected_diff().await?;
+            self.queue_selected_diff_load(true, true);
         } else {
             self.sync_sidebar_state();
         }
@@ -1332,7 +1421,7 @@ impl App {
     async fn toggle_theme_mode_preview(&mut self) -> color_eyre::Result<()> {
         self.theme_mode = self.theme_mode.toggle();
         theme::set_active_theme(&self.theme_name, self.theme_mode);
-        self.load_selected_diff().await?;
+        self.queue_selected_diff_load(false, false);
         self.status_message = Some(self.current_status_message());
         Ok(())
     }
@@ -1346,7 +1435,7 @@ impl App {
         self.theme_name = resolved_name;
         self.theme_mode = theme_mode;
         theme::set_active_theme(&self.theme_name, self.theme_mode);
-        self.load_selected_diff().await?;
+        self.queue_selected_diff_load(false, false);
         self.status_message = Some(self.current_status_message());
         Ok(())
     }
@@ -1646,7 +1735,7 @@ impl App {
         self.rebuild_sidebar_items();
         self.selected_file_index = 0;
         self.sync_sidebar_state();
-        self.load_selected_diff().await?;
+        self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
         Ok(())
     }

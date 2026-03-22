@@ -6,14 +6,18 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::git::CommitSearchEntry;
-use crate::git::SharedHighlightRegistry;
+use crate::git::{CommitSearchEntry, DiffView, SharedHighlightRegistry};
 use crate::watcher::RepoWatcher;
 
 #[derive(Debug)]
 pub enum Event {
     Crossterm(CrosstermEvent),
     HighlightRegistryReady(Result<SharedHighlightRegistry, String>),
+    DiffLoaded {
+        request_id: u64,
+        highlighted: bool,
+        result: Result<DiffView, String>,
+    },
     CommitSearchLoaded(Result<Vec<CommitSearchEntry>, String>),
     BranchCompareLoaded(Result<Vec<String>, String>),
     RepoWatcherReady(PathBuf, Result<RepoWatcher, String>),

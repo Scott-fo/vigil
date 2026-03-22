@@ -52,7 +52,7 @@ Already implemented:
 
 Missing from the Rust app:
 
-- [ ] theme picker and persistence
+- [x] theme picker and persistence
 - [x] commit history search
 - [x] open specific commit
 - [x] branch compare
@@ -196,16 +196,14 @@ Source cues:
 
 ### 7. Theme / Config
 
-- [ ] Theme picker modal
-- [ ] Theme search/filter
-- [ ] Apply selected theme immediately
-- [ ] Persist selected theme
-- [ ] Support `~/.local/share/vigil/tui.json`
-- [ ] Support `VIGIL_THEME`
-- [ ] Support `VIGIL_THEME_MODE`
-- [ ] Support legacy `REVIEWER_THEME`
-- [ ] Support legacy `REVIEWER_THEME_MODE`
-- [ ] Dark/light mode switching
+- [x] Theme picker modal
+- [x] Theme search/filter
+- [x] Apply selected theme immediately
+- [x] Persist selected theme
+- [x] Support `~/.local/share/vigil/tui.json`
+- [x] Support `VIGIL_THEME`
+- [x] Support `VIGIL_THEME_MODE`
+- [x] Dark/light mode switching
 
 Notes:
 
@@ -296,7 +294,7 @@ These are worth carrying over because they shape the feel of the app:
 - [x] `Ctrl-D` / `Ctrl-U` to scroll diff half pages
 - [x] `c` to open commit modal
 - [x] `d` to open discard modal
-- [ ] `t` to open theme modal
+- [x] `t` to open theme modal
 - [x] `b` to open branch compare modal
 - [x] `g` to open commit search modal
 - [x] `p` to pull
@@ -315,20 +313,11 @@ Source cue:
 
 Recommended order from here:
 
-1. Theme picker + config persistence
-   The palette is already close, but parity includes theme switching and saved preferences.
-
-2. Commit search + commit compare
-   This is the first real non-working-tree review mode and unlocks history browsing.
-
-3. Branch compare
-   Reuse the compare plumbing after commit compare exists.
-
-4. Blame
+1. Blame
    Build on top of commit compare once revision review is solid.
 
-5. Safety polling for watcher
+2. Safety polling for watcher
    This is the main remaining reliability gap in the watch flow.
 
-6. Help, splash, and finishing UX
+3. Help, splash, and finishing UX
    These should land before calling the rewrite a replacement.
