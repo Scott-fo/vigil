@@ -243,7 +243,7 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         .status_message
         .clone()
         .unwrap_or_else(|| {
-            "q quit  tab switch panes  enter open  space stage  d discard  c commit  P push  r refresh  v view"
+            "q quit  tab switch panes  enter open  space stage  d discard  c commit  p pull  P push  r refresh  v view"
                 .to_string()
         });
     let line = Paragraph::new(Line::from(vec![
@@ -259,6 +259,8 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(" discard  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("c", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" commit  ", Style::new().fg(TEXT_MUTED)),
+        Span::styled("p", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+        Span::styled(" pull  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("P", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" push  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("r", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
@@ -279,6 +281,7 @@ fn render_notifications(frame: &mut Frame, app: &App) {
 
     if let Some(direction) = app.remote_sync {
         let label = match direction {
+            RemoteSyncDirection::Pull => "Pulling from remote...",
             RemoteSyncDirection::Push => "Pushing to remote...",
         };
         let area = top_right_rect(NOTICE_WIDTH, 3, top, frame.area());

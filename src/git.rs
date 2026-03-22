@@ -224,6 +224,11 @@ pub async fn push_to_remote(repo_root: &Path) -> color_eyre::Result<()> {
     Ok(())
 }
 
+pub async fn pull_from_remote(repo_root: &Path) -> color_eyre::Result<()> {
+    let _ = git_output(repo_root, &["pull"]).await?;
+    Ok(())
+}
+
 pub async fn resolve_repo_root() -> color_eyre::Result<PathBuf> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -1136,14 +1141,9 @@ fn register_highlight_config(
     injections: &str,
     locals: &str,
 ) -> color_eyre::Result<()> {
-    let mut config = HighlightConfiguration::new(
-        language,
-        language_name,
-        highlights,
-        injections,
-        locals,
-    )
-    .wrap_err_with(|| format!("failed to build {key} highlight config"))?;
+    let mut config =
+        HighlightConfiguration::new(language, language_name, highlights, injections, locals)
+            .wrap_err_with(|| format!("failed to build {key} highlight config"))?;
     config.configure(HIGHLIGHT_NAMES);
     configs.insert(key, config);
     Ok(())

@@ -9,7 +9,7 @@ use crate::git::SharedHighlightRegistry;
 pub enum Event {
     Crossterm(CrosstermEvent),
     HighlightRegistryReady(Result<SharedHighlightRegistry, String>),
-    RemotePushFinished(Result<String, String>),
+    RemoteSyncFinished(Result<String, String>),
     ClearSnackbar(u64),
 }
 

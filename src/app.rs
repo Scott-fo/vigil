@@ -35,6 +35,7 @@ enum AppCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteSyncDirection {
+    Pull,
     Push,
 }
 
@@ -156,7 +157,7 @@ impl App {
                         terminal.draw(|frame| ui::render(frame, &mut self))?;
                     }
                 }
-                Event::RemotePushFinished(result) => {
+                Event::RemoteSyncFinished(result) => {
                     self.remote_sync = None;
                     match result {
                         Ok(message) => {
@@ -239,6 +240,9 @@ impl App {
             }
             KeyCode::Char('r') => {
                 self.refresh().await?;
+            }
+            KeyCode::Char('p') => {
+                self.start_pull();
             }
             KeyCode::Char('P') => {
                 self.start_push();
@@ -494,7 +498,24 @@ impl App {
                 .await
                 .map(|_| "Pushed to remote".to_string())
                 .map_err(|error| error.to_string());
-            let _ = sender.send(Event::RemotePushFinished(result));
+            let _ = sender.send(Event::RemoteSyncFinished(result));
+        });
+    }
+
+    fn start_pull(&mut self) {
+        if self.remote_sync.is_some() {
+            return;
+        }
+
+        self.remote_sync = Some(RemoteSyncDirection::Pull);
+        let repo_root = self.repo_root.clone();
+        let sender = self.events.sender();
+        task::spawn(async move {
+            let result = git::pull_from_remote(&repo_root)
+                .await
+                .map(|_| "Pulled from remote".to_string())
+                .map_err(|error| error.to_string());
+            let _ = sender.send(Event::RemoteSyncFinished(result));
         });
     }
 
