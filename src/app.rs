@@ -20,11 +20,13 @@ use tokio::task;
 use crate::{
     event::{Event, EventHandler},
     git::{
-        self, BranchCompareSelection, CommitCompareSelection, CommitSearchEntry, DiffView, FileEntry,
-        SharedHighlightRegistry,
+        self, BranchCompareSelection, CommitCompareSelection, CommitSearchEntry, DiffView,
+        FileEntry, SharedHighlightRegistry,
     },
     sidebar::{self, SidebarItem},
-    splash, ui,
+    splash,
+    theme::{self, ThemeMode},
+    ui,
     watcher::RepoWatcher,
 };
 use std::io::stdout;
@@ -109,6 +111,14 @@ pub struct App {
     pub repo_watcher: Option<RepoWatcher>,
     pub repo_watcher_loading: bool,
     pub help_modal_open: bool,
+    pub theme_modal_open: bool,
+    pub theme_modal_query: String,
+    pub theme_modal_selected_index: usize,
+    pub theme_modal_initial_name: String,
+    pub theme_modal_initial_mode: ThemeMode,
+    pub theme_name: String,
+    pub theme_mode: ThemeMode,
+    pub theme_matcher: Matcher,
     pub commit_search_modal_open: bool,
     pub commit_search_query: String,
     pub commit_search_entries: Vec<CommitSearchEntry>,
@@ -141,6 +151,10 @@ pub struct App {
 impl App {
     pub async fn new() -> color_eyre::Result<Self> {
         let repo_root = std::env::current_dir().wrap_err("failed to resolve current directory")?;
+        let preference = theme::read_theme_preference();
+        let theme_name = theme::resolve_theme_name(preference.theme.as_deref()).to_string();
+        let theme_mode = preference.mode.unwrap_or(ThemeMode::Dark);
+        theme::set_active_theme(&theme_name, theme_mode);
         let mut app = Self {
             running: true,
             repo_root,
@@ -161,6 +175,14 @@ impl App {
             repo_watcher: None,
             repo_watcher_loading: false,
             help_modal_open: false,
+            theme_modal_open: false,
+            theme_modal_query: String::new(),
+            theme_modal_selected_index: 0,
+            theme_modal_initial_name: theme_name.clone(),
+            theme_modal_initial_mode: theme_mode,
+            theme_name,
+            theme_mode,
+            theme_matcher: Matcher::new(MatcherConfig::DEFAULT),
             commit_search_modal_open: false,
             commit_search_query: String::new(),
             commit_search_entries: Vec::new(),
@@ -355,6 +377,39 @@ impl App {
             return Ok(None);
         }
 
+        if self.theme_modal_open {
+            match key_event.code {
+                KeyCode::Esc => {
+                    self.cancel_theme_modal().await?;
+                }
+                KeyCode::Enter => {
+                    self.confirm_theme_modal()?;
+                }
+                KeyCode::Char('m') => {
+                    self.toggle_theme_mode_preview().await?;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.move_theme_selection(1).await?;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.move_theme_selection(-1).await?;
+                }
+                KeyCode::Backspace => {
+                    self.theme_modal_query.pop();
+                    self.sync_theme_selection_after_query_change().await?;
+                }
+                KeyCode::Char(ch)
+                    if !key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key_event.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.theme_modal_query.push(ch);
+                    self.sync_theme_selection_after_query_change().await?;
+                }
+                _ => {}
+            }
+            return Ok(None);
+        }
+
         if self.commit_search_modal_open {
             match key_event.code {
                 KeyCode::Esc => {
@@ -465,6 +520,9 @@ impl App {
             }
             KeyCode::Char('?') => {
                 self.help_modal_open = true;
+            }
+            KeyCode::Char('t') => {
+                self.open_theme_modal();
             }
             KeyCode::Char('r') => {
                 self.refresh().await?;
@@ -582,6 +640,10 @@ impl App {
         }
 
         if self.help_modal_open {
+            return Ok(());
+        }
+
+        if self.theme_modal_open {
             return Ok(());
         }
 
@@ -762,6 +824,50 @@ impl App {
         self.commit_error = None;
     }
 
+    fn open_theme_modal(&mut self) {
+        if self.theme_modal_open {
+            return;
+        }
+
+        self.theme_modal_open = true;
+        self.theme_modal_query.clear();
+        self.theme_modal_initial_name = self.theme_name.clone();
+        self.theme_modal_initial_mode = self.theme_mode;
+        self.theme_modal_selected_index = theme::all()
+            .iter()
+            .position(|theme_entry| theme_entry.name == self.theme_name)
+            .unwrap_or(0);
+    }
+
+    async fn cancel_theme_modal(&mut self) -> color_eyre::Result<()> {
+        self.theme_name = self.theme_modal_initial_name.clone();
+        self.theme_mode = self.theme_modal_initial_mode;
+        theme::set_active_theme(&self.theme_name, self.theme_mode);
+        self.theme_modal_open = false;
+        self.theme_modal_query.clear();
+        self.load_selected_diff().await?;
+        self.status_message = Some(self.current_status_message());
+        Ok(())
+    }
+
+    fn confirm_theme_modal(&mut self) -> color_eyre::Result<()> {
+        self.theme_modal_open = false;
+        self.theme_modal_query.clear();
+        match theme::persist_theme_preference(&self.theme_name, self.theme_mode) {
+            Ok(()) => {
+                self.status_message = Some(format!(
+                    "theme set to {} ({})",
+                    self.theme_name,
+                    self.theme_mode.as_str()
+                ));
+            }
+            Err(error) => {
+                self.status_message = Some(format!("failed to persist theme: {error}"));
+            }
+        }
+        Ok(())
+    }
+
     fn open_commit_search_modal(&mut self) {
         if self.commit_search_modal_open {
             return;
@@ -847,9 +953,12 @@ impl App {
                 self.branch_compare_destination_ref = Some(selection.destination_ref.clone());
             }
             _ => {
-                self.branch_compare_source_ref = self.branch_compare_available_refs.first().cloned();
-                self.branch_compare_destination_ref =
-                    resolve_default_destination_ref(&self.branch_compare_available_refs, self.branch_compare_source_ref.as_deref());
+                self.branch_compare_source_ref =
+                    self.branch_compare_available_refs.first().cloned();
+                self.branch_compare_destination_ref = resolve_default_destination_ref(
+                    &self.branch_compare_available_refs,
+                    self.branch_compare_source_ref.as_deref(),
+                );
             }
         }
 
@@ -1167,6 +1276,81 @@ impl App {
         });
     }
 
+    pub fn filtered_theme_names(&mut self) -> Vec<&'static str> {
+        let query = self.theme_modal_query.trim();
+        if query.is_empty() {
+            return theme::names().collect();
+        }
+
+        let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+        let candidates = theme::names().collect::<Vec<_>>();
+        pattern
+            .match_list(candidates, &mut self.theme_matcher)
+            .into_iter()
+            .map(|(candidate, _score)| candidate)
+            .collect()
+    }
+
+    async fn sync_theme_selection_after_query_change(&mut self) -> color_eyre::Result<()> {
+        let filtered = self.filtered_theme_names();
+        if filtered.is_empty() {
+            self.theme_modal_selected_index = 0;
+            return Ok(());
+        }
+
+        if let Some(index) = filtered
+            .iter()
+            .position(|name| *name == self.theme_name.as_str())
+        {
+            self.theme_modal_selected_index = index;
+            return Ok(());
+        }
+
+        self.theme_modal_selected_index = 0;
+        self.preview_theme(filtered[0], self.theme_mode).await
+    }
+
+    async fn move_theme_selection(&mut self, delta: i32) -> color_eyre::Result<()> {
+        let filtered = self.filtered_theme_names();
+        if filtered.is_empty() {
+            self.theme_modal_selected_index = 0;
+            return Ok(());
+        }
+
+        let current = self.theme_modal_selected_index.min(filtered.len() - 1);
+        let next = if delta.is_negative() {
+            current.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            current.saturating_add(delta as usize)
+        }
+        .min(filtered.len() - 1);
+
+        self.theme_modal_selected_index = next;
+        self.preview_theme(filtered[next], self.theme_mode).await
+    }
+
+    async fn toggle_theme_mode_preview(&mut self) -> color_eyre::Result<()> {
+        self.theme_mode = self.theme_mode.toggle();
+        theme::set_active_theme(&self.theme_name, self.theme_mode);
+        self.load_selected_diff().await?;
+        self.status_message = Some(self.current_status_message());
+        Ok(())
+    }
+
+    async fn preview_theme(
+        &mut self,
+        theme_name: &str,
+        theme_mode: ThemeMode,
+    ) -> color_eyre::Result<()> {
+        let resolved_name = theme::resolve_theme_name(Some(theme_name)).to_string();
+        self.theme_name = resolved_name;
+        self.theme_mode = theme_mode;
+        theme::set_active_theme(&self.theme_name, self.theme_mode);
+        self.load_selected_diff().await?;
+        self.status_message = Some(self.current_status_message());
+        Ok(())
+    }
+
     fn move_diff_selection(&mut self, delta: i32) {
         self.selected_diff_line_index = self.diff_view.move_selection(
             self.diff_view_mode,
@@ -1392,7 +1576,10 @@ impl App {
                 format!("Commit {}: {}", selection.short_hash, selection.subject)
             }
             ReviewMode::BranchCompare(selection) => {
-                format!("Compare {} -> {}", selection.source_ref, selection.destination_ref)
+                format!(
+                    "Compare {} -> {}",
+                    selection.source_ref, selection.destination_ref
+                )
             }
         }
     }
@@ -1552,10 +1739,7 @@ fn editor_supports_plus_line(editor_command: &str) -> bool {
     matches!(binary, "nvim" | "vim" | "vi" | "vimdiff" | "nvim-qt")
 }
 
-fn resolve_default_destination_ref(
-    refs: &[String],
-    source_ref: Option<&str>,
-) -> Option<String> {
+fn resolve_default_destination_ref(refs: &[String], source_ref: Option<&str>) -> Option<String> {
     let preferred = refs.iter().find(|ref_name| {
         (**ref_name == "main" || **ref_name == "master")
             && source_ref.is_none_or(|source| source != ref_name.as_str())

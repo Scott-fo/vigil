@@ -14,32 +14,75 @@ use crate::{
     git::{self, DiffView},
     sidebar::SidebarItem,
     splash::Splash,
+    theme,
 };
 use ratatui::layout::Position;
-
-const BACKGROUND: Color = Color::Rgb(36, 39, 58);
-const PANEL: Color = Color::Rgb(30, 32, 48);
-const ELEMENT: Color = Color::Rgb(24, 25, 38);
-const BORDER: Color = Color::Rgb(54, 58, 79);
-const BORDER_ACTIVE: Color = Color::Rgb(73, 77, 100);
-const TEXT: Color = Color::Rgb(202, 211, 245);
-const TEXT_MUTED: Color = Color::Rgb(184, 192, 224);
-const GREEN: Color = Color::Rgb(166, 218, 149);
-const RED: Color = Color::Rgb(237, 135, 150);
-const YELLOW: Color = Color::Rgb(238, 212, 159);
-const PEACH: Color = Color::Rgb(245, 169, 127);
-const BLUE: Color = Color::Rgb(138, 173, 244);
-const MAUVE: Color = Color::Rgb(198, 160, 246);
-const SKY: Color = Color::Rgb(145, 215, 227);
-const OVERLAY2: Color = Color::Rgb(147, 154, 183);
-const ADD_BG: Color = Color::Rgb(41, 52, 43);
-const REMOVE_BG: Color = Color::Rgb(58, 42, 49);
 const NOTICE_WIDTH: u16 = 36;
+
+fn palette() -> theme::ThemePalette {
+    theme::active_palette()
+}
+
+fn background_color() -> Color {
+    palette().background
+}
+
+fn panel_color() -> Color {
+    palette().background_panel
+}
+
+fn element_color() -> Color {
+    palette().background_element
+}
+
+fn border_color() -> Color {
+    palette().border
+}
+
+fn border_active_color() -> Color {
+    palette().border_active
+}
+
+fn text_color() -> Color {
+    palette().text
+}
+
+fn text_muted_color() -> Color {
+    palette().text_muted
+}
+
+fn primary_color() -> Color {
+    palette().primary
+}
+
+fn error_color() -> Color {
+    palette().error
+}
+
+fn warning_color() -> Color {
+    palette().warning
+}
+
+fn diff_context_color() -> Color {
+    palette().diff_context
+}
+
+fn add_bg_color() -> Color {
+    palette().diff_added_bg
+}
+
+fn remove_bg_color() -> Color {
+    palette().diff_removed_bg
+}
+
+fn selected_list_item_text_color() -> Color {
+    palette().selected_list_item_text
+}
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Clear, frame.area());
     frame.render_widget(
-        Block::new().style(Style::new().bg(BACKGROUND)),
+        Block::new().style(Style::new().bg(background_color())),
         frame.area(),
     );
 
@@ -47,8 +90,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(
             Splash::new(
                 app.splash_error(),
-                Style::new().fg(TEXT),
-                Style::new().fg(TEXT_MUTED),
+                Style::new().fg(text_color()),
+                Style::new().fg(text_muted_color()),
             ),
             frame.area(),
         );
@@ -68,6 +111,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.discard_target.is_some() {
         render_discard_modal(frame, app);
+    }
+
+    if app.theme_modal_open {
+        render_theme_modal(frame, app);
     }
 
     if app.commit_search_modal_open {
@@ -141,9 +188,9 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
                 let indent = "  ".repeat(*depth);
                 let arrow = if *collapsed { "▸ " } else { "▾ " };
                 ListItem::new(Line::from(vec![
-                    Span::styled(indent, Style::new().fg(TEXT_MUTED)),
-                    Span::styled(arrow, Style::new().fg(BORDER_ACTIVE)),
-                    Span::styled(label.clone(), Style::new().fg(TEXT_MUTED)),
+                    Span::styled(indent, Style::new().fg(text_muted_color())),
+                    Span::styled(arrow, Style::new().fg(border_active_color())),
+                    Span::styled(label.clone(), Style::new().fg(text_muted_color())),
                 ]))
             }
             SidebarItem::File {
@@ -152,12 +199,12 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
                 let indent = "  ".repeat(*depth);
                 let staged = git::is_file_staged(&file.status);
                 let row_style = if staged {
-                    Style::new().bg(ADD_BG)
+                    Style::new().bg(add_bg_color())
                 } else {
                     Style::new()
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(indent, Style::new().fg(BORDER)),
+                    Span::styled(indent, Style::new().fg(border_color())),
                     Span::styled(
                         format!("{} ", file.status),
                         Style::new().fg(git::status_color(&file.status)),
@@ -165,9 +212,9 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(
                         label.clone(),
                         if staged {
-                            Style::new().fg(TEXT)
+                            Style::new().fg(text_color())
                         } else {
-                            Style::new().fg(TEXT_MUTED)
+                            Style::new().fg(text_muted_color())
                         },
                     ),
                 ]))
@@ -179,8 +226,8 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let list = List::new(items)
         .highlight_style(
             Style::new()
-                .bg(ELEMENT)
-                .fg(TEXT)
+                .bg(primary_color())
+                .fg(selected_list_item_text_color())
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("");
@@ -192,8 +239,8 @@ fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         .position(app.sidebar_state.offset())
         .viewport_content_length(sidebar_height);
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .thumb_style(Style::new().fg(BORDER_ACTIVE))
-        .track_style(Style::new().fg(BORDER));
+        .thumb_style(Style::new().fg(border_active_color()))
+        .track_style(Style::new().fg(border_color()));
     frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
 }
 
@@ -286,7 +333,7 @@ fn render_diff_body(
         })
         .collect::<Vec<_>>();
     let paragraph = Paragraph::new(Text::from(visible_lines))
-        .style(Style::new().fg(TEXT).bg(PANEL))
+        .style(Style::new().fg(text_color()).bg(panel_color()))
         .scroll((0, 0));
     frame.render_widget(paragraph, area);
 
@@ -297,8 +344,8 @@ fn render_diff_body(
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
-            .thumb_style(Style::new().fg(BORDER_ACTIVE))
-            .track_style(Style::new().fg(BORDER));
+            .thumb_style(Style::new().fg(border_active_color()))
+            .track_style(Style::new().fg(border_color()));
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
 }
@@ -313,9 +360,9 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
     });
     let line = Paragraph::new(Line::from(Span::styled(
         status,
-        Style::new().fg(TEXT_MUTED),
+        Style::new().fg(text_muted_color()),
     )))
-    .style(Style::new().bg(PANEL))
+    .style(Style::new().bg(panel_color()))
     .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(line, area);
 }
@@ -331,17 +378,17 @@ fn render_notifications(frame: &mut Frame, app: &App) {
         let area = top_right_rect(NOTICE_WIDTH, 3, top, frame.area());
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::new().fg(BLUE))
-            .style(Style::new().bg(PANEL));
+            .border_style(Style::new().fg(primary_color()))
+            .style(Style::new().bg(panel_color()));
         let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
         frame.render_widget(
             Paragraph::new(Text::from(Line::from(Span::styled(
                 label,
-                Style::new().fg(TEXT_MUTED),
+                Style::new().fg(text_muted_color()),
             ))))
-            .style(Style::new().bg(PANEL))
+            .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(0))),
             inner,
         );
@@ -351,22 +398,22 @@ fn render_notifications(frame: &mut Frame, app: &App) {
     if let Some(notice) = app.snackbar_notice.as_ref() {
         let area = top_right_rect(NOTICE_WIDTH, 3, top, frame.area());
         let border_color = match notice.variant {
-            SnackbarVariant::Info => BLUE,
-            SnackbarVariant::Error => RED,
+            SnackbarVariant::Info => primary_color(),
+            SnackbarVariant::Error => error_color(),
         };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::new().fg(border_color))
-            .style(Style::new().bg(PANEL));
+            .style(Style::new().bg(panel_color()));
         let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
         frame.render_widget(
             Paragraph::new(Text::from(Line::from(Span::styled(
                 notice.message.clone(),
-                Style::new().fg(TEXT),
+                Style::new().fg(text_color()),
             ))))
-            .style(Style::new().bg(PANEL))
+            .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(0))),
             inner,
         );
@@ -379,16 +426,16 @@ fn render_commit_modal(frame: &mut Frame, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER_ACTIVE))
-        .style(Style::new().bg(PANEL))
+        .border_style(Style::new().fg(border_active_color()))
+        .style(Style::new().bg(panel_color()))
         .title(Line::from(Span::styled(
             " Commit Staged Changes ",
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
         )));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let message_label = Line::from(Span::styled("Message:", Style::new().fg(TEXT)));
+    let message_label = Line::from(Span::styled("Message:", Style::new().fg(text_color())));
     let input_line = Line::from(Span::styled(
         if app.commit_message.is_empty() {
             "Enter commit message..."
@@ -396,9 +443,9 @@ fn render_commit_modal(frame: &mut Frame, app: &App) {
             app.commit_message.as_str()
         },
         if app.commit_message.is_empty() {
-            Style::new().fg(TEXT_MUTED).bg(ELEMENT)
+            Style::new().fg(text_muted_color()).bg(element_color())
         } else {
-            Style::new().fg(TEXT).bg(ELEMENT)
+            Style::new().fg(text_color()).bg(element_color())
         },
     ));
     let hint_or_error = Line::from(Span::styled(
@@ -406,9 +453,9 @@ fn render_commit_modal(frame: &mut Frame, app: &App) {
             .as_deref()
             .unwrap_or("Enter commits. Esc closes without committing."),
         if app.commit_error.is_some() {
-            Style::new().fg(RED)
+            Style::new().fg(error_color())
         } else {
-            Style::new().fg(TEXT_MUTED)
+            Style::new().fg(text_muted_color())
         },
     ));
 
@@ -420,7 +467,7 @@ fn render_commit_modal(frame: &mut Frame, app: &App) {
         hint_or_error,
     ];
     let paragraph = Paragraph::new(Text::from(content))
-        .style(Style::new().bg(PANEL))
+        .style(Style::new().bg(panel_color()))
         .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(paragraph, inner);
 }
@@ -434,11 +481,11 @@ fn render_discard_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(RED))
-        .style(Style::new().bg(PANEL))
+        .border_style(Style::new().fg(error_color()))
+        .style(Style::new().bg(panel_color()))
         .title(Line::from(Span::styled(
             " Discard File Changes? ",
-            Style::new().fg(RED).add_modifier(Modifier::BOLD),
+            Style::new().fg(error_color()).add_modifier(Modifier::BOLD),
         )));
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
@@ -447,17 +494,20 @@ fn render_discard_modal(frame: &mut Frame, app: &App) {
     let text = vec![
         Line::from(Span::styled(
             "This will remove all local changes in:",
-            Style::new().fg(TEXT),
+            Style::new().fg(text_color()),
         )),
         Line::default(),
-        Line::from(Span::styled(file.label.clone(), Style::new().fg(YELLOW))),
+        Line::from(Span::styled(
+            file.label.clone(),
+            Style::new().fg(warning_color()),
+        )),
         Line::default(),
         Line::from(Span::styled(
             "Enter confirms discard. Esc cancels.",
-            Style::new().fg(TEXT_MUTED),
+            Style::new().fg(text_muted_color()),
         )),
     ];
-    let paragraph = Paragraph::new(Text::from(text)).style(Style::new().bg(PANEL));
+    let paragraph = Paragraph::new(Text::from(text)).style(Style::new().bg(panel_color()));
     frame.render_widget(paragraph, inner);
 }
 
@@ -467,11 +517,11 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER_ACTIVE))
-        .style(Style::new().bg(PANEL))
+        .border_style(Style::new().fg(border_active_color()))
+        .style(Style::new().bg(panel_color()))
         .title(Line::from(Span::styled(
             " Help ",
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
         )));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -484,107 +534,141 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
     let mut lines = vec![
         Line::from(Span::styled(
             "Global",
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
         )),
         Line::from(vec![
-            Span::styled("?  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("toggle help", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "?  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("toggle help", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
-            Span::styled("tab  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("switch sidebar / diff focus", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "tab  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("switch sidebar / diff focus", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
-            Span::styled("v  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("toggle unified / split diff", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "v  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("toggle unified / split diff", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
-            Span::styled("r  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("refresh", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "r  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("refresh", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
-            Span::styled("g  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("open commit search", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "g  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("open commit search", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
-            Span::styled("b  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("open branch compare", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "b  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("open branch compare", Style::new().fg(text_muted_color())),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "t  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("open theme picker", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "Ctrl-L  ",
-                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("reset compare mode", Style::new().fg(TEXT_MUTED)),
+            Span::styled("reset compare mode", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
-            Span::styled("q  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("quit", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "q  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("quit", Style::new().fg(text_muted_color())),
         ]),
         Line::default(),
         Line::from(Span::styled(
             "Navigation",
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
         )),
         Line::from(vec![
             Span::styled(
                 "j / k  ",
-                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("move selection", Style::new().fg(TEXT_MUTED)),
+            Span::styled("move selection", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "Ctrl-D / Ctrl-U  ",
-                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("page diff", Style::new().fg(TEXT_MUTED)),
+            Span::styled("page diff", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "mouse wheel  ",
-                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("scroll diff", Style::new().fg(TEXT_MUTED)),
+            Span::styled("scroll diff", Style::new().fg(text_muted_color())),
         ]),
         Line::default(),
         Line::from(Span::styled(
             "Actions",
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
         )),
         Line::from(vec![
             Span::styled(
                 "enter / o / e  ",
-                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("open in editor", Style::new().fg(TEXT_MUTED)),
+            Span::styled("open in editor", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "space  ",
-                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("stage / unstage selected file", Style::new().fg(TEXT_MUTED)),
+            Span::styled("stage / unstage selected file", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
-            Span::styled("d  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("discard selected file", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "d  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("discard selected file", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
-            Span::styled("c  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-            Span::styled("commit staged changes", Style::new().fg(TEXT_MUTED)),
+            Span::styled(
+                "c  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("commit staged changes", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "p / P  ",
-                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("pull / push", Style::new().fg(TEXT_MUTED)),
+            Span::styled("pull / push", Style::new().fg(text_muted_color())),
         ]),
         Line::default(),
         Line::from(Span::styled(
             format!("{pane_hint}. Esc closes help."),
-            Style::new().fg(TEXT_MUTED),
+            Style::new().fg(text_muted_color()),
         )),
     ];
 
@@ -592,16 +676,152 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
         lines.insert(
             8,
             Line::from(vec![
-                Span::styled("i  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-                Span::styled("git init when splash is shown", Style::new().fg(TEXT_MUTED)),
+                Span::styled(
+                    "i  ",
+                    Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("git init when splash is shown", Style::new().fg(text_muted_color())),
             ]),
         );
     }
 
     let paragraph = Paragraph::new(Text::from(lines))
-        .style(Style::new().bg(PANEL))
+        .style(Style::new().bg(panel_color()))
         .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(paragraph, inner);
+}
+
+fn render_theme_modal(frame: &mut Frame, app: &mut App) {
+    let area = centered_rect(76, 22, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(border_active_color()))
+        .style(Style::new().bg(panel_color()))
+        .title(Line::from(Span::styled(
+            " Theme Picker ",
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+        )));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(2),
+            Constraint::Min(6),
+            Constraint::Length(2),
+        ])
+        .split(inner);
+
+    let query_display = if app.theme_modal_query.is_empty() {
+        Span::styled("Search themes...", Style::new().fg(text_muted_color()))
+    } else {
+        Span::styled(app.theme_modal_query.clone(), Style::new().fg(text_color()))
+    };
+    let query = Paragraph::new(Line::from(query_display))
+        .style(Style::new().bg(element_color()))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::new().fg(border_color()))
+                .padding(Padding::horizontal(1)),
+        );
+    frame.render_widget(query, chunks[0]);
+
+    let mode_line = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "mode  ",
+            Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(app.theme_mode.as_str(), Style::new().fg(text_color())),
+        Span::styled("  m toggles light/dark preview", Style::new().fg(text_muted_color())),
+    ]))
+    .style(Style::new().bg(panel_color()))
+    .block(Block::new().padding(Padding::horizontal(1)));
+    frame.render_widget(mode_line, chunks[1]);
+
+    let filtered_theme_names = app.filtered_theme_names();
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(border_color()))
+        .style(Style::new().bg(panel_color()));
+    let list_inner = list_block.inner(chunks[2]);
+    frame.render_widget(list_block, chunks[2]);
+
+    if filtered_theme_names.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "No matching themes.",
+                Style::new().fg(text_muted_color()),
+            )))
+            .style(Style::new().bg(panel_color()))
+            .block(Block::new().padding(Padding::horizontal(1))),
+            list_inner,
+        );
+    } else {
+        let viewport_height = list_inner.height as usize;
+        let selected_index = app
+            .theme_modal_selected_index
+            .min(filtered_theme_names.len().saturating_sub(1));
+        let max_scroll = filtered_theme_names.len().saturating_sub(viewport_height);
+        let visible_start = selected_index
+            .saturating_sub(viewport_height.saturating_sub(1))
+            .min(max_scroll);
+        let visible_end = (visible_start + viewport_height).min(filtered_theme_names.len());
+
+        let lines = filtered_theme_names[visible_start..visible_end]
+            .iter()
+            .enumerate()
+            .map(|(offset, theme_name)| {
+                let display_index = visible_start + offset;
+                let selected = display_index == selected_index;
+                let style = if selected {
+                    Style::new()
+                        .bg(primary_color())
+                        .fg(selected_list_item_text_color())
+                } else {
+                    Style::new().fg(text_color())
+                };
+                Line::from(Span::styled((*theme_name).to_string(), style)).style(style)
+            })
+            .collect::<Vec<_>>();
+
+        frame.render_widget(
+            Paragraph::new(Text::from(lines))
+                .style(Style::new().bg(panel_color()))
+                .block(Block::new().padding(Padding::horizontal(1))),
+            list_inner,
+        );
+
+        if filtered_theme_names.len() > viewport_height {
+            let mut scrollbar_state = ScrollbarState::new(filtered_theme_names.len())
+                .position(visible_start)
+                .viewport_content_length(viewport_height);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .thumb_style(Style::new().fg(border_active_color()))
+                .track_style(Style::new().fg(border_color()));
+            frame.render_stateful_widget(scrollbar, list_inner, &mut scrollbar_state);
+        }
+    }
+
+    let footer = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(
+            "Type to filter. j/k move. Enter saves. Esc restores previous theme.",
+            Style::new().fg(text_muted_color()),
+        )),
+        Line::from(Span::styled(
+            format!("previewing {} ({})", app.theme_name, app.theme_mode.as_str()),
+            Style::new().fg(diff_context_color()),
+        )),
+    ]))
+    .style(Style::new().bg(panel_color()))
+    .block(Block::new().padding(Padding::horizontal(1)));
+    frame.render_widget(footer, chunks[3]);
 }
 
 fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
@@ -610,11 +830,11 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER_ACTIVE))
-        .style(Style::new().bg(PANEL))
+        .border_style(Style::new().fg(border_active_color()))
+        .style(Style::new().bg(panel_color()))
         .title(Line::from(Span::styled(
             " Commit Search ",
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
         )));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -629,16 +849,16 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
         .split(inner);
 
     let query_display = if app.commit_search_query.is_empty() {
-        Span::styled("Search by hash or subject...", Style::new().fg(TEXT_MUTED))
+        Span::styled("Search by hash or subject...", Style::new().fg(text_muted_color()))
     } else {
-        Span::styled(app.commit_search_query.clone(), Style::new().fg(TEXT))
+        Span::styled(app.commit_search_query.clone(), Style::new().fg(text_color()))
     };
     let query = Paragraph::new(Line::from(query_display))
-        .style(Style::new().bg(ELEMENT))
+        .style(Style::new().bg(element_color()))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::new().fg(BORDER))
+                .border_style(Style::new().fg(border_color()))
                 .padding(Padding::horizontal(1)),
         );
     frame.render_widget(query, chunks[0]);
@@ -646,8 +866,8 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
     let filtered_indices = app.filtered_commit_search_indices();
     let list_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER))
-        .style(Style::new().bg(PANEL));
+        .border_style(Style::new().fg(border_color()))
+        .style(Style::new().bg(panel_color()));
     let list_inner = list_block.inner(chunks[1]);
     frame.render_widget(list_block, chunks[1]);
 
@@ -655,9 +875,9 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "Loading commits...",
-                Style::new().fg(TEXT_MUTED),
+                Style::new().fg(text_muted_color()),
             )))
-            .style(Style::new().bg(PANEL))
+            .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(1))),
             list_inner,
         );
@@ -666,12 +886,12 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
             Paragraph::new(Text::from(vec![
                 Line::from(Span::styled(
                     "Unable to load commits.",
-                    Style::new().fg(RED),
+                    Style::new().fg(error_color()),
                 )),
                 Line::default(),
-                Line::from(Span::styled(error.clone(), Style::new().fg(TEXT_MUTED))),
+                Line::from(Span::styled(error.clone(), Style::new().fg(text_muted_color()))),
             ]))
-            .style(Style::new().bg(PANEL))
+            .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(1))),
             list_inner,
         );
@@ -679,9 +899,9 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "No matching commits.",
-                Style::new().fg(TEXT_MUTED),
+                Style::new().fg(text_muted_color()),
             )))
-            .style(Style::new().bg(PANEL))
+            .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(1))),
             list_inner,
         );
@@ -704,17 +924,19 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
                 let selected = display_index == selected_index;
                 let commit = &app.commit_search_entries[*entry_index];
                 let base_style = if selected {
-                    Style::new().bg(BLUE).fg(BACKGROUND)
+                    Style::new()
+                        .bg(primary_color())
+                        .fg(selected_list_item_text_color())
                 } else {
-                    Style::new().fg(TEXT)
+                    Style::new().fg(text_color())
                 };
                 let hash_style = if selected {
                     Style::new()
-                        .bg(BLUE)
-                        .fg(BACKGROUND)
+                        .bg(primary_color())
+                        .fg(selected_list_item_text_color())
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::new().fg(BLUE).add_modifier(Modifier::BOLD)
+                    Style::new().fg(primary_color()).add_modifier(Modifier::BOLD)
                 };
 
                 Line::from(vec![
@@ -728,7 +950,7 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
 
         frame.render_widget(
             Paragraph::new(Text::from(lines))
-                .style(Style::new().bg(PANEL))
+                .style(Style::new().bg(panel_color()))
                 .block(Block::new().padding(Padding::horizontal(1))),
             list_inner,
         );
@@ -740,8 +962,8 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
-                .thumb_style(Style::new().fg(BORDER_ACTIVE))
-                .track_style(Style::new().fg(BORDER));
+                .thumb_style(Style::new().fg(border_active_color()))
+                .track_style(Style::new().fg(border_color()));
             frame.render_stateful_widget(scrollbar, list_inner, &mut scrollbar_state);
         }
     }
@@ -754,11 +976,11 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
     let footer = Paragraph::new(Text::from(vec![
         Line::from(Span::styled(
             "Type to filter. j/k move. Enter selects. Esc closes.",
-            Style::new().fg(TEXT_MUTED),
+            Style::new().fg(text_muted_color()),
         )),
-        Line::from(Span::styled(selected_label, Style::new().fg(OVERLAY2))),
+        Line::from(Span::styled(selected_label, Style::new().fg(diff_context_color()))),
     ]))
-    .style(Style::new().bg(PANEL))
+    .style(Style::new().bg(panel_color()))
     .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(footer, chunks[2]);
 }
@@ -769,11 +991,11 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER_ACTIVE))
-        .style(Style::new().bg(PANEL))
+        .border_style(Style::new().fg(border_active_color()))
+        .style(Style::new().bg(panel_color()))
         .title(Line::from(Span::styled(
             " Branch Compare ",
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
         )));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -799,16 +1021,20 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
     let source = Paragraph::new(Line::from(Span::styled(
         source_display,
         if app.branch_compare_source_query.is_empty() {
-            Style::new().fg(TEXT_MUTED)
+            Style::new().fg(text_muted_color())
         } else {
-            Style::new().fg(TEXT)
+            Style::new().fg(text_color())
         },
     )))
-    .style(Style::new().bg(ELEMENT))
+    .style(Style::new().bg(element_color()))
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::new().fg(if source_active { BLUE } else { BORDER }))
+            .border_style(Style::new().fg(if source_active {
+                primary_color()
+            } else {
+                border_color()
+            }))
             .title(" Source ")
             .padding(Padding::horizontal(1)),
     );
@@ -825,16 +1051,20 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
     let destination = Paragraph::new(Line::from(Span::styled(
         destination_display,
         if app.branch_compare_destination_query.is_empty() {
-            Style::new().fg(TEXT_MUTED)
+            Style::new().fg(text_muted_color())
         } else {
-            Style::new().fg(TEXT)
+            Style::new().fg(text_color())
         },
     )))
-    .style(Style::new().bg(ELEMENT))
+    .style(Style::new().bg(element_color()))
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::new().fg(if destination_active { BLUE } else { BORDER }))
+            .border_style(Style::new().fg(if destination_active {
+                primary_color()
+            } else {
+                border_color()
+            }))
             .title(" Destination ")
             .padding(Padding::horizontal(1)),
     );
@@ -843,8 +1073,8 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
     let filtered_refs = app.filtered_branch_compare_refs();
     let list_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER))
-        .style(Style::new().bg(PANEL));
+        .border_style(Style::new().fg(border_color()))
+        .style(Style::new().bg(panel_color()));
     let list_inner = list_block.inner(chunks[2]);
     frame.render_widget(list_block, chunks[2]);
 
@@ -852,9 +1082,9 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "Loading refs...",
-                Style::new().fg(TEXT_MUTED),
+                Style::new().fg(text_muted_color()),
             )))
-            .style(Style::new().bg(PANEL))
+            .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(1))),
             list_inner,
         );
@@ -863,12 +1093,12 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
             Paragraph::new(Text::from(vec![
                 Line::from(Span::styled(
                     "Unable to load refs.",
-                    Style::new().fg(RED),
+                    Style::new().fg(error_color()),
                 )),
                 Line::default(),
-                Line::from(Span::styled(error.clone(), Style::new().fg(TEXT_MUTED))),
+                Line::from(Span::styled(error.clone(), Style::new().fg(text_muted_color()))),
             ]))
-            .style(Style::new().bg(PANEL))
+            .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(1))),
             list_inner,
         );
@@ -876,9 +1106,9 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "No matching refs.",
-                Style::new().fg(TEXT_MUTED),
+                Style::new().fg(text_muted_color()),
             )))
-            .style(Style::new().bg(PANEL))
+            .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(1))),
             list_inner,
         );
@@ -902,9 +1132,11 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
                 let display_index = visible_start + offset;
                 let selected = display_index == selected_index;
                 let style = if selected {
-                    Style::new().bg(BLUE).fg(BACKGROUND)
+                    Style::new()
+                        .bg(primary_color())
+                        .fg(selected_list_item_text_color())
                 } else {
-                    Style::new().fg(TEXT)
+                    Style::new().fg(text_color())
                 };
                 Line::from(Span::styled(ref_name.clone(), style)).style(style)
             })
@@ -912,7 +1144,7 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
 
         frame.render_widget(
             Paragraph::new(Text::from(lines))
-                .style(Style::new().bg(PANEL))
+                .style(Style::new().bg(panel_color()))
                 .block(Block::new().padding(Padding::horizontal(1))),
             list_inner,
         );
@@ -924,8 +1156,8 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
-                .thumb_style(Style::new().fg(BORDER_ACTIVE))
-                .track_style(Style::new().fg(BORDER));
+                .thumb_style(Style::new().fg(border_active_color()))
+                .track_style(Style::new().fg(border_color()));
             frame.render_stateful_widget(scrollbar, list_inner, &mut scrollbar_state);
         }
     }
@@ -933,7 +1165,7 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
     let footer = Paragraph::new(Text::from(vec![
         Line::from(Span::styled(
             "Tab switches field. Type to filter. j/k move. Enter compares. Esc closes.",
-            Style::new().fg(TEXT_MUTED),
+            Style::new().fg(text_muted_color()),
         )),
         Line::from(Span::styled(
             format!(
@@ -941,10 +1173,10 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
                 app.branch_compare_source_ref.as_deref().unwrap_or("none"),
                 app.branch_compare_destination_ref.as_deref().unwrap_or("none")
             ),
-            Style::new().fg(OVERLAY2),
+            Style::new().fg(diff_context_color()),
         )),
     ]))
-    .style(Style::new().bg(PANEL))
+    .style(Style::new().bg(panel_color()))
     .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(footer, chunks[3]);
 }
@@ -974,18 +1206,18 @@ fn top_right_rect(width: u16, height: u16, top: u16, area: Rect) -> Rect {
 fn bordered_panel(title: &str, active: bool, right_title: Option<String>) -> Block<'static> {
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(if active { BORDER_ACTIVE } else { BORDER }))
-        .style(Style::new().bg(PANEL))
+        .border_style(Style::new().fg(if active { border_active_color() } else { border_color() }))
+        .style(Style::new().bg(panel_color()))
         .title(Line::from(Span::styled(
             format!(" {} ", title),
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
         )));
 
     if let Some(right_title) = right_title {
         block = block.title_bottom(
             Line::from(Span::styled(
                 format!(" {} ", right_title),
-                Style::new().fg(TEXT_MUTED),
+                Style::new().fg(text_muted_color()),
             ))
             .right_aligned(),
         );
@@ -1013,63 +1245,68 @@ fn highlight_line(line: &Line<'static>) -> Line<'static> {
 }
 
 pub fn diff_meta_style() -> Style {
-    Style::new().fg(OVERLAY2)
+    Style::new().fg(diff_context_color())
 }
 
 pub fn diff_hunk_style() -> Style {
-    Style::new().fg(PEACH).add_modifier(Modifier::BOLD)
+    Style::new()
+        .fg(palette().diff_hunk_header)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub fn diff_context_style() -> Style {
-    Style::new().fg(TEXT)
+    Style::new().fg(text_color())
 }
 
 pub fn diff_added_style() -> Style {
-    Style::new().fg(TEXT).bg(ADD_BG)
+    Style::new().fg(text_color()).bg(add_bg_color())
 }
 
 pub fn diff_removed_style() -> Style {
-    Style::new().fg(TEXT).bg(REMOVE_BG)
+    Style::new().fg(text_color()).bg(remove_bg_color())
 }
 
 pub fn line_number_style() -> Style {
-    Style::new().fg(BORDER_ACTIVE)
+    Style::new().fg(palette().diff_line_number)
 }
 
 pub fn added_sign_style() -> Style {
     Style::new()
-        .fg(GREEN)
-        .bg(ADD_BG)
+        .fg(palette().diff_highlight_added)
+        .bg(add_bg_color())
         .add_modifier(Modifier::BOLD)
 }
 
 pub fn removed_sign_style() -> Style {
     Style::new()
-        .fg(RED)
-        .bg(REMOVE_BG)
+        .fg(palette().diff_highlight_removed)
+        .bg(remove_bg_color())
         .add_modifier(Modifier::BOLD)
 }
 
 pub fn context_sign_style() -> Style {
-    Style::new().fg(OVERLAY2)
+    Style::new().fg(diff_context_color())
 }
 
 pub fn syntax_style(name: &str, fallback: Style) -> Style {
+    let palette = palette();
     let style = match name {
-        "comment" | "comment.documentation" => Style::new().fg(OVERLAY2),
-        "keyword" => Style::new().fg(MAUVE).add_modifier(Modifier::BOLD),
+        "comment" | "comment.documentation" => Style::new().fg(palette.syntax_comment),
+        "keyword" => Style::new()
+            .fg(palette.syntax_keyword)
+            .add_modifier(Modifier::BOLD),
         "function" | "function.builtin" | "constructor" | "constructor.builtin" => {
-            Style::new().fg(BLUE)
+            Style::new().fg(palette.syntax_function)
         }
         "variable" | "variable.builtin" | "variable.parameter" | "variable.member" | "property" => {
-            Style::new().fg(RED)
+            Style::new().fg(palette.syntax_variable)
         }
-        "string" | "string.escape" | "string.special" => Style::new().fg(GREEN),
-        "number" | "boolean" => Style::new().fg(PEACH),
-        "type" | "type.builtin" | "attribute" => Style::new().fg(YELLOW),
-        "operator" => Style::new().fg(SKY),
-        "punctuation" | "punctuation.delimiter" | "punctuation.bracket" => Style::new().fg(TEXT),
-        "property.builtin" | "tag" => Style::new().fg(BLUE),
+        "string" | "string.escape" | "string.special" => Style::new().fg(palette.syntax_string),
+        "number" | "boolean" => Style::new().fg(palette.syntax_number),
+        "type" | "type.builtin" | "attribute" => Style::new().fg(palette.syntax_type),
+        "operator" => Style::new().fg(palette.syntax_operator),
+        "punctuation" | "punctuation.delimiter" | "punctuation.bracket" => Style::new().fg(text_color()),
+        "property.builtin" | "tag" => Style::new().fg(palette.syntax_function),
         _ => fallback,
     };
     fallback.patch(style)

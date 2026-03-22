@@ -295,21 +295,21 @@ pub fn is_file_staged(status: &str) -> bool {
 }
 
 pub fn status_color(status: &str) -> ratatui::style::Color {
-    use ratatui::style::Color;
+    let palette = crate::theme::active_palette();
 
     if status == "??" || status.contains('A') {
-        return Color::Rgb(166, 218, 149);
+        return palette.diff_highlight_added;
     }
     if status.contains('U') || status.contains('D') {
-        return Color::Rgb(237, 135, 150);
+        return palette.diff_highlight_removed;
     }
     if status.contains('R') || status.contains('C') {
-        return Color::Rgb(198, 160, 246);
+        return palette.secondary;
     }
     if status.contains('M') {
-        return Color::Rgb(238, 212, 159);
+        return palette.warning;
     }
-    Color::Rgb(184, 192, 224)
+    palette.text_muted
 }
 
 pub async fn toggle_file_stage(repo_root: &Path, file: &FileEntry) -> color_eyre::Result<()> {
