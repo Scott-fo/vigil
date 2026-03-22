@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{ActivePane, App, DiffViewMode},
+    app::{ActivePane, App, DiffViewMode, RemoteSyncDirection, SnackbarVariant},
     git::{self, DiffView},
     sidebar::SidebarItem,
 };
@@ -56,6 +56,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.discard_target.is_some() {
         render_discard_modal(frame, app);
     }
+
+    render_notifications(frame, app);
 }
 
 pub fn sidebar_file_at(
@@ -240,7 +242,7 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         .status_message
         .clone()
         .unwrap_or_else(|| {
-            "q quit  tab switch panes  enter open  space stage  d discard  c commit  r refresh  v view"
+            "q quit  tab switch panes  enter open  space stage  d discard  c commit  P push  r refresh  v view"
                 .to_string()
         });
     let line = Paragraph::new(Line::from(vec![
@@ -256,6 +258,8 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(" discard  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("c", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" commit  ", Style::new().fg(TEXT_MUTED)),
+        Span::styled("P", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+        Span::styled(" push  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("r", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" refresh  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("v", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
@@ -267,6 +271,56 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
     .style(Style::new().bg(PANEL))
     .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(line, area);
+}
+
+fn render_notifications(frame: &mut Frame, app: &App) {
+    let mut top = frame.area().y + 1;
+
+    if let Some(direction) = app.remote_sync {
+        let label = match direction {
+            RemoteSyncDirection::Push => "Pushing to remote...",
+        };
+        let area = top_right_rect(26, 3, top, frame.area());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::new().fg(BLUE))
+            .style(Style::new().bg(PANEL));
+        frame.render_widget(Clear, area);
+        frame.render_widget(block, area);
+        frame.render_widget(
+            Paragraph::new(Text::from(Line::from(Span::styled(
+                label,
+                Style::new().fg(TEXT_MUTED),
+            ))))
+            .style(Style::new().bg(PANEL))
+            .block(Block::new().padding(Padding::horizontal(1))),
+            area,
+        );
+        top = top.saturating_add(4);
+    }
+
+    if let Some(notice) = app.snackbar_notice.as_ref() {
+        let area = top_right_rect(56, 3, top, frame.area());
+        let border_color = match notice.variant {
+            SnackbarVariant::Info => BLUE,
+            SnackbarVariant::Error => RED,
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::new().fg(border_color))
+            .style(Style::new().bg(PANEL));
+        frame.render_widget(Clear, area);
+        frame.render_widget(block, area);
+        frame.render_widget(
+            Paragraph::new(Text::from(Line::from(Span::styled(
+                notice.message.clone(),
+                Style::new().fg(TEXT),
+            ))))
+            .style(Style::new().bg(PANEL))
+            .block(Block::new().padding(Padding::horizontal(1))),
+            area,
+        );
+    }
 }
 
 fn render_commit_modal(frame: &mut Frame, app: &App) {
@@ -360,6 +414,17 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect::new(
         area.x + area.width.saturating_sub(popup_width) / 2,
         area.y + area.height.saturating_sub(popup_height) / 2,
+        popup_width,
+        popup_height,
+    )
+}
+
+fn top_right_rect(width: u16, height: u16, top: u16, area: Rect) -> Rect {
+    let popup_width = width.min(area.width.saturating_sub(2)).max(1);
+    let popup_height = height.min(area.height.saturating_sub(2)).max(1);
+    Rect::new(
+        area.x + area.width.saturating_sub(popup_width).saturating_sub(1),
+        top.min(area.y + area.height.saturating_sub(popup_height)),
         popup_width,
         popup_height,
     )

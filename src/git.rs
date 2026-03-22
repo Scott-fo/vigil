@@ -219,6 +219,11 @@ pub async fn commit_staged_changes(repo_root: &Path, message: &str) -> color_eyr
     Ok(())
 }
 
+pub async fn push_to_remote(repo_root: &Path) -> color_eyre::Result<()> {
+    let _ = git_output(repo_root, &["push"]).await?;
+    Ok(())
+}
+
 pub async fn resolve_repo_root() -> color_eyre::Result<PathBuf> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])

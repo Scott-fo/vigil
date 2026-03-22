@@ -33,6 +33,23 @@ enum AppCommand {
     OpenFileInEditor(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteSyncDirection {
+    Push,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnackbarVariant {
+    Info,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct SnackbarNotice {
+    pub message: String,
+    pub variant: SnackbarVariant,
+}
+
 #[derive(Debug)]
 pub struct App {
     pub running: bool,
@@ -52,6 +69,9 @@ pub struct App {
     pub commit_message: String,
     pub commit_error: Option<String>,
     pub discard_target: Option<FileEntry>,
+    pub remote_sync: Option<RemoteSyncDirection>,
+    pub snackbar_notice: Option<SnackbarNotice>,
+    pub snackbar_generation: u64,
     pub status_message: Option<String>,
 }
 
@@ -78,6 +98,9 @@ impl App {
             commit_message: String::new(),
             commit_error: None,
             discard_target: None,
+            remote_sync: None,
+            snackbar_notice: None,
+            snackbar_generation: 0,
             status_message: None,
         };
         app.spawn_highlight_registry_init();
@@ -131,6 +154,29 @@ impl App {
 
                     if self.running {
                         terminal.draw(|frame| ui::render(frame, &mut self))?;
+                    }
+                }
+                Event::RemotePushFinished(result) => {
+                    self.remote_sync = None;
+                    match result {
+                        Ok(message) => {
+                            self.show_snackbar(message, SnackbarVariant::Info);
+                        }
+                        Err(message) => {
+                            self.show_snackbar(message, SnackbarVariant::Error);
+                        }
+                    }
+
+                    if self.running {
+                        terminal.draw(|frame| ui::render(frame, &mut self))?;
+                    }
+                }
+                Event::ClearSnackbar(generation) => {
+                    if self.snackbar_generation == generation {
+                        self.snackbar_notice = None;
+                        if self.running {
+                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        }
                     }
                 }
             }
@@ -193,6 +239,9 @@ impl App {
             }
             KeyCode::Char('r') => {
                 self.refresh().await?;
+            }
+            KeyCode::Char('P') => {
+                self.start_push();
             }
             KeyCode::Char('c') => {
                 self.open_commit_modal();
@@ -432,6 +481,23 @@ impl App {
         Ok(())
     }
 
+    fn start_push(&mut self) {
+        if self.remote_sync.is_some() {
+            return;
+        }
+
+        self.remote_sync = Some(RemoteSyncDirection::Push);
+        let repo_root = self.repo_root.clone();
+        let sender = self.events.sender();
+        task::spawn(async move {
+            let result = git::push_to_remote(&repo_root)
+                .await
+                .map(|_| "Pushed to remote".to_string())
+                .map_err(|error| error.to_string());
+            let _ = sender.send(Event::RemotePushFinished(result));
+        });
+    }
+
     async fn run_command(
         &mut self,
         command: AppCommand,
@@ -601,6 +667,18 @@ impl App {
             .iter()
             .filter(|file| git::is_file_staged(&file.status))
             .count()
+    }
+
+    fn show_snackbar(&mut self, message: String, variant: SnackbarVariant) {
+        self.snackbar_generation = self.snackbar_generation.saturating_add(1);
+        let generation = self.snackbar_generation;
+        self.snackbar_notice = Some(SnackbarNotice { message, variant });
+
+        let sender = self.events.sender();
+        task::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let _ = sender.send(Event::ClearSnackbar(generation));
+        });
     }
 
     fn scroll_diff(&mut self, delta: i32) {
