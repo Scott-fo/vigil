@@ -34,27 +34,38 @@ async fn main() -> color_eyre::Result<()> {
 }
 
 fn parse_launch_options() -> color_eyre::Result<AppLaunchOptions> {
+    let mut options = AppLaunchOptions::default();
     let mut args = std::env::args().skip(1);
-    let Some(first) = args.next() else {
-        return Ok(AppLaunchOptions::default());
-    };
 
-    match first.as_str() {
-        "blame" => {
-            let target = args
-                .next()
-                .ok_or_else(|| eyre!("usage: vigil blame <file>:<line>"))?;
-            if args.next().is_some() {
-                return Err(eyre!("usage: vigil blame <file>:<line>"));
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--chooser-file" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| eyre!("usage: vigil --chooser-file <path>"))?;
+                options.chooser_file_path = Some(PathBuf::from(path));
             }
-            parse_blame_launch_options(&target)
+            "blame" => {
+                let target = args
+                    .next()
+                    .ok_or_else(|| eyre!("usage: vigil blame <file>:<line>"))?;
+                if args.next().is_some() {
+                    return Err(eyre!("usage: vigil blame <file>:<line>"));
+                }
+                let blame_options = parse_blame_launch_options(&target)?;
+                options.repo_root = blame_options.repo_root;
+                options.initial_blame_target = blame_options.initial_blame_target;
+                break;
+            }
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => return Err(eyre!("unknown argument: {other}")),
         }
-        "-h" | "--help" => {
-            print_help();
-            std::process::exit(0);
-        }
-        other => Err(eyre!("unknown argument: {other}")),
     }
+
+    Ok(options)
 }
 
 fn parse_blame_launch_options(target: &str) -> color_eyre::Result<AppLaunchOptions> {
@@ -83,6 +94,7 @@ fn parse_blame_launch_options(target: &str) -> color_eyre::Result<AppLaunchOptio
             file_path: relative_file,
             line_number,
         }),
+        chooser_file_path: None,
     })
 }
 
@@ -120,5 +132,6 @@ fn print_help() {
     println!();
     println!("Usage:");
     println!("  vigil");
+    println!("  vigil --chooser-file <path>");
     println!("  vigil blame <file>:<line>");
 }

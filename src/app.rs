@@ -60,6 +60,7 @@ pub enum ReviewMode {
 pub struct AppLaunchOptions {
     pub repo_root: Option<PathBuf>,
     pub initial_blame_target: Option<BlameTarget>,
+    pub chooser_file_path: Option<PathBuf>,
 }
 
 enum AppCommand {
@@ -100,6 +101,7 @@ impl AsRef<str> for CommitSearchCandidate {
 pub struct App {
     pub running: bool,
     pub repo_root: PathBuf,
+    pub chooser_file_path: Option<PathBuf>,
     pub repo_error: Option<String>,
     pub events: EventHandler,
     pub active_pane: ActivePane,
@@ -181,6 +183,7 @@ impl App {
         let mut app = Self {
             running: true,
             repo_root,
+            chooser_file_path: options.chooser_file_path,
             repo_error: None,
             events: EventHandler::new(),
             active_pane: ActivePane::Sidebar,
@@ -1283,13 +1286,42 @@ impl App {
     ) -> color_eyre::Result<()> {
         match command {
             AppCommand::OpenFileInEditor(path) => {
-                self.open_file_in_editor(&path, terminal).await?;
+                if self.chooser_file_path.is_some() {
+                    self.write_chooser_selection_and_exit(&path).await?;
+                } else {
+                    self.open_file_in_editor(&path, terminal).await?;
+                }
             }
             AppCommand::OpenFileInEditorAtLine(path, line_number) => {
-                self.open_file_in_editor_at_line(&path, line_number, terminal)
-                    .await?;
+                if self.chooser_file_path.is_some() {
+                    self.write_chooser_selection_and_exit(&path).await?;
+                } else {
+                    self.open_file_in_editor_at_line(&path, line_number, terminal)
+                        .await?;
+                }
             }
         }
+        Ok(())
+    }
+
+    async fn write_chooser_selection_and_exit(
+        &mut self,
+        file_path: &str,
+    ) -> color_eyre::Result<()> {
+        let Some(chooser_file_path) = self.chooser_file_path.as_ref() else {
+            return Ok(());
+        };
+
+        let absolute_path = self.repo_root.join(file_path);
+        fs::write(chooser_file_path, format!("{}\n", absolute_path.display()))
+            .await
+            .wrap_err_with(|| {
+                format!(
+                    "failed to write chooser selection to {}",
+                    chooser_file_path.display()
+                )
+            })?;
+        self.running = false;
         Ok(())
     }
 

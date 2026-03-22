@@ -57,7 +57,7 @@ Missing from the Rust app:
 - [x] open specific commit
 - [x] branch compare
 - [x] blame mode
-- [ ] chooser-file integration
+- [x] chooser-file integration
 - [x] help modal and current keybinding coverage
 - [ ] richer error overlays / surfacing
 
@@ -67,7 +67,7 @@ Missing from the Rust app:
 
 - [ ] `vigil`
 - [x] `vigil blame <file>:<line>`
-- [ ] `vigil --chooser-file <path>`
+- [x] `vigil --chooser-file <path>`
 - [ ] `-h` / `--help`
 
 Notes:
@@ -222,8 +222,8 @@ Source cues:
 - [x] Open selected sidebar file in `$VISUAL` / `$EDITOR`
 - [x] Open selected diff line in editor at line number
 - [x] Suspend and restore TUI cleanly around editor launch
-- [ ] Chooser-file write-and-exit mode
-- [ ] Preserve chooser behavior from sidebar open action
+- [x] Chooser-file write-and-exit mode
+- [x] Preserve chooser behavior from sidebar open action
 
 Notes:
 
