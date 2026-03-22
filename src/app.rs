@@ -70,6 +70,7 @@ pub struct App {
     pub selected_diff_line_index: usize,
     pub highlight_registry: Option<SharedHighlightRegistry>,
     pub repo_watcher: Option<RepoWatcher>,
+    pub help_modal_open: bool,
     pub commit_modal_open: bool,
     pub commit_message: String,
     pub commit_error: Option<String>,
@@ -101,6 +102,7 @@ impl App {
             selected_diff_line_index: 0,
             highlight_registry: None,
             repo_watcher: None,
+            help_modal_open: false,
             commit_modal_open: false,
             commit_message: String::new(),
             commit_error: None,
@@ -208,6 +210,16 @@ impl App {
         &mut self,
         key_event: KeyEvent,
     ) -> color_eyre::Result<Option<AppCommand>> {
+        if self.help_modal_open {
+            match key_event.code {
+                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Enter | KeyCode::Char('q') => {
+                    self.help_modal_open = false;
+                }
+                _ => {}
+            }
+            return Ok(None);
+        }
+
         if self.commit_modal_open {
             match key_event.code {
                 KeyCode::Esc => {
@@ -255,6 +267,9 @@ impl App {
                     ActivePane::Sidebar => ActivePane::Diff,
                     ActivePane::Diff => ActivePane::Sidebar,
                 };
+            }
+            KeyCode::Char('?') => {
+                self.help_modal_open = true;
             }
             KeyCode::Char('r') => {
                 self.refresh().await?;
@@ -367,6 +382,10 @@ impl App {
         }
 
         if self.discard_target.is_some() {
+            return Ok(());
+        }
+
+        if self.help_modal_open {
             return Ok(());
         }
 

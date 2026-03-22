@@ -58,6 +58,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_discard_modal(frame, app);
     }
 
+    if app.help_modal_open {
+        render_help_modal(frame, app);
+    }
+
     render_notifications(frame, app);
 }
 
@@ -270,40 +274,14 @@ fn render_diff_body(
 }
 
 fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
-    let footer = app
+    let status = app
         .status_message
         .clone()
-        .unwrap_or_else(|| {
-            "q quit  tab switch panes  enter open  j/k move  space stage  d discard  c commit  p pull  P push  r refresh  v view"
-                .to_string()
-        });
-    let line = Paragraph::new(Line::from(vec![
-        Span::styled("q", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" quit  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("tab", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" switch panes  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("space", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" stage  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("j/k", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" move  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("enter", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" open  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("d", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" discard  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("c", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" commit  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("p", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" pull  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("P", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" push  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("r", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(" refresh  ", Style::new().fg(TEXT_MUTED)),
-        Span::styled("v", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
-        Span::styled(
-            format!(" {}  {}", diff_mode_label(app.diff_view_mode), footer),
-            Style::new().fg(TEXT_MUTED),
-        ),
-    ]))
+        .unwrap_or_else(|| format!("{} changed file{}", app.files.len(), if app.files.len() == 1 { "" } else { "s" }));
+    let line = Paragraph::new(Line::from(Span::styled(
+        status,
+        Style::new().fg(TEXT_MUTED),
+    )))
     .style(Style::new().bg(PANEL))
     .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(line, area);
@@ -444,6 +422,97 @@ fn render_discard_modal(frame: &mut Frame, app: &App) {
         )),
     ];
     let paragraph = Paragraph::new(Text::from(text)).style(Style::new().bg(PANEL));
+    frame.render_widget(paragraph, inner);
+}
+
+fn render_help_modal(frame: &mut Frame, app: &App) {
+    let area = centered_rect(76, 18, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(BORDER_ACTIVE))
+        .style(Style::new().bg(PANEL))
+        .title(Line::from(Span::styled(
+            " Help ",
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        )));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let pane_hint = match app.active_pane {
+        ActivePane::Sidebar => "Sidebar focused",
+        ActivePane::Diff => "Diff focused",
+    };
+
+    let lines = vec![
+        Line::from(Span::styled("Global", Style::new().fg(TEXT).add_modifier(Modifier::BOLD))),
+        Line::from(vec![
+            Span::styled("?  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("toggle help", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("tab  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("switch sidebar / diff focus", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("v  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("toggle unified / split diff", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("r  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("refresh", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("q  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("quit", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::default(),
+        Line::from(Span::styled("Navigation", Style::new().fg(TEXT).add_modifier(Modifier::BOLD))),
+        Line::from(vec![
+            Span::styled("j / k  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("move selection", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl-D / Ctrl-U  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("page diff", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("mouse wheel  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("scroll diff", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::default(),
+        Line::from(Span::styled("Actions", Style::new().fg(TEXT).add_modifier(Modifier::BOLD))),
+        Line::from(vec![
+            Span::styled("enter / o / e  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("open in editor", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("space  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("stage / unstage selected file", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("d  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("discard selected file", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("c  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("commit staged changes", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("p / P  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("pull / push", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::default(),
+        Line::from(Span::styled(
+            format!("{pane_hint}. Esc closes help."),
+            Style::new().fg(TEXT_MUTED),
+        )),
+    ];
+
+    let paragraph = Paragraph::new(Text::from(lines))
+        .style(Style::new().bg(PANEL))
+        .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(paragraph, inner);
 }
 
