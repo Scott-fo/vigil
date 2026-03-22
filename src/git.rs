@@ -47,16 +47,27 @@ impl DiffView {
         }
 
         match mode {
-            DiffViewMode::Unified => self.render_unified_lines(),
+            DiffViewMode::Unified => self.render_unified_lines(width),
             DiffViewMode::Split => self.render_split_lines(width),
         }
     }
 
-    fn render_unified_lines(&self) -> Vec<Line<'static>> {
-        self.rows
-            .iter()
-            .map(|row| render_unified_code_line(row))
-            .collect()
+    fn render_unified_lines(&self, width: usize) -> Vec<Line<'static>> {
+        let mut rendered = Vec::new();
+        let mut last_hunk_index = None;
+
+        for row in &self.rows {
+            if let Some(previous_hunk_index) = last_hunk_index {
+                if row.hunk_index != previous_hunk_index {
+                    rendered.push(render_hunk_separator(width));
+                }
+            }
+
+            rendered.push(render_unified_code_line(row, width));
+            last_hunk_index = Some(row.hunk_index);
+        }
+
+        rendered
     }
 
     fn render_split_lines(&self, width: usize) -> Vec<Line<'static>> {
@@ -66,6 +77,7 @@ impl DiffView {
         let mut rendered = Vec::new();
         let mut pending_removed = Vec::new();
         let mut pending_added = Vec::new();
+        let mut last_hunk_index = None;
 
         let flush_pending = |rendered: &mut Vec<Line<'static>>,
                              removed: &mut Vec<DiffRow>,
@@ -81,6 +93,14 @@ impl DiffView {
         };
 
         for row in &self.rows {
+            if let Some(previous_hunk_index) = last_hunk_index {
+                if row.hunk_index != previous_hunk_index {
+                    flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
+                    rendered.push(render_hunk_separator(total_width));
+                }
+            }
+            last_hunk_index = Some(row.hunk_index);
+
             match row.kind {
                 DiffLineKind::Removed => pending_removed.push(row.clone()),
                 DiffLineKind::Added => pending_added.push(row.clone()),
@@ -112,6 +132,7 @@ enum DiffLineKind {
 
 #[derive(Debug, Clone)]
 struct DiffRow {
+    hunk_index: usize,
     kind: DiffLineKind,
     old_line: Option<usize>,
     new_line: Option<usize>,
@@ -438,6 +459,7 @@ fn build_diff_rows(
     let mut old_line = 0usize;
     let mut new_line = 0usize;
     let mut in_hunk = false;
+    let mut hunk_index = 0usize;
 
     for raw_line in normalized.split('\n') {
         if raw_line.is_empty() && rows.is_empty() {
@@ -448,6 +470,7 @@ fn build_diff_rows(
             old_line = parsed_old_line;
             new_line = parsed_new_line;
             in_hunk = true;
+            hunk_index = hunk_index.saturating_add(1);
             continue;
         }
 
@@ -465,6 +488,7 @@ fn build_diff_rows(
         match marker {
             '+' => {
                 rows.push(render_diff_row(
+                    hunk_index,
                     None,
                     Some(new_line),
                     content,
@@ -476,6 +500,7 @@ fn build_diff_rows(
             }
             '-' => {
                 rows.push(render_diff_row(
+                    hunk_index,
                     Some(old_line),
                     None,
                     content,
@@ -487,6 +512,7 @@ fn build_diff_rows(
             }
             ' ' => {
                 rows.push(render_diff_row(
+                    hunk_index,
                     Some(old_line),
                     Some(new_line),
                     content,
@@ -519,6 +545,7 @@ fn parse_hunk_header(raw_line: &str) -> Option<(usize, usize)> {
 }
 
 fn render_diff_row(
+    hunk_index: usize,
     old_line: Option<usize>,
     new_line: Option<usize>,
     content: &str,
@@ -527,6 +554,7 @@ fn render_diff_row(
     highlighter: &mut SyntaxHighlighter,
 ) -> DiffRow {
     DiffRow {
+        hunk_index,
         kind,
         old_line,
         new_line,
@@ -534,7 +562,7 @@ fn render_diff_row(
     }
 }
 
-fn render_unified_code_line(row: &DiffRow) -> Line<'static> {
+fn render_unified_code_line(row: &DiffRow, width: usize) -> Line<'static> {
     let base_style = base_style(row.kind);
     let sign_style = match row.kind {
         DiffLineKind::Context => ui::context_sign_style(),
@@ -554,12 +582,13 @@ fn render_unified_code_line(row: &DiffRow) -> Line<'static> {
     let mut spans = vec![
         Span::styled(
             format_line_number(unified_line_number),
-            ui::line_number_style().patch(base_style),
+            base_style.patch(ui::line_number_style()),
         ),
         Span::styled(format!("{marker} "), sign_style),
     ];
     spans.extend(row.content.clone());
-    Line::from(spans).style(base_style)
+    let padded = fit_spans_to_width(spans, width.saturating_sub(1), base_style);
+    Line::from(padded).style(base_style)
 }
 
 fn render_split_pair_line(
@@ -575,6 +604,13 @@ fn render_split_pair_line(
     Line::from(spans)
 }
 
+fn render_hunk_separator(width: usize) -> Line<'static> {
+    Line::from(Span::styled(
+        " ".repeat(width.max(1)),
+        ui::diff_context_style(),
+    ))
+}
+
 fn render_split_side(row: Option<&DiffRow>, left_side: bool, width: usize) -> Vec<Span<'static>> {
     let Some(row) = row else {
         return vec![Span::styled(" ".repeat(width), ui::diff_context_style())];
@@ -588,7 +624,7 @@ fn render_split_side(row: Option<&DiffRow>, left_side: bool, width: usize) -> Ve
     let base_style = base_style(row.kind);
     let mut spans = vec![Span::styled(
         format_line_number(line_number),
-        ui::line_number_style().patch(base_style),
+        base_style.patch(ui::line_number_style()),
     )];
     spans.extend(row.content.clone());
     fit_spans_to_width(spans, width, base_style)
