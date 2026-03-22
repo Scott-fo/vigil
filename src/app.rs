@@ -1038,7 +1038,8 @@ impl App {
 
     fn scroll_blame(&mut self, delta: i32) {
         self.blame_scroll = if delta.is_negative() {
-            self.blame_scroll.saturating_sub(delta.unsigned_abs() as u16)
+            self.blame_scroll
+                .saturating_sub(delta.unsigned_abs() as u16)
         } else {
             self.blame_scroll.saturating_add(delta as u16)
         };
