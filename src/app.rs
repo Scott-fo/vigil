@@ -4,11 +4,11 @@ use color_eyre::eyre::WrapErr;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use crossterm::terminal;
 use ratatui::widgets::ListState;
-use tokio::process::Command;
+use tokio::{process::Command, task};
 
 use crate::{
     event::{Event, EventHandler},
-    git::{self, DiffView, FileEntry},
+    git::{self, DiffView, FileEntry, SharedHighlightRegistry},
     sidebar::{self, SidebarItem},
     ui,
 };
@@ -39,6 +39,7 @@ pub struct App {
     pub diff_view: DiffView,
     pub diff_view_mode: DiffViewMode,
     pub diff_scroll: u16,
+    pub highlight_registry: Option<SharedHighlightRegistry>,
     pub status_message: Option<String>,
 }
 
@@ -60,29 +61,60 @@ impl App {
             diff_view: DiffView::default(),
             diff_view_mode: DiffViewMode::Unified,
             diff_scroll: 0,
+            highlight_registry: None,
             status_message: None,
         };
+        app.spawn_highlight_registry_init();
         app.refresh().await?;
         Ok(app)
     }
 
     pub async fn run(mut self, mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
-        while self.running {
-            terminal.draw(|frame| ui::render(frame, &mut self))?;
+        terminal.draw(|frame| ui::render(frame, &mut self))?;
 
+        while self.running {
             match self.events.next().await? {
-                Event::Tick => {}
-                Event::Crossterm(event) => match event {
-                    crossterm::event::Event::Key(key_event)
-                        if key_event.kind == crossterm::event::KeyEventKind::Press =>
-                    {
-                        self.handle_key_event(key_event).await?;
+                Event::Crossterm(event) => {
+                    let should_redraw = match event {
+                        crossterm::event::Event::Key(key_event)
+                            if key_event.kind == crossterm::event::KeyEventKind::Press =>
+                        {
+                            self.handle_key_event(key_event).await?;
+                            true
+                        }
+                        crossterm::event::Event::Mouse(mouse_event) => {
+                            self.handle_mouse_event(mouse_event).await?;
+                            true
+                        }
+                        crossterm::event::Event::Resize(_, _) => true,
+                        _ => false,
+                    };
+
+                    if self.running && should_redraw {
+                        terminal.draw(|frame| ui::render(frame, &mut self))?;
                     }
-                    crossterm::event::Event::Mouse(mouse_event) => {
-                        self.handle_mouse_event(mouse_event).await?;
+                }
+                Event::HighlightRegistryReady(result) => {
+                    match result {
+                        Ok(registry) => {
+                            self.highlight_registry = Some(registry);
+                            self.load_selected_diff().await?;
+                            self.status_message = Some(format!(
+                                "{} changed file{}",
+                                self.files.len(),
+                                if self.files.len() == 1 { "" } else { "s" }
+                            ));
+                        }
+                        Err(error) => {
+                            self.status_message =
+                                Some(format!("highlight registry init failed: {error}"));
+                        }
                     }
-                    _ => {}
-                },
+
+                    if self.running {
+                        terminal.draw(|frame| ui::render(frame, &mut self))?;
+                    }
+                }
             }
         }
 
@@ -255,7 +287,14 @@ impl App {
     async fn load_selected_diff(&mut self) -> color_eyre::Result<()> {
         self.diff_scroll = 0;
         self.diff_view = match self.selected_file() {
-            Some(file) => git::load_diff_view(&self.repo_root, file).await?,
+            Some(file) => {
+                git::load_diff_view(
+                    &self.repo_root,
+                    file,
+                    self.highlight_registry.as_deref(),
+                )
+                .await?
+            }
             None => DiffView::empty("No changed files found."),
         };
         Ok(())
@@ -343,6 +382,19 @@ impl App {
         } else {
             self.diff_scroll.saturating_add(delta as u16)
         };
+    }
+
+    fn spawn_highlight_registry_init(&self) {
+        let sender = self.events.sender();
+        task::spawn(async move {
+            let result = task::spawn_blocking(git::HighlightRegistry::new).await;
+            let event = match result {
+                Ok(Ok(registry)) => Event::HighlightRegistryReady(Ok(registry.into())),
+                Ok(Err(error)) => Event::HighlightRegistryReady(Err(error.to_string())),
+                Err(error) => Event::HighlightRegistryReady(Err(error.to_string())),
+            };
+            let _ = sender.send(event);
+        });
     }
 
     fn quit(&mut self) {

@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use color_eyre::eyre::{WrapErr, eyre};
@@ -14,6 +15,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{app::DiffViewMode, ui};
 
+pub type SharedHighlightRegistry = Arc<HighlightRegistry>;
+
 #[derive(Debug, Clone)]
 pub struct FileEntry {
     pub status: String,
@@ -22,10 +25,11 @@ pub struct FileEntry {
     pub filetype: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct DiffView {
     rows: Vec<DiffRow>,
     pub note: Option<String>,
+    render_cache: DiffRenderCache,
 }
 
 impl DiffView {
@@ -33,87 +37,68 @@ impl DiffView {
         Self {
             rows: Vec::new(),
             note: Some(message.into()),
+            render_cache: DiffRenderCache::default(),
         }
     }
 
-    pub fn render_lines(&self, mode: DiffViewMode, width: usize) -> Vec<Line<'static>> {
-        if self.rows.is_empty() {
-            return vec![Line::from(Span::styled(
-                self.note
-                    .clone()
-                    .unwrap_or_else(|| "No textual diff available.".to_string()),
-                ui::diff_meta_style(),
-            ))];
-        }
-
-        match mode {
-            DiffViewMode::Unified => self.render_unified_lines(width),
-            DiffViewMode::Split => self.render_split_lines(width),
-        }
-    }
-
-    fn render_unified_lines(&self, width: usize) -> Vec<Line<'static>> {
-        let mut rendered = Vec::new();
-        let mut last_hunk_index = None;
-
-        for row in &self.rows {
-            if let Some(previous_hunk_index) = last_hunk_index {
-                if row.hunk_index != previous_hunk_index {
-                    rendered.push(render_hunk_separator(width));
-                }
-            }
-
-            rendered.push(render_unified_code_line(row, width));
-            last_hunk_index = Some(row.hunk_index);
-        }
-
-        rendered
-    }
-
-    fn render_split_lines(&self, width: usize) -> Vec<Line<'static>> {
-        let total_width = width.saturating_sub(1);
-        let gutter_width = 3;
-        let side_width = total_width.saturating_sub(gutter_width) / 2;
-        let mut rendered = Vec::new();
-        let mut pending_removed = Vec::new();
-        let mut pending_added = Vec::new();
-        let mut last_hunk_index = None;
-
-        let flush_pending = |rendered: &mut Vec<Line<'static>>,
-                             removed: &mut Vec<DiffRow>,
-                             added: &mut Vec<DiffRow>| {
-            let row_count = removed.len().max(added.len());
-            for index in 0..row_count {
-                let left = removed.get(index);
-                let right = added.get(index);
-                rendered.push(render_split_pair_line(left, right, side_width));
-            }
-            removed.clear();
-            added.clear();
+    pub fn rendered_lines(&mut self, mode: DiffViewMode, width: usize) -> &[Line<'static>] {
+        let cache_is_stale = {
+            let cache = self.render_cache.entry(mode);
+            !cache.valid || cache.width != width
         };
 
-        for row in &self.rows {
-            if let Some(previous_hunk_index) = last_hunk_index {
-                if row.hunk_index != previous_hunk_index {
-                    flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
-                    rendered.push(render_hunk_separator(total_width));
+        if cache_is_stale {
+            let lines = if self.rows.is_empty() {
+                vec![Line::from(Span::styled(
+                    self.note
+                        .clone()
+                        .unwrap_or_else(|| "No textual diff available.".to_string()),
+                    ui::diff_meta_style(),
+                ))]
+            } else {
+                match mode {
+                    DiffViewMode::Unified => render_unified_lines(&self.rows, width),
+                    DiffViewMode::Split => render_split_lines(&self.rows, width),
                 }
-            }
-            last_hunk_index = Some(row.hunk_index);
+            };
 
-            match row.kind {
-                DiffLineKind::Removed => pending_removed.push(row.clone()),
-                DiffLineKind::Added => pending_added.push(row.clone()),
-                DiffLineKind::Context => {
-                    flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
-                    rendered.push(render_split_pair_line(Some(row), Some(row), side_width));
-                }
-            }
+            let cache = self.render_cache.entry_mut(mode);
+            cache.width = width;
+            cache.lines = lines;
+            cache.valid = true;
         }
 
-        flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
-        rendered
+        &self.render_cache.entry(mode).lines
     }
+}
+
+#[derive(Debug, Default)]
+struct DiffRenderCache {
+    unified: CachedLines,
+    split: CachedLines,
+}
+
+impl DiffRenderCache {
+    fn entry(&self, mode: DiffViewMode) -> &CachedLines {
+        match mode {
+            DiffViewMode::Unified => &self.unified,
+            DiffViewMode::Split => &self.split,
+        }
+    }
+
+    fn entry_mut(&mut self, mode: DiffViewMode) -> &mut CachedLines {
+        match mode {
+            DiffViewMode::Unified => &mut self.unified,
+            DiffViewMode::Split => &mut self.split,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct CachedLines {
+    width: usize,
+    lines: Vec<Line<'static>>,
+    valid: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -228,7 +213,11 @@ pub async fn load_files_with_status(repo_root: &Path) -> color_eyre::Result<Vec<
     Ok(entries)
 }
 
-pub async fn load_diff_view(repo_root: &Path, file: &FileEntry) -> color_eyre::Result<DiffView> {
+pub async fn load_diff_view(
+    repo_root: &Path,
+    file: &FileEntry,
+    highlight_registry: Option<&HighlightRegistry>,
+) -> color_eyre::Result<DiffView> {
     let preview = load_file_preview(repo_root, file).await?;
     if preview.diff.trim().is_empty() {
         let message = preview
@@ -237,10 +226,11 @@ pub async fn load_diff_view(repo_root: &Path, file: &FileEntry) -> color_eyre::R
         return Ok(DiffView::empty(message));
     }
 
-    let mut highlighter = SyntaxHighlighter::new()?;
+    let mut highlighter = SyntaxHighlighter::new(highlight_registry);
     Ok(DiffView {
         rows: build_diff_rows(&preview.diff, file.filetype, &mut highlighter),
         note: preview.note,
+        render_cache: DiffRenderCache::default(),
     })
 }
 
@@ -441,9 +431,31 @@ fn resolve_diff_filetype(path: &str) -> Option<&'static str> {
 
     match file_name.as_str() {
         "dockerfile" => None,
+        "justfile" => Some("bash"),
+        "cargo.toml" => Some("toml"),
         _ => match extension {
             "rs" => Some("rust"),
-            "js" | "jsx" | "mjs" | "cjs" => Some("javascript"),
+            "js" | "mjs" | "cjs" => Some("javascript"),
+            "jsx" => Some("jsx"),
+            "ts" | "mts" | "cts" => Some("typescript"),
+            "tsx" => Some("tsx"),
+            "py" => Some("python"),
+            "go" => Some("go"),
+            "c" | "h" => Some("c"),
+            "cc" | "cp" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Some("cpp"),
+            "cs" => Some("csharp"),
+            "sh" | "bash" | "zsh" | "ksh" => Some("bash"),
+            "java" => Some("java"),
+            "rb" => Some("ruby"),
+            "php" | "php3" | "php4" | "php5" | "phtml" => Some("php"),
+            "scala" | "sc" => Some("scala"),
+            "html" | "htm" => Some("html"),
+            "json" => Some("json"),
+            "yaml" | "yml" => Some("yaml"),
+            "hs" => Some("haskell"),
+            "css" => Some("css"),
+            "nix" => Some("nix"),
+            "md" | "mdx" | "markdown" => Some("markdown"),
             _ => None,
         },
     }
@@ -560,6 +572,69 @@ fn render_diff_row(
         new_line,
         content: highlighter.highlight_line(filetype, content, base_style(kind)),
     }
+}
+
+fn render_unified_lines(rows: &[DiffRow], width: usize) -> Vec<Line<'static>> {
+    let mut rendered = Vec::with_capacity(rows.len());
+    let mut last_hunk_index = None;
+
+    for row in rows {
+        if let Some(previous_hunk_index) = last_hunk_index {
+            if row.hunk_index != previous_hunk_index {
+                rendered.push(render_hunk_separator(width));
+            }
+        }
+
+        rendered.push(render_unified_code_line(row, width));
+        last_hunk_index = Some(row.hunk_index);
+    }
+
+    rendered
+}
+
+fn render_split_lines(rows: &[DiffRow], width: usize) -> Vec<Line<'static>> {
+    let total_width = width.saturating_sub(1);
+    let gutter_width = 3;
+    let side_width = total_width.saturating_sub(gutter_width) / 2;
+    let mut rendered = Vec::with_capacity(rows.len());
+    let mut pending_removed: Vec<&DiffRow> = Vec::new();
+    let mut pending_added: Vec<&DiffRow> = Vec::new();
+    let mut last_hunk_index = None;
+
+    let flush_pending = |rendered: &mut Vec<Line<'static>>,
+                         removed: &mut Vec<&DiffRow>,
+                         added: &mut Vec<&DiffRow>| {
+        let row_count = removed.len().max(added.len());
+        for index in 0..row_count {
+            let left = removed.get(index).copied();
+            let right = added.get(index).copied();
+            rendered.push(render_split_pair_line(left, right, side_width));
+        }
+        removed.clear();
+        added.clear();
+    };
+
+    for row in rows {
+        if let Some(previous_hunk_index) = last_hunk_index {
+            if row.hunk_index != previous_hunk_index {
+                flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
+                rendered.push(render_hunk_separator(total_width));
+            }
+        }
+        last_hunk_index = Some(row.hunk_index);
+
+        match row.kind {
+            DiffLineKind::Removed => pending_removed.push(row),
+            DiffLineKind::Added => pending_added.push(row),
+            DiffLineKind::Context => {
+                flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
+                rendered.push(render_split_pair_line(Some(row), Some(row), side_width));
+            }
+        }
+    }
+
+    flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
+    rendered
 }
 
 fn render_unified_code_line(row: &DiffRow, width: usize) -> Line<'static> {
@@ -699,41 +774,256 @@ fn base_style(kind: DiffLineKind) -> Style {
     }
 }
 
-struct SyntaxHighlighter {
+pub struct HighlightRegistry {
     configs: HashMap<&'static str, HighlightConfiguration>,
-    highlighter: Highlighter,
 }
 
-impl SyntaxHighlighter {
-    fn new() -> color_eyre::Result<Self> {
+impl std::fmt::Debug for HighlightRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HighlightRegistry")
+            .field("config_count", &self.configs.len())
+            .finish()
+    }
+}
+
+impl HighlightRegistry {
+    pub fn new() -> color_eyre::Result<Self> {
         let mut configs = HashMap::new();
 
-        let mut rust_config = HighlightConfiguration::new(
+        register_highlight_config(
+            &mut configs,
+            "rust",
             tree_sitter_rust::LANGUAGE.into(),
             "rust",
             tree_sitter_rust::HIGHLIGHTS_QUERY,
             tree_sitter_rust::INJECTIONS_QUERY,
             "",
-        )
-        .wrap_err("failed to build rust highlight config")?;
-        rust_config.configure(HIGHLIGHT_NAMES);
-        configs.insert("rust", rust_config);
+        )?;
 
-        let mut javascript_config = HighlightConfiguration::new(
+        register_highlight_config(
+            &mut configs,
+            "javascript",
             tree_sitter_javascript::LANGUAGE.into(),
             "javascript",
             tree_sitter_javascript::HIGHLIGHT_QUERY,
             tree_sitter_javascript::INJECTIONS_QUERY,
             tree_sitter_javascript::LOCALS_QUERY,
-        )
-        .wrap_err("failed to build javascript highlight config")?;
-        javascript_config.configure(HIGHLIGHT_NAMES);
-        configs.insert("javascript", javascript_config);
+        )?;
 
-        Ok(Self {
-            configs,
+        let jsx_highlights = format!(
+            "{}\n{}",
+            tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_javascript::JSX_HIGHLIGHT_QUERY
+        );
+        register_highlight_config(
+            &mut configs,
+            "jsx",
+            tree_sitter_javascript::LANGUAGE.into(),
+            "javascript",
+            &jsx_highlights,
+            tree_sitter_javascript::INJECTIONS_QUERY,
+            tree_sitter_javascript::LOCALS_QUERY,
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            "typescript",
+            tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_typescript::LOCALS_QUERY,
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "tsx",
+            tree_sitter_typescript::LANGUAGE_TSX.into(),
+            "tsx",
+            tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_typescript::LOCALS_QUERY,
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "python",
+            tree_sitter_python::LANGUAGE.into(),
+            "python",
+            tree_sitter_python::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "go",
+            tree_sitter_go::LANGUAGE.into(),
+            "go",
+            tree_sitter_go::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "c",
+            tree_sitter_c::LANGUAGE.into(),
+            "c",
+            tree_sitter_c::HIGHLIGHT_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "cpp",
+            tree_sitter_cpp::LANGUAGE.into(),
+            "cpp",
+            tree_sitter_cpp::HIGHLIGHT_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "csharp",
+            tree_sitter_c_sharp::LANGUAGE.into(),
+            "c_sharp",
+            "",
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "bash",
+            tree_sitter_bash::LANGUAGE.into(),
+            "bash",
+            tree_sitter_bash::HIGHLIGHT_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "java",
+            tree_sitter_java::LANGUAGE.into(),
+            "java",
+            tree_sitter_java::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "ruby",
+            tree_sitter_ruby::LANGUAGE.into(),
+            "ruby",
+            tree_sitter_ruby::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_ruby::LOCALS_QUERY,
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "php",
+            tree_sitter_php::LANGUAGE_PHP.into(),
+            "php",
+            tree_sitter_php::HIGHLIGHTS_QUERY,
+            tree_sitter_php::INJECTIONS_QUERY,
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "scala",
+            tree_sitter_scala::LANGUAGE.into(),
+            "scala",
+            tree_sitter_scala::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_scala::LOCALS_QUERY,
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "html",
+            tree_sitter_html::LANGUAGE.into(),
+            "html",
+            tree_sitter_html::HIGHLIGHTS_QUERY,
+            tree_sitter_html::INJECTIONS_QUERY,
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "json",
+            tree_sitter_json::LANGUAGE.into(),
+            "json",
+            tree_sitter_json::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "yaml",
+            tree_sitter_yaml::LANGUAGE.into(),
+            "yaml",
+            tree_sitter_yaml::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "haskell",
+            tree_sitter_haskell::LANGUAGE.into(),
+            "haskell",
+            tree_sitter_haskell::HIGHLIGHTS_QUERY,
+            tree_sitter_haskell::INJECTIONS_QUERY,
+            tree_sitter_haskell::LOCALS_QUERY,
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "css",
+            tree_sitter_css::LANGUAGE.into(),
+            "css",
+            tree_sitter_css::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        )?;
+
+        register_highlight_config(
+            &mut configs,
+            "nix",
+            tree_sitter_nix::LANGUAGE.into(),
+            "nix",
+            tree_sitter_nix::HIGHLIGHTS_QUERY,
+            tree_sitter_nix::INJECTIONS_QUERY,
+            "",
+        )?;
+
+        Ok(Self { configs })
+    }
+
+    fn config(&self, filetype: &'static str) -> Option<&HighlightConfiguration> {
+        self.configs.get(filetype)
+    }
+}
+
+struct SyntaxHighlighter<'a> {
+    registry: Option<&'a HighlightRegistry>,
+    highlighter: Highlighter,
+}
+
+impl<'a> SyntaxHighlighter<'a> {
+    fn new(registry: Option<&'a HighlightRegistry>) -> Self {
+        Self {
+            registry,
             highlighter: Highlighter::new(),
-        })
+        }
     }
 
     fn highlight_line(
@@ -745,7 +1035,10 @@ impl SyntaxHighlighter {
         let Some(filetype) = filetype else {
             return vec![Span::styled(line.to_string(), fallback)];
         };
-        let Some(config) = self.configs.get(filetype) else {
+        let Some(registry) = self.registry else {
+            return vec![Span::styled(line.to_string(), fallback)];
+        };
+        let Some(config) = registry.config(filetype) else {
             return vec![Span::styled(line.to_string(), fallback)];
         };
 
@@ -788,4 +1081,26 @@ impl SyntaxHighlighter {
             spans
         }
     }
+}
+
+fn register_highlight_config(
+    configs: &mut HashMap<&'static str, HighlightConfiguration>,
+    key: &'static str,
+    language: tree_sitter::Language,
+    language_name: &'static str,
+    highlights: &str,
+    injections: &str,
+    locals: &str,
+) -> color_eyre::Result<()> {
+    let mut config = HighlightConfiguration::new(
+        language,
+        language_name,
+        highlights,
+        injections,
+        locals,
+    )
+    .wrap_err_with(|| format!("failed to build {key} highlight config"))?;
+    config.configure(HIGHLIGHT_NAMES);
+    configs.insert(key, config);
+    Ok(())
 }

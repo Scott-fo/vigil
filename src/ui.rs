@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{
         Block, Borders, Clear, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Wrap,
+        ScrollbarState,
     },
 };
 
@@ -180,13 +180,10 @@ fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(inner);
 
-    let diff_view = app.diff_view.clone();
-    let scroll = app.diff_scroll;
     render_diff_body(
         frame,
         &mut app.diff_scroll,
-        &diff_view,
-        scroll,
+        &mut app.diff_view,
         app.diff_view_mode,
         chunks[0],
     );
@@ -196,34 +193,38 @@ fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_diff_body(
     frame: &mut Frame,
     diff_scroll: &mut u16,
-    diff_view: &DiffView,
-    scroll: u16,
+    diff_view: &mut DiffView,
     mode: DiffViewMode,
     area: Rect,
 ) {
-    let rendered_lines = diff_view.render_lines(mode, area.width as usize);
+    let rendered_lines = diff_view.rendered_lines(mode, area.width as usize);
+    let viewport_height = area.height as usize;
     let max_scroll = rendered_lines
         .len()
-        .saturating_sub(1)
+        .saturating_sub(viewport_height)
         .min(u16::MAX as usize) as u16;
     if *diff_scroll > max_scroll {
         *diff_scroll = max_scroll;
     }
 
-    let paragraph = Paragraph::new(Text::from(rendered_lines.clone()))
+    let visible_start = (*diff_scroll as usize).min(max_scroll as usize);
+    let visible_end = (visible_start + viewport_height).min(rendered_lines.len());
+    let paragraph = Paragraph::new(Text::from(rendered_lines[visible_start..visible_end].to_vec()))
         .style(Style::new().fg(TEXT).bg(PANEL))
-        .scroll(((*diff_scroll).min(scroll), 0))
-        .wrap(Wrap { trim: false });
+        .scroll((0, 0));
     frame.render_widget(paragraph, area);
 
-    let viewport_height = area.height as usize;
-    let mut scrollbar_state = ScrollbarState::new(rendered_lines.len())
-        .position(*diff_scroll as usize)
-        .viewport_content_length(viewport_height);
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .thumb_style(Style::new().fg(BORDER_ACTIVE))
-        .track_style(Style::new().fg(BORDER));
-    frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+    if rendered_lines.len() > viewport_height {
+        let mut scrollbar_state = ScrollbarState::new(rendered_lines.len())
+            .position(*diff_scroll as usize)
+            .viewport_content_length(viewport_height);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .thumb_style(Style::new().fg(BORDER_ACTIVE))
+            .track_style(Style::new().fg(BORDER));
+        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+    }
 }
 
 fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
