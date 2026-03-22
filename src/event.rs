@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use color_eyre::eyre::OptionExt;
 use crossterm::event::Event as CrosstermEvent;
 use futures::StreamExt;
@@ -10,6 +12,7 @@ use crate::git::SharedHighlightRegistry;
 pub enum Event {
     Crossterm(CrosstermEvent),
     HighlightRegistryReady(Result<SharedHighlightRegistry, String>),
+    RepoChanged(Vec<PathBuf>),
     RemoteSyncFinished(Result<String, String>),
     ClearSnackbar(u64),
 }

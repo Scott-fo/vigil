@@ -10,6 +10,7 @@ pub mod event;
 pub mod git;
 pub mod sidebar;
 pub mod ui;
+pub mod watcher;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {

@@ -1,6 +1,8 @@
 use std::{
+    collections::HashSet,
     collections::HashMap,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
 };
 
@@ -332,6 +334,47 @@ pub async fn pull_from_remote(repo_root: &Path) -> color_eyre::Result<()> {
     Ok(())
 }
 
+pub async fn should_refresh_for_paths(
+    repo_root: &Path,
+    changed_paths: &[PathBuf],
+) -> color_eyre::Result<bool> {
+    if changed_paths.is_empty() {
+        return Ok(true);
+    }
+
+    let mut candidate_paths = Vec::new();
+    let mut seen_paths = HashSet::new();
+
+    for path in changed_paths {
+        let Ok(relative_path) = path.strip_prefix(repo_root) else {
+            return Ok(true);
+        };
+
+        if relative_path.as_os_str().is_empty() {
+            return Ok(true);
+        }
+
+        if relative_path
+            .file_name()
+            .is_some_and(|file_name| file_name == ".gitignore")
+        {
+            return Ok(true);
+        }
+
+        let relative = relative_path.to_string_lossy().replace('\\', "/");
+        if seen_paths.insert(relative.clone()) {
+            candidate_paths.push(relative);
+        }
+    }
+
+    if candidate_paths.is_empty() {
+        return Ok(false);
+    }
+
+    let ignored_paths = git_check_ignored(repo_root, &candidate_paths).await?;
+    Ok(candidate_paths.iter().any(|path| !ignored_paths.contains(path)))
+}
+
 pub async fn resolve_repo_root() -> color_eyre::Result<PathBuf> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -467,6 +510,50 @@ async fn git_output(repo_root: &Path, args: &[&str]) -> color_eyre::Result<Strin
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+async fn git_check_ignored(
+    repo_root: &Path,
+    paths: &[String],
+) -> color_eyre::Result<HashSet<String>> {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(repo_root);
+    command.args(["check-ignore", "-z", "--stdin"]);
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .wrap_err("failed to spawn git check-ignore")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let input = format!("{}\0", paths.join("\0"));
+        tokio::io::AsyncWriteExt::write_all(&mut stdin, input.as_bytes())
+            .await
+            .wrap_err("failed to write git check-ignore stdin")?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .wrap_err("failed to wait for git check-ignore")?;
+
+    match output.status.code() {
+        Some(0) | Some(1) => {}
+        _ => {
+            return Err(eyre!(
+                "{}",
+                String::from_utf8_lossy(&output.stderr).trim().to_string()
+            ));
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
 }
 
 fn create_untracked_file_diff(input_path: &str, content: &str) -> String {

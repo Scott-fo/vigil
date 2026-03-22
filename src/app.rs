@@ -14,6 +14,7 @@ use crate::{
     git::{self, DiffView, FileEntry, SharedHighlightRegistry},
     sidebar::{self, SidebarItem},
     ui,
+    watcher::RepoWatcher,
 };
 use std::io::stdout;
 
@@ -68,6 +69,7 @@ pub struct App {
     pub diff_scroll: u16,
     pub selected_diff_line_index: usize,
     pub highlight_registry: Option<SharedHighlightRegistry>,
+    pub repo_watcher: Option<RepoWatcher>,
     pub commit_modal_open: bool,
     pub commit_message: String,
     pub commit_error: Option<String>,
@@ -98,6 +100,7 @@ impl App {
             diff_scroll: 0,
             selected_diff_line_index: 0,
             highlight_registry: None,
+            repo_watcher: None,
             commit_modal_open: false,
             commit_message: String::new(),
             commit_error: None,
@@ -107,8 +110,12 @@ impl App {
             snackbar_generation: 0,
             status_message: None,
         };
+        let watcher_error = app.start_repo_watcher();
         app.spawn_highlight_registry_init();
         app.refresh().await?;
+        if let Some(error) = watcher_error {
+            app.status_message = Some(format!("watcher unavailable: {error}"));
+        }
         Ok(app)
     }
 
@@ -158,6 +165,14 @@ impl App {
 
                     if self.running {
                         terminal.draw(|frame| ui::render(frame, &mut self))?;
+                    }
+                }
+                Event::RepoChanged(paths) => {
+                    if git::should_refresh_for_paths(&self.repo_root, &paths).await? {
+                        self.refresh().await?;
+                        if self.running {
+                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        }
                     }
                 }
                 Event::RemoteSyncFinished(result) => {
@@ -811,6 +826,16 @@ impl App {
             };
             let _ = sender.send(event);
         });
+    }
+
+    fn start_repo_watcher(&mut self) -> Option<String> {
+        match RepoWatcher::new(self.repo_root.clone(), self.events.sender()) {
+            Ok(watcher) => {
+                self.repo_watcher = Some(watcher);
+                None
+            }
+            Err(error) => Some(error.to_string()),
+        }
     }
 
     fn quit(&mut self) {
