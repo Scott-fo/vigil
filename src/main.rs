@@ -2,6 +2,7 @@ use crate::{
     app::{App, AppLaunchOptions},
     git::BlameTarget,
 };
+
 use color_eyre::eyre::{WrapErr, eyre};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
