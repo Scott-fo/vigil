@@ -48,6 +48,12 @@ pub struct CommitCompareSelection {
     pub subject: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct BranchCompareSelection {
+    pub source_ref: String,
+    pub destination_ref: String,
+}
+
 #[derive(Debug, Default)]
 pub struct DiffView {
     rows: Vec<DiffRow>,
@@ -409,6 +415,64 @@ pub async fn load_files_with_commit_diff(
         .collect())
 }
 
+pub async fn list_comparable_refs(repo_root: &Path) -> color_eyre::Result<Vec<String>> {
+    let output = git_output(
+        repo_root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)\t%(refname:short)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )
+    .await?;
+
+    let mut refs = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            let (full_ref, short_ref) = line.split_once('\t')?;
+            let short_ref = short_ref.trim();
+            if short_ref.is_empty() || short_ref == "HEAD" {
+                return None;
+            }
+            if full_ref.starts_with("refs/remotes/")
+                && (!short_ref.contains('/') || short_ref.ends_with("/HEAD"))
+            {
+                return None;
+            }
+            Some(short_ref.to_string())
+        })
+        .collect::<Vec<_>>();
+
+    refs.sort();
+    refs.dedup();
+    Ok(refs)
+}
+
+pub async fn load_files_with_branch_diff(
+    repo_root: &Path,
+    selection: &BranchCompareSelection,
+) -> color_eyre::Result<Vec<FileEntry>> {
+    let output = git_output(
+        repo_root,
+        &[
+            "diff",
+            "--name-status",
+            "--find-renames",
+            "-z",
+            build_branch_diff_range(selection).as_str(),
+        ],
+    )
+    .await?;
+
+    Ok(parse_diff_name_status_entries(&output)
+        .into_iter()
+        .map(to_file_entry)
+        .collect())
+}
+
 pub async fn should_refresh_for_paths(
     repo_root: &Path,
     changed_paths: &[PathBuf],
@@ -516,6 +580,16 @@ pub async fn load_diff_view_for_commit_compare(
     build_diff_view_from_preview(preview, file, highlight_registry)
 }
 
+pub async fn load_diff_view_for_branch_compare(
+    repo_root: &Path,
+    file: &FileEntry,
+    selection: &BranchCompareSelection,
+    highlight_registry: Option<&HighlightRegistry>,
+) -> color_eyre::Result<DiffView> {
+    let preview = load_branch_preview(repo_root, file, selection).await?;
+    build_diff_view_from_preview(preview, file, highlight_registry)
+}
+
 fn build_diff_view_from_preview(
     preview: FilePreview,
     file: &FileEntry,
@@ -563,6 +637,30 @@ async fn load_commit_preview(
             "--find-renames",
             selection.base_ref.as_str(),
             selection.commit_hash.as_str(),
+            "--",
+            file.path.as_str(),
+        ],
+    )
+    .await?;
+
+    Ok(FilePreview {
+        diff: output,
+        note: None,
+    })
+}
+
+async fn load_branch_preview(
+    repo_root: &Path,
+    file: &FileEntry,
+    selection: &BranchCompareSelection,
+) -> color_eyre::Result<FilePreview> {
+    let output = git_output(
+        repo_root,
+        &[
+            "diff",
+            "--no-color",
+            "--find-renames",
+            build_branch_diff_range(selection).as_str(),
             "--",
             file.path.as_str(),
         ],
@@ -833,6 +931,14 @@ fn parse_status_entries(raw: &str) -> Vec<StatusEntry> {
     }
 
     entries
+}
+
+fn build_branch_diff_range(selection: &BranchCompareSelection) -> String {
+    format!(
+        "{}...{}",
+        selection.destination_ref.trim(),
+        selection.source_ref.trim()
+    )
 }
 
 fn parse_diff_name_status_entries(raw: &str) -> Vec<StatusEntry> {

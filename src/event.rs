@@ -15,6 +15,7 @@ pub enum Event {
     Crossterm(CrosstermEvent),
     HighlightRegistryReady(Result<SharedHighlightRegistry, String>),
     CommitSearchLoaded(Result<Vec<CommitSearchEntry>, String>),
+    BranchCompareLoaded(Result<Vec<String>, String>),
     RepoWatcherReady(PathBuf, Result<RepoWatcher, String>),
     RepoChanged(Vec<PathBuf>),
     RemoteSyncFinished(Result<String, String>),

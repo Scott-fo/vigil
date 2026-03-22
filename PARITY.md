@@ -53,12 +53,12 @@ Already implemented:
 Missing from the Rust app:
 
 - [ ] theme picker and persistence
-- [ ] commit history search
-- [ ] open specific commit
-- [ ] branch compare
+- [x] commit history search
+- [x] open specific commit
+- [x] branch compare
 - [ ] blame mode
 - [ ] chooser-file integration
-- [ ] help modal and full keybinding coverage
+- [x] help modal and current keybinding coverage
 - [ ] richer error overlays / surfacing
 
 ## Feature Checklist
@@ -115,7 +115,7 @@ Source cues:
 - [x] Push to remote
 - [ ] Initialize Git repo from splash state
 - [x] Remote sync running state
-- [ ] Read-only behavior when in branch/commit compare modes
+- [x] Read-only behavior when in branch/commit compare modes
 
 Notes:
 
@@ -133,13 +133,13 @@ Source cues:
 
 ### 4. Commit / History Review
 
-- [ ] Commit search modal
-- [ ] Search by commit hash
-- [ ] Search by short hash
-- [ ] Search by subject text
-- [ ] Keyboard selection inside commit search
-- [ ] Open selected commit in compare mode
-- [ ] Reset back to working tree mode
+- [x] Commit search modal
+- [x] Search by commit hash
+- [x] Search by short hash
+- [x] Search by subject text
+- [x] Keyboard selection inside commit search
+- [x] Open selected commit in compare mode
+- [x] Reset back to working tree mode
 
 Notes:
 
@@ -154,13 +154,13 @@ Source cues:
 
 ### 5. Branch Compare
 
-- [ ] Branch compare modal
-- [ ] Source ref selection
-- [ ] Destination ref selection
-- [ ] Ref search/filter
-- [ ] Keyboard navigation inside modal
-- [ ] Open branch compare mode
-- [ ] Reset back to working tree mode
+- [x] Branch compare modal
+- [x] Source ref selection
+- [x] Destination ref selection
+- [x] Ref search/filter
+- [x] Keyboard navigation inside modal
+- [x] Open branch compare mode
+- [x] Reset back to working tree mode
 
 Notes:
 
@@ -265,8 +265,8 @@ Source cues:
 
 ### 10. UI Chrome / Completion Work
 
-- [ ] Help modal
-- [ ] Keybinding discoverability
+- [x] Help modal
+- [x] Keybinding discoverability
 - [x] Snackbar / transient notifications
 - [ ] Error display
 - [ ] Splash state
@@ -297,13 +297,13 @@ These are worth carrying over because they shape the feel of the app:
 - [x] `c` to open commit modal
 - [x] `d` to open discard modal
 - [ ] `t` to open theme modal
-- [ ] `b` to open branch compare modal
-- [ ] `g` to open commit search modal
+- [x] `b` to open branch compare modal
+- [x] `g` to open commit search modal
 - [x] `p` to pull
 - [x] `P` to push
-- [ ] `?` to open help
+- [x] `?` to open help
 - [x] `e` / `o` / `enter` to open in editor
-- [ ] `Ctrl-L` to reset compare mode back to working tree
+- [x] `Ctrl-L` to reset compare mode back to working tree
 - [ ] `Ctrl-B` to toggle sidebar
 - [ ] `Ctrl-W h` / `Ctrl-W l` for pane focus parity if we still want pane focus as a concept
 

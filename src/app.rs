@@ -20,7 +20,7 @@ use tokio::task;
 use crate::{
     event::{Event, EventHandler},
     git::{
-        self, CommitCompareSelection, CommitSearchEntry, DiffView, FileEntry,
+        self, BranchCompareSelection, CommitCompareSelection, CommitSearchEntry, DiffView, FileEntry,
         SharedHighlightRegistry,
     },
     sidebar::{self, SidebarItem},
@@ -41,10 +41,17 @@ pub enum DiffViewMode {
     Split,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchCompareField {
+    Source,
+    Destination,
+}
+
 #[derive(Debug, Clone)]
 pub enum ReviewMode {
     WorkingTree,
     CommitCompare(CommitCompareSelection),
+    BranchCompare(BranchCompareSelection),
 }
 
 enum AppCommand {
@@ -109,6 +116,18 @@ pub struct App {
     pub commit_search_error: Option<String>,
     pub commit_search_selected_index: usize,
     pub commit_search_matcher: Matcher,
+    pub branch_compare_modal_open: bool,
+    pub branch_compare_loading: bool,
+    pub branch_compare_error: Option<String>,
+    pub branch_compare_active_field: BranchCompareField,
+    pub branch_compare_available_refs: Vec<String>,
+    pub branch_compare_source_query: String,
+    pub branch_compare_destination_query: String,
+    pub branch_compare_source_ref: Option<String>,
+    pub branch_compare_destination_ref: Option<String>,
+    pub branch_compare_selected_source_index: usize,
+    pub branch_compare_selected_destination_index: usize,
+    pub branch_compare_matcher: Matcher,
     pub commit_modal_open: bool,
     pub commit_message: String,
     pub commit_error: Option<String>,
@@ -149,6 +168,18 @@ impl App {
             commit_search_error: None,
             commit_search_selected_index: 0,
             commit_search_matcher: Matcher::new(MatcherConfig::DEFAULT),
+            branch_compare_modal_open: false,
+            branch_compare_loading: false,
+            branch_compare_error: None,
+            branch_compare_active_field: BranchCompareField::Source,
+            branch_compare_available_refs: Vec::new(),
+            branch_compare_source_query: String::new(),
+            branch_compare_destination_query: String::new(),
+            branch_compare_source_ref: None,
+            branch_compare_destination_ref: None,
+            branch_compare_selected_source_index: 0,
+            branch_compare_selected_destination_index: 0,
+            branch_compare_matcher: Matcher::new(MatcherConfig::DEFAULT),
             commit_modal_open: false,
             commit_message: String::new(),
             commit_error: None,
@@ -220,6 +251,28 @@ impl App {
                                 self.commit_search_entries.clear();
                                 self.commit_search_error = Some(error);
                                 self.commit_search_selected_index = 0;
+                            }
+                        }
+
+                        if self.running {
+                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        }
+                    }
+                }
+                Event::BranchCompareLoaded(result) => {
+                    if self.branch_compare_modal_open {
+                        self.branch_compare_loading = false;
+                        match result {
+                            Ok(refs) => {
+                                self.branch_compare_available_refs = refs;
+                                self.branch_compare_error = None;
+                                self.seed_branch_compare_selection();
+                            }
+                            Err(error) => {
+                                self.branch_compare_available_refs.clear();
+                                self.branch_compare_error = Some(error);
+                                self.branch_compare_selected_source_index = 0;
+                                self.branch_compare_selected_destination_index = 0;
                             }
                         }
 
@@ -337,6 +390,31 @@ impl App {
             return Ok(None);
         }
 
+        if self.branch_compare_modal_open {
+            match key_event.code {
+                KeyCode::Esc => self.close_branch_compare_modal(),
+                KeyCode::Tab => self.toggle_branch_compare_field(),
+                KeyCode::Enter => {
+                    self.confirm_branch_compare().await?;
+                }
+                KeyCode::Down | KeyCode::Char('j') => self.move_branch_compare_selection(1),
+                KeyCode::Up | KeyCode::Char('k') => self.move_branch_compare_selection(-1),
+                KeyCode::Backspace => {
+                    self.active_branch_compare_query_mut().pop();
+                    self.sync_branch_compare_selection_after_query_change();
+                }
+                KeyCode::Char(ch)
+                    if !key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key_event.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.active_branch_compare_query_mut().push(ch);
+                    self.sync_branch_compare_selection_after_query_change();
+                }
+                _ => {}
+            }
+            return Ok(None);
+        }
+
         if self.commit_modal_open {
             match key_event.code {
                 KeyCode::Esc => {
@@ -405,6 +483,9 @@ impl App {
             }
             KeyCode::Char('c') => {
                 self.open_commit_modal();
+            }
+            KeyCode::Char('b') => {
+                self.open_branch_compare_modal();
             }
             KeyCode::Char('g') => {
                 self.open_commit_search_modal();
@@ -508,6 +589,10 @@ impl App {
             return Ok(());
         }
 
+        if self.branch_compare_modal_open {
+            return Ok(());
+        }
+
         match mouse_event.kind {
             MouseEventKind::ScrollDown => self.page_or_scroll_diff(3),
             MouseEventKind::ScrollUp => self.page_or_scroll_diff(-3),
@@ -546,6 +631,9 @@ impl App {
             },
             ReviewMode::CommitCompare(selection) => {
                 git::load_files_with_commit_diff(&self.repo_root, selection).await?
+            }
+            ReviewMode::BranchCompare(selection) => {
+                git::load_files_with_branch_diff(&self.repo_root, selection).await?
             }
         };
         self.files = files;
@@ -612,6 +700,15 @@ impl App {
                 }
                 ReviewMode::CommitCompare(selection) => {
                     git::load_diff_view_for_commit_compare(
+                        &self.repo_root,
+                        file,
+                        selection,
+                        self.highlight_registry.as_deref(),
+                    )
+                    .await?
+                }
+                ReviewMode::BranchCompare(selection) => {
+                    git::load_diff_view_for_branch_compare(
                         &self.repo_root,
                         file,
                         selection,
@@ -692,6 +789,95 @@ impl App {
         self.commit_search_loading = false;
         self.commit_search_error = None;
         self.commit_search_selected_index = 0;
+    }
+
+    fn open_branch_compare_modal(&mut self) {
+        if self.branch_compare_modal_open {
+            return;
+        }
+
+        self.branch_compare_modal_open = true;
+        self.branch_compare_loading = true;
+        self.branch_compare_error = None;
+        self.branch_compare_active_field = BranchCompareField::Source;
+        self.branch_compare_available_refs.clear();
+        self.branch_compare_source_query.clear();
+        self.branch_compare_destination_query.clear();
+        self.branch_compare_source_ref = None;
+        self.branch_compare_destination_ref = None;
+        self.branch_compare_selected_source_index = 0;
+        self.branch_compare_selected_destination_index = 0;
+
+        let repo_root = self.repo_root.clone();
+        let sender = self.events.sender();
+        task::spawn(async move {
+            let result = git::list_comparable_refs(&repo_root)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(Event::BranchCompareLoaded(result));
+        });
+    }
+
+    fn close_branch_compare_modal(&mut self) {
+        self.branch_compare_modal_open = false;
+        self.branch_compare_loading = false;
+        self.branch_compare_error = None;
+    }
+
+    fn toggle_branch_compare_field(&mut self) {
+        self.branch_compare_active_field = match self.branch_compare_active_field {
+            BranchCompareField::Source => BranchCompareField::Destination,
+            BranchCompareField::Destination => BranchCompareField::Source,
+        };
+        self.sync_branch_compare_selection_after_query_change();
+    }
+
+    fn seed_branch_compare_selection(&mut self) {
+        if self.branch_compare_available_refs.is_empty() {
+            self.branch_compare_source_ref = None;
+            self.branch_compare_destination_ref = None;
+            self.branch_compare_selected_source_index = 0;
+            self.branch_compare_selected_destination_index = 0;
+            return;
+        }
+
+        match &self.review_mode {
+            ReviewMode::BranchCompare(selection) => {
+                self.branch_compare_source_ref = Some(selection.source_ref.clone());
+                self.branch_compare_destination_ref = Some(selection.destination_ref.clone());
+            }
+            _ => {
+                self.branch_compare_source_ref = self.branch_compare_available_refs.first().cloned();
+                self.branch_compare_destination_ref =
+                    resolve_default_destination_ref(&self.branch_compare_available_refs, self.branch_compare_source_ref.as_deref());
+            }
+        }
+
+        self.sync_branch_compare_selection_after_query_change();
+    }
+
+    async fn confirm_branch_compare(&mut self) -> color_eyre::Result<()> {
+        let Some(source_ref) = self.branch_compare_source_ref.clone() else {
+            self.branch_compare_error = Some("Select a source ref.".to_string());
+            return Ok(());
+        };
+        let Some(destination_ref) = self.branch_compare_destination_ref.clone() else {
+            self.branch_compare_error = Some("Select a destination ref.".to_string());
+            return Ok(());
+        };
+
+        if source_ref == destination_ref {
+            self.branch_compare_error =
+                Some("Source and destination refs must differ.".to_string());
+            return Ok(());
+        }
+
+        self.review_mode = ReviewMode::BranchCompare(BranchCompareSelection {
+            source_ref,
+            destination_ref,
+        });
+        self.close_branch_compare_modal();
+        self.refresh().await
     }
 
     fn close_commit_modal(&mut self) {
@@ -1044,6 +1230,91 @@ impl App {
             .cloned()
     }
 
+    pub fn filtered_branch_compare_refs(&mut self) -> Vec<String> {
+        let query = match self.branch_compare_active_field {
+            BranchCompareField::Source => self.branch_compare_source_query.trim(),
+            BranchCompareField::Destination => self.branch_compare_destination_query.trim(),
+        };
+
+        if query.is_empty() {
+            return self.branch_compare_available_refs.clone();
+        }
+
+        let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+        let candidates = self
+            .branch_compare_available_refs
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        pattern
+            .match_list(candidates, &mut self.branch_compare_matcher)
+            .into_iter()
+            .map(|(candidate, _score)| candidate)
+            .collect()
+    }
+
+    fn active_branch_compare_query_mut(&mut self) -> &mut String {
+        match self.branch_compare_active_field {
+            BranchCompareField::Source => &mut self.branch_compare_source_query,
+            BranchCompareField::Destination => &mut self.branch_compare_destination_query,
+        }
+    }
+
+    fn sync_branch_compare_selection_after_query_change(&mut self) {
+        let filtered = self.filtered_branch_compare_refs();
+        let current_ref = match self.branch_compare_active_field {
+            BranchCompareField::Source => &mut self.branch_compare_source_ref,
+            BranchCompareField::Destination => &mut self.branch_compare_destination_ref,
+        };
+        let current_index = match self.branch_compare_active_field {
+            BranchCompareField::Source => &mut self.branch_compare_selected_source_index,
+            BranchCompareField::Destination => &mut self.branch_compare_selected_destination_index,
+        };
+
+        if filtered.is_empty() {
+            *current_ref = None;
+            *current_index = 0;
+            return;
+        }
+
+        if let Some(existing) = current_ref.as_ref() {
+            if let Some(index) = filtered.iter().position(|ref_name| ref_name == existing) {
+                *current_index = index;
+                return;
+            }
+        }
+
+        *current_ref = filtered.first().cloned();
+        *current_index = 0;
+    }
+
+    fn move_branch_compare_selection(&mut self, delta: i32) {
+        let filtered = self.filtered_branch_compare_refs();
+        if filtered.is_empty() {
+            return;
+        }
+
+        let current_index = match self.branch_compare_active_field {
+            BranchCompareField::Source => &mut self.branch_compare_selected_source_index,
+            BranchCompareField::Destination => &mut self.branch_compare_selected_destination_index,
+        };
+        let current_ref = match self.branch_compare_active_field {
+            BranchCompareField::Source => &mut self.branch_compare_source_ref,
+            BranchCompareField::Destination => &mut self.branch_compare_destination_ref,
+        };
+
+        let base_index = (*current_index).min(filtered.len() - 1);
+        let next_index = if delta.is_negative() {
+            base_index.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            base_index.saturating_add(delta as usize)
+        }
+        .min(filtered.len() - 1);
+
+        *current_index = next_index;
+        *current_ref = filtered.get(next_index).cloned();
+    }
+
     fn page_diff(&mut self, delta: i32) {
         self.move_diff_selection(delta);
     }
@@ -1119,6 +1390,9 @@ impl App {
             ReviewMode::WorkingTree => String::new(),
             ReviewMode::CommitCompare(selection) => {
                 format!("Commit {}: {}", selection.short_hash, selection.subject)
+            }
+            ReviewMode::BranchCompare(selection) => {
+                format!("Compare {} -> {}", selection.source_ref, selection.destination_ref)
             }
         }
     }
@@ -1211,6 +1485,15 @@ impl App {
                     if self.files.len() == 1 { "" } else { "s" }
                 )
             }
+            ReviewMode::BranchCompare(selection) => {
+                format!(
+                    "{} -> {}  {} file{}",
+                    selection.source_ref,
+                    selection.destination_ref,
+                    self.files.len(),
+                    if self.files.len() == 1 { "" } else { "s" }
+                )
+            }
         }
     }
 
@@ -1267,4 +1550,22 @@ fn editor_supports_plus_line(editor_command: &str) -> bool {
     let editor = editor_command.split_whitespace().next().unwrap_or_default();
     let binary = editor.rsplit('/').next().unwrap_or(editor);
     matches!(binary, "nvim" | "vim" | "vi" | "vimdiff" | "nvim-qt")
+}
+
+fn resolve_default_destination_ref(
+    refs: &[String],
+    source_ref: Option<&str>,
+) -> Option<String> {
+    let preferred = refs.iter().find(|ref_name| {
+        (**ref_name == "main" || **ref_name == "master")
+            && source_ref.is_none_or(|source| source != ref_name.as_str())
+    });
+    if let Some(preferred) = preferred {
+        return Some(preferred.clone());
+    }
+
+    refs.iter()
+        .find(|ref_name| source_ref.is_none_or(|source| source != ref_name.as_str()))
+        .cloned()
+        .or_else(|| refs.first().cloned())
 }
