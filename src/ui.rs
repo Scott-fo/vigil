@@ -240,7 +240,7 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         .status_message
         .clone()
         .unwrap_or_else(|| {
-            "q quit  tab switch panes  space stage  d discard  c commit  r refresh  v view"
+            "q quit  tab switch panes  enter open  space stage  d discard  c commit  r refresh  v view"
                 .to_string()
         });
     let line = Paragraph::new(Line::from(vec![
@@ -250,6 +250,8 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(" switch panes  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("space", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" stage  ", Style::new().fg(TEXT_MUTED)),
+        Span::styled("enter", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+        Span::styled(" open  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("d", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
         Span::styled(" discard  ", Style::new().fg(TEXT_MUTED)),
         Span::styled("c", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),

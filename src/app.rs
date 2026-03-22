@@ -1,7 +1,10 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, process::Stdio};
 
 use color_eyre::eyre::WrapErr;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
+    execute,
+};
 use crossterm::terminal;
 use ratatui::widgets::ListState;
 use tokio::{process::Command, task};
@@ -12,6 +15,7 @@ use crate::{
     sidebar::{self, SidebarItem},
     ui,
 };
+use std::io::stdout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
@@ -23,6 +27,10 @@ pub enum ActivePane {
 pub enum DiffViewMode {
     Unified,
     Split,
+}
+
+enum AppCommand {
+    OpenFileInEditor(String),
 }
 
 #[derive(Debug)]
@@ -87,7 +95,9 @@ impl App {
                         crossterm::event::Event::Key(key_event)
                             if key_event.kind == crossterm::event::KeyEventKind::Press =>
                         {
-                            self.handle_key_event(key_event).await?;
+                            if let Some(command) = self.handle_key_event(key_event).await? {
+                                self.run_command(command, &mut terminal).await?;
+                            }
                             true
                         }
                         crossterm::event::Event::Mouse(mouse_event) => {
@@ -129,7 +139,10 @@ impl App {
         Ok(())
     }
 
-    async fn handle_key_event(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+    async fn handle_key_event(
+        &mut self,
+        key_event: KeyEvent,
+    ) -> color_eyre::Result<Option<AppCommand>> {
         if self.commit_modal_open {
             match key_event.code {
                 KeyCode::Esc => {
@@ -151,7 +164,7 @@ impl App {
                 }
                 _ => {}
             }
-            return Ok(());
+            return Ok(None);
         }
 
         if self.discard_target.is_some() {
@@ -164,7 +177,7 @@ impl App {
                 }
                 _ => {}
             }
-            return Ok(());
+            return Ok(None);
         }
 
         match key_event.code {
@@ -210,6 +223,11 @@ impl App {
                     self.toggle_selected_file_stage().await?;
                 }
             }
+            KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('e') => {
+                if let Some(file) = self.selected_file() {
+                    return Ok(Some(AppCommand::OpenFileInEditor(file.path.clone())));
+                }
+            }
             KeyCode::Char('d') => {
                 self.open_discard_modal();
             }
@@ -247,7 +265,7 @@ impl App {
             _ => {}
         }
 
-        Ok(())
+        Ok(None)
     }
 
     async fn handle_mouse_event(&mut self, mouse_event: MouseEvent) -> color_eyre::Result<()> {
@@ -414,6 +432,79 @@ impl App {
         Ok(())
     }
 
+    async fn run_command(
+        &mut self,
+        command: AppCommand,
+        terminal: &mut ratatui::DefaultTerminal,
+    ) -> color_eyre::Result<()> {
+        match command {
+            AppCommand::OpenFileInEditor(path) => {
+                self.open_file_in_editor(&path, terminal).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn open_file_in_editor(
+        &mut self,
+        file_path: &str,
+        terminal: &mut ratatui::DefaultTerminal,
+    ) -> color_eyre::Result<()> {
+        let editor_command = std::env::var("VISUAL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("EDITOR")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            });
+
+        let Some(editor_command) = editor_command else {
+            self.status_message = Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
+            return Ok(());
+        };
+
+        let full_path = self.repo_root.join(file_path);
+        let quoted_path = quote_shell_arg(&full_path.to_string_lossy());
+
+        let _ = execute!(stdout(), DisableMouseCapture);
+        ratatui::restore();
+
+        let result = task::spawn_blocking(move || {
+            std::process::Command::new("sh")
+                .args(["-lc", &format!("{editor_command} {quoted_path}")])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+        })
+        .await;
+
+        *terminal = ratatui::init();
+        let _ = execute!(stdout(), EnableMouseCapture);
+
+        match result {
+            Ok(Ok(status)) if status.success() => {
+                self.refresh().await?;
+                self.status_message = Some(format!("opened {}", file_path));
+            }
+            Ok(Ok(status)) => {
+                self.status_message = Some(format!(
+                    "editor exited with code {}",
+                    status.code().unwrap_or(1)
+                ));
+            }
+            Ok(Err(error)) => {
+                self.status_message = Some(format!("failed to launch editor: {error}"));
+            }
+            Err(error) => {
+                self.status_message = Some(format!("editor task failed: {error}"));
+            }
+        }
+
+        Ok(())
+    }
+
     fn open_discard_modal(&mut self) {
         self.discard_target = self.selected_file().cloned();
     }
@@ -536,4 +627,8 @@ impl App {
     fn quit(&mut self) {
         self.running = false;
     }
+}
+
+fn quote_shell_arg(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
