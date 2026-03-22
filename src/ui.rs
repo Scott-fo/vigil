@@ -33,6 +33,7 @@ const SKY: Color = Color::Rgb(145, 215, 227);
 const OVERLAY2: Color = Color::Rgb(147, 154, 183);
 const ADD_BG: Color = Color::Rgb(41, 52, 43);
 const REMOVE_BG: Color = Color::Rgb(58, 42, 49);
+const NOTICE_WIDTH: u16 = 36;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Clear, frame.area());
@@ -280,11 +281,12 @@ fn render_notifications(frame: &mut Frame, app: &App) {
         let label = match direction {
             RemoteSyncDirection::Push => "Pushing to remote...",
         };
-        let area = top_right_rect(26, 3, top, frame.area());
+        let area = top_right_rect(NOTICE_WIDTH, 3, top, frame.area());
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::new().fg(BLUE))
             .style(Style::new().bg(PANEL));
+        let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
         frame.render_widget(
@@ -293,14 +295,14 @@ fn render_notifications(frame: &mut Frame, app: &App) {
                 Style::new().fg(TEXT_MUTED),
             ))))
             .style(Style::new().bg(PANEL))
-            .block(Block::new().padding(Padding::horizontal(1))),
-            area,
+            .block(Block::new().padding(Padding::horizontal(0))),
+            inner,
         );
         top = top.saturating_add(4);
     }
 
     if let Some(notice) = app.snackbar_notice.as_ref() {
-        let area = top_right_rect(56, 3, top, frame.area());
+        let area = top_right_rect(NOTICE_WIDTH, 3, top, frame.area());
         let border_color = match notice.variant {
             SnackbarVariant::Info => BLUE,
             SnackbarVariant::Error => RED,
@@ -309,6 +311,7 @@ fn render_notifications(frame: &mut Frame, app: &App) {
             .borders(Borders::ALL)
             .border_style(Style::new().fg(border_color))
             .style(Style::new().bg(PANEL));
+        let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
         frame.render_widget(
@@ -317,8 +320,8 @@ fn render_notifications(frame: &mut Frame, app: &App) {
                 Style::new().fg(TEXT),
             ))))
             .style(Style::new().bg(PANEL))
-            .block(Block::new().padding(Padding::horizontal(1))),
-            area,
+            .block(Block::new().padding(Padding::horizontal(0))),
+            inner,
         );
     }
 }
