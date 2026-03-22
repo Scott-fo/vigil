@@ -8,12 +8,14 @@ use tokio::task::JoinHandle;
 
 use crate::git::CommitSearchEntry;
 use crate::git::SharedHighlightRegistry;
+use crate::watcher::RepoWatcher;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Event {
     Crossterm(CrosstermEvent),
     HighlightRegistryReady(Result<SharedHighlightRegistry, String>),
     CommitSearchLoaded(Result<Vec<CommitSearchEntry>, String>),
+    RepoWatcherReady(PathBuf, Result<RepoWatcher, String>),
     RepoChanged(Vec<PathBuf>),
     RemoteSyncFinished(Result<String, String>),
     ClearSnackbar(u64),

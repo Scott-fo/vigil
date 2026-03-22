@@ -14,6 +14,7 @@ use nucleo_matcher::{
     pattern::{CaseMatching, Normalization, Pattern},
 };
 use ratatui::widgets::ListState;
+use tokio::fs;
 use tokio::task;
 
 use crate::{
@@ -99,6 +100,7 @@ pub struct App {
     pub selected_diff_line_index: usize,
     pub highlight_registry: Option<SharedHighlightRegistry>,
     pub repo_watcher: Option<RepoWatcher>,
+    pub repo_watcher_loading: bool,
     pub help_modal_open: bool,
     pub commit_search_modal_open: bool,
     pub commit_search_query: String,
@@ -116,8 +118,6 @@ pub struct App {
     pub snackbar_generation: u64,
     pub status_message: Option<String>,
 }
-
-//
 
 impl App {
     pub async fn new() -> color_eyre::Result<Self> {
@@ -140,6 +140,7 @@ impl App {
             selected_diff_line_index: 0,
             highlight_registry: None,
             repo_watcher: None,
+            repo_watcher_loading: false,
             help_modal_open: false,
             commit_search_modal_open: false,
             commit_search_query: String::new(),
@@ -227,11 +228,32 @@ impl App {
                         }
                     }
                 }
+                Event::RepoWatcherReady(repo_root, result) => {
+                    if repo_root == self.repo_root {
+                        self.repo_watcher_loading = false;
+                        match result {
+                            Ok(watcher) => {
+                                self.repo_watcher = Some(watcher);
+                            }
+                            Err(error) => {
+                                self.repo_watcher = None;
+                                self.status_message = Some(format!("watcher unavailable: {error}"));
+                            }
+                        }
+
+                        if self.running {
+                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        }
+                    }
+                }
                 Event::RepoChanged(paths) => {
                     if self.is_working_tree_mode()
                         && git::should_refresh_for_paths(&self.repo_root, &paths).await?
                     {
                         self.refresh().await?;
+                        if self.should_restart_watcher_for_paths(&paths).await {
+                            self.restart_repo_watcher();
+                        }
                         if self.running {
                             terminal.draw(|frame| ui::render(frame, &mut self))?;
                         }
@@ -1054,14 +1076,24 @@ impl App {
         });
     }
 
-    fn start_repo_watcher(&mut self) -> Option<String> {
-        match RepoWatcher::new(self.repo_root.clone(), self.events.sender()) {
-            Ok(watcher) => {
-                self.repo_watcher = Some(watcher);
-                None
-            }
-            Err(error) => Some(error.to_string()),
+    fn spawn_repo_watcher_init(&mut self) {
+        if self.repo_watcher_loading {
+            return;
         }
+
+        self.repo_watcher_loading = true;
+        let repo_root = self.repo_root.clone();
+        let sender = self.events.sender();
+        task::spawn(async move {
+            let result = RepoWatcher::initialize(repo_root.clone(), sender.clone()).await;
+            let _ = sender.send(Event::RepoWatcherReady(repo_root, result));
+        });
+    }
+
+    fn restart_repo_watcher(&mut self) {
+        self.repo_watcher = None;
+        self.repo_watcher_loading = false;
+        self.spawn_repo_watcher_init();
     }
 
     fn quit(&mut self) {
@@ -1132,17 +1164,14 @@ impl App {
     async fn sync_repo_state(&mut self) -> color_eyre::Result<()> {
         let resolved_root = git::resolve_repo_root().await?;
         let watcher_needs_restart = self.repo_error.is_some()
-            || self.repo_watcher.is_none()
+            || (!self.repo_watcher_loading && self.repo_watcher.is_none())
             || self.repo_root != resolved_root;
 
         self.repo_root = resolved_root;
         self.repo_error = None;
 
         if watcher_needs_restart {
-            self.repo_watcher = None;
-            if let Some(error) = self.start_repo_watcher() {
-                self.status_message = Some(format!("watcher unavailable: {error}"));
-            }
+            self.restart_repo_watcher();
         }
 
         Ok(())
@@ -1151,6 +1180,7 @@ impl App {
     async fn enter_repo_error_state(&mut self, error: String) -> color_eyre::Result<()> {
         self.repo_error = Some(error);
         self.repo_watcher = None;
+        self.repo_watcher_loading = false;
         self.files.clear();
         self.rebuild_sidebar_items();
         self.selected_file_index = 0;
@@ -1182,6 +1212,25 @@ impl App {
                 )
             }
         }
+    }
+
+    async fn should_restart_watcher_for_paths(&self, paths: &[PathBuf]) -> bool {
+        for path in paths {
+            if path
+                .file_name()
+                .is_some_and(|file_name| file_name == ".gitignore")
+            {
+                return true;
+            }
+
+            if let Ok(metadata) = fs::metadata(path).await {
+                if metadata.is_dir() {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
