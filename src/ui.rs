@@ -170,6 +170,73 @@ pub fn sidebar_file_at(
     }
 }
 
+pub fn diff_gap_click_at(
+    app: &mut App,
+    mouse_column: u16,
+    mouse_row: u16,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> Option<usize> {
+    if app.show_splash() {
+        return None;
+    }
+
+    let terminal_area = Rect::new(0, 0, terminal_width, terminal_height);
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(38), Constraint::Min(40)])
+        .split(terminal_area);
+    let diff_area = layout[1];
+    let title = app
+        .files
+        .get(app.selected_file_index)
+        .map(|file| file.label.clone())
+        .unwrap_or_else(|| "No file selected".to_string());
+    let mode_label = app.review_mode_label();
+    let right_title = match app.active_pane {
+        ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
+        ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
+    };
+    let block = bordered_panel(
+        &title,
+        app.active_pane == ActivePane::Diff,
+        Some(if mode_label.is_empty() {
+            right_title
+        } else {
+            format!("{right_title}  {mode_label}")
+        }),
+    );
+    let inner = block.inner(diff_area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+    let body_area = chunks[0];
+    let point = Position::new(mouse_column, mouse_row);
+    if !body_area.contains(point) {
+        return None;
+    }
+
+    let rendered_lines = app
+        .diff_view
+        .rendered_lines(app.diff_view_mode, body_area.width as usize);
+    let viewport_height = body_area.height as usize;
+    let max_scroll = rendered_lines
+        .len()
+        .saturating_sub(viewport_height)
+        .min(u16::MAX as usize) as u16;
+    let visible_start = (app.diff_scroll as usize).min(max_scroll as usize);
+    let display_index = visible_start + mouse_row.saturating_sub(body_area.y) as usize;
+    if display_index >= rendered_lines.len() {
+        return None;
+    }
+
+    app.diff_view
+        .selected_gap_action(app.diff_view_mode, display_index)?;
+
+    Some(display_index)
+}
+
 fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = bordered_panel(
         "Changed Files",
@@ -516,7 +583,7 @@ fn render_discard_modal(frame: &mut Frame, app: &App) {
 }
 
 fn render_help_modal(frame: &mut Frame, app: &App) {
-    let area = centered_rect(76, 18, frame.area());
+    let area = centered_rect(76, 20, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -640,6 +707,20 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
                 Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
             ),
             Span::styled("open in editor", Style::new().fg(text_muted_color())),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "enter on gap  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("expand selected gap row", Style::new().fg(text_muted_color())),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "click gap rows  ",
+                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("top row expands up, bottom row expands down", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(

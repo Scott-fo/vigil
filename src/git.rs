@@ -8,7 +8,7 @@ use std::{
 
 use color_eyre::eyre::{WrapErr, eyre};
 use ratatui::{
-    style::Style,
+    style::{Modifier, Style},
     text::{Line, Span},
 };
 use tokio::{fs, process::Command};
@@ -77,8 +77,12 @@ pub struct BranchCompareSelection {
 pub struct DiffView {
     rows: Vec<DiffRow>,
     pub note: Option<String>,
-    render_cache: DiffRenderCache,
-    nav_cache: DiffNavCache,
+    hunks: Vec<DiffHunkBlock>,
+    gaps: Vec<DiffHunkGap>,
+    gap_expansions: HashMap<usize, DiffGapExpansion>,
+    file_lines: Option<Vec<String>>,
+    highlighted_file_lines: Option<Vec<Vec<Span<'static>>>>,
+    display_cache: DiffDisplayCache,
 }
 
 impl DiffView {
@@ -86,57 +90,36 @@ impl DiffView {
         Self {
             rows: Vec::new(),
             note: Some(message.into()),
-            render_cache: DiffRenderCache::default(),
-            nav_cache: DiffNavCache::default(),
+            hunks: Vec::new(),
+            gaps: Vec::new(),
+            gap_expansions: HashMap::new(),
+            file_lines: None,
+            highlighted_file_lines: None,
+            display_cache: DiffDisplayCache::default(),
         }
     }
 
     pub fn rendered_lines(&mut self, mode: DiffViewMode, width: usize) -> &[Line<'static>] {
-        let cache_is_stale = {
-            let cache = self.render_cache.entry(mode);
-            !cache.valid || cache.width != width
-        };
-
-        if cache_is_stale {
-            let lines = if self.rows.is_empty() {
-                vec![Line::from(Span::styled(
-                    self.note
-                        .clone()
-                        .unwrap_or_else(|| "No textual diff available.".to_string()),
-                    ui::diff_meta_style(),
-                ))]
-            } else {
-                match mode {
-                    DiffViewMode::Unified => render_unified_lines(&self.rows, width),
-                    DiffViewMode::Split => render_split_lines(&self.rows, width),
-                }
-            };
-
-            let cache = self.render_cache.entry_mut(mode);
-            cache.width = width;
-            cache.lines = lines;
-            cache.valid = true;
-        }
-
-        &self.render_cache.entry(mode).lines
+        self.ensure_display_cache(mode, width);
+        &self.display_cache.entry(mode).lines
     }
 
     pub fn first_selectable_index(&mut self, mode: DiffViewMode) -> usize {
-        self.nav_entries(mode)
+        self.nav_targets(mode)
             .iter()
-            .position(Option::is_some)
+            .position(|target| target.is_some())
             .unwrap_or(0)
     }
 
     pub fn last_selectable_index(&mut self, mode: DiffViewMode) -> usize {
-        self.nav_entries(mode)
+        self.nav_targets(mode)
             .iter()
-            .rposition(Option::is_some)
+            .rposition(|target| target.is_some())
             .unwrap_or(0)
     }
 
     pub fn move_selection(&mut self, mode: DiffViewMode, current: usize, delta: i32) -> usize {
-        let nav = self.nav_entries(mode);
+        let nav = self.nav_targets(mode);
         if nav.is_empty() {
             return 0;
         }
@@ -172,44 +155,276 @@ impl DiffView {
     }
 
     pub fn selected_line_number(&mut self, mode: DiffViewMode, index: usize) -> Option<usize> {
-        self.nav_entries(mode).get(index).copied().flatten()
+        match self.nav_targets(mode).get(index).copied().flatten() {
+            Some(DisplayNavTarget::Line(line_number)) => Some(line_number),
+            _ => None,
+        }
+    }
+
+    pub fn selected_gap_index(&mut self, mode: DiffViewMode, index: usize) -> Option<usize> {
+        self.selected_gap_action(mode, index)
+            .map(|(gap_index, _)| gap_index)
+    }
+
+    pub fn selected_gap_action(
+        &mut self,
+        mode: DiffViewMode,
+        index: usize,
+    ) -> Option<(usize, GapExpandDirection)> {
+        match self.nav_targets(mode).get(index).copied().flatten() {
+            Some(DisplayNavTarget::Gap(gap_index, direction)) => Some((gap_index, direction)),
+            _ => None,
+        }
     }
 
     pub fn display_line_count(&mut self, mode: DiffViewMode) -> usize {
-        self.nav_entries(mode).len()
+        self.nav_targets(mode).len()
     }
 
-    fn nav_entries(&mut self, mode: DiffViewMode) -> &[Option<usize>] {
-        let cache = self.nav_cache.entry(mode);
-        let needs_build = !cache.valid;
-        if needs_build {
-            let entries = match mode {
-                DiffViewMode::Unified => build_unified_nav_entries(&self.rows),
-                DiffViewMode::Split => build_split_nav_entries(&self.rows),
-            };
-            let cache = self.nav_cache.entry_mut(mode);
-            cache.entries = entries;
-            cache.valid = true;
+    pub fn expand_selected_gap(
+        &mut self,
+        mode: DiffViewMode,
+        index: usize,
+        amount: usize,
+    ) -> usize {
+        let Some((gap_index, direction)) = self.selected_gap_action(mode, index) else {
+            return index;
+        };
+        let _ = self.expand_gap(gap_index, direction, amount);
+        self.nav_targets(mode)
+            .iter()
+            .position(|target| {
+                matches!(
+                    target,
+                    Some(DisplayNavTarget::Gap(candidate, candidate_direction))
+                        if *candidate == gap_index && *candidate_direction == direction
+                )
+            })
+            .unwrap_or(index.min(self.nav_targets(mode).len().saturating_sub(1)))
+    }
+
+    fn expand_gap(
+        &mut self,
+        gap_index: usize,
+        direction: GapExpandDirection,
+        amount: usize,
+    ) -> bool {
+        let Some(gap) = self.gaps.iter().find(|gap| gap.gap_index == gap_index) else {
+            return false;
+        };
+
+        let expansion = self.gap_expansions.entry(gap_index).or_default();
+        let remaining = gap
+            .new_count
+            .saturating_sub(expansion.from_previous + expansion.from_next);
+        if remaining == 0 {
+            return false;
         }
-        &self.nav_cache.entry(mode).entries
+
+        let applied = amount.max(1).min(remaining);
+        match direction {
+            GapExpandDirection::Up => expansion.from_previous += applied,
+            GapExpandDirection::Down => expansion.from_next += applied,
+        }
+        self.invalidate_display_cache();
+        true
+    }
+
+    fn ensure_display_cache(&mut self, mode: DiffViewMode, width: usize) {
+        let cache_is_stale = {
+            let cache = self.display_cache.entry(mode);
+            !cache.valid || cache.width != width
+        };
+
+        if !cache_is_stale {
+            return;
+        }
+
+        let (lines, nav) = if self.rows.is_empty() {
+            (
+                vec![Line::from(Span::styled(
+                    self.note
+                        .clone()
+                        .unwrap_or_else(|| "No textual diff available.".to_string()),
+                    ui::diff_meta_style(),
+                ))],
+                vec![None],
+            )
+        } else {
+            match mode {
+                DiffViewMode::Unified => self.build_unified_display(width),
+                DiffViewMode::Split => self.build_split_display(width),
+            }
+        };
+
+        let cache = self.display_cache.entry_mut(mode);
+        cache.width = width;
+        cache.lines = lines;
+        cache.nav = nav;
+        cache.valid = true;
+    }
+
+    fn nav_targets(&mut self, mode: DiffViewMode) -> &[Option<DisplayNavTarget>] {
+        self.ensure_display_cache(mode, 0);
+        &self.display_cache.entry(mode).nav
+    }
+
+    fn build_unified_display(
+        &self,
+        width: usize,
+    ) -> (Vec<Line<'static>>, Vec<Option<DisplayNavTarget>>) {
+        let mut lines = Vec::new();
+        let mut nav = Vec::new();
+
+        for (hunk_offset, hunk) in self.hunks.iter().enumerate() {
+            for row in &self.rows[hunk.row_start..hunk.row_end] {
+                let line_number = match row.kind {
+                    DiffLineKind::Added | DiffLineKind::Context => row.new_line,
+                    DiffLineKind::Removed => row.old_line,
+                };
+                lines.push(render_unified_code_line(row, width));
+                nav.push(line_number.map(DisplayNavTarget::Line));
+            }
+
+            if let Some(gap) = self.gaps.get(hunk_offset) {
+                self.push_gap_display_rows(&mut lines, &mut nav, gap, width, false);
+            }
+        }
+
+        (lines, nav)
+    }
+
+    fn build_split_display(
+        &self,
+        width: usize,
+    ) -> (Vec<Line<'static>>, Vec<Option<DisplayNavTarget>>) {
+        let total_width = width.saturating_sub(1);
+        let gutter_width = 3;
+        let side_width = total_width.saturating_sub(gutter_width) / 2;
+        let mut lines = Vec::new();
+        let mut nav = Vec::new();
+
+        for (hunk_offset, hunk) in self.hunks.iter().enumerate() {
+            for (line, target_line) in
+                render_split_hunk_rows(&self.rows[hunk.row_start..hunk.row_end], side_width)
+            {
+                lines.push(line);
+                nav.push(target_line.map(DisplayNavTarget::Line));
+            }
+
+            if let Some(gap) = self.gaps.get(hunk_offset) {
+                self.push_gap_display_rows(&mut lines, &mut nav, gap, total_width, true);
+            }
+        }
+
+        (lines, nav)
+    }
+
+    fn push_gap_display_rows(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        nav: &mut Vec<Option<DisplayNavTarget>>,
+        gap: &DiffHunkGap,
+        width: usize,
+        split: bool,
+    ) {
+        let expansion = self
+            .gap_expansions
+            .get(&gap.gap_index)
+            .copied()
+            .unwrap_or_default();
+        let context_after_count = expansion.from_previous.min(gap.new_count);
+        let remaining_after_previous = gap.new_count.saturating_sub(context_after_count);
+        let context_before_count = expansion.from_next.min(remaining_after_previous);
+
+        if let Some(file_lines) = self.file_lines.as_ref() {
+            let start = gap.new_start.saturating_sub(1);
+            for offset in 0..context_after_count {
+                let line_number = gap.new_start + offset;
+                let text = file_lines.get(start + offset).cloned().unwrap_or_default();
+                lines.push(render_expanded_context_line(
+                    line_number,
+                    &text,
+                    self.highlighted_file_lines
+                        .as_ref()
+                        .and_then(|highlighted| highlighted.get(start + offset))
+                        .cloned(),
+                    width,
+                    split,
+                ));
+                nav.push(Some(DisplayNavTarget::Line(line_number)));
+            }
+        }
+
+        let remaining = gap
+            .new_count
+            .saturating_sub(context_after_count + context_before_count);
+        if remaining > 0 {
+            lines.push(render_expand_gap_line(
+                width,
+                remaining,
+                expansion.from_previous > 0,
+                GapExpandDirection::Up,
+            ));
+            nav.push(Some(DisplayNavTarget::Gap(
+                gap.gap_index,
+                GapExpandDirection::Up,
+            )));
+            lines.push(render_expand_gap_line(
+                width,
+                remaining,
+                expansion.from_next > 0,
+                GapExpandDirection::Down,
+            ));
+            nav.push(Some(DisplayNavTarget::Gap(
+                gap.gap_index,
+                GapExpandDirection::Down,
+            )));
+        }
+
+        if let Some(file_lines) = self.file_lines.as_ref() {
+            let start = gap
+                .new_start
+                .saturating_sub(1)
+                .saturating_add(gap.new_count.saturating_sub(context_before_count));
+            for offset in 0..context_before_count {
+                let line_number = gap.new_start + gap.new_count - context_before_count + offset;
+                let text = file_lines.get(start + offset).cloned().unwrap_or_default();
+                lines.push(render_expanded_context_line(
+                    line_number,
+                    &text,
+                    self.highlighted_file_lines
+                        .as_ref()
+                        .and_then(|highlighted| highlighted.get(start + offset))
+                        .cloned(),
+                    width,
+                    split,
+                ));
+                nav.push(Some(DisplayNavTarget::Line(line_number)));
+            }
+        }
+    }
+
+    fn invalidate_display_cache(&mut self) {
+        self.display_cache = DiffDisplayCache::default();
     }
 }
 
 #[derive(Debug, Default)]
-struct DiffRenderCache {
-    unified: CachedLines,
-    split: CachedLines,
+struct DiffDisplayCache {
+    unified: CachedDisplay,
+    split: CachedDisplay,
 }
 
-impl DiffRenderCache {
-    fn entry(&self, mode: DiffViewMode) -> &CachedLines {
+impl DiffDisplayCache {
+    fn entry(&self, mode: DiffViewMode) -> &CachedDisplay {
         match mode {
             DiffViewMode::Unified => &self.unified,
             DiffViewMode::Split => &self.split,
         }
     }
 
-    fn entry_mut(&mut self, mode: DiffViewMode) -> &mut CachedLines {
+    fn entry_mut(&mut self, mode: DiffViewMode) -> &mut CachedDisplay {
         match mode {
             DiffViewMode::Unified => &mut self.unified,
             DiffViewMode::Split => &mut self.split,
@@ -218,38 +433,17 @@ impl DiffRenderCache {
 }
 
 #[derive(Debug, Default)]
-struct CachedLines {
+struct CachedDisplay {
     width: usize,
     lines: Vec<Line<'static>>,
+    nav: Vec<Option<DisplayNavTarget>>,
     valid: bool,
 }
 
-#[derive(Debug, Default)]
-struct DiffNavCache {
-    unified: CachedNav,
-    split: CachedNav,
-}
-
-impl DiffNavCache {
-    fn entry(&self, mode: DiffViewMode) -> &CachedNav {
-        match mode {
-            DiffViewMode::Unified => &self.unified,
-            DiffViewMode::Split => &self.split,
-        }
-    }
-
-    fn entry_mut(&mut self, mode: DiffViewMode) -> &mut CachedNav {
-        match mode {
-            DiffViewMode::Unified => &mut self.unified,
-            DiffViewMode::Split => &mut self.split,
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct CachedNav {
-    entries: Vec<Option<usize>>,
-    valid: bool,
+#[derive(Debug, Clone, Copy)]
+enum DisplayNavTarget {
+    Line(usize),
+    Gap(usize, GapExpandDirection),
 }
 
 #[derive(Debug, Clone)]
@@ -268,11 +462,37 @@ enum DiffLineKind {
 
 #[derive(Debug, Clone)]
 struct DiffRow {
-    hunk_index: usize,
     kind: DiffLineKind,
     old_line: Option<usize>,
     new_line: Option<usize>,
     content: Vec<Span<'static>>,
+}
+
+#[derive(Debug, Clone)]
+struct DiffHunkBlock {
+    new_start: usize,
+    new_count: usize,
+    row_start: usize,
+    row_end: usize,
+}
+
+#[derive(Debug, Clone)]
+struct DiffHunkGap {
+    gap_index: usize,
+    new_start: usize,
+    new_count: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct DiffGapExpansion {
+    from_previous: usize,
+    from_next: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GapExpandDirection {
+    Up,
+    Down,
 }
 
 static HIGHLIGHT_NAMES: &[&str] = &[
@@ -452,8 +672,8 @@ pub async fn load_blame_commit_details(
             } else {
                 header.summary
             },
-            description:
-                "This line has uncommitted changes. Commit comparison is unavailable.".to_string(),
+            description: "This line has uncommitted changes. Commit comparison is unavailable."
+                .to_string(),
             is_uncommitted: true,
             compare_selection: None,
         });
@@ -758,11 +978,22 @@ pub fn build_diff_view_from_preview_data(
     }
 
     let mut highlighter = SyntaxHighlighter::new(highlight_registry);
+    let (rows, hunks, gaps) = build_diff_rows(&preview.diff, file.filetype, &mut highlighter);
+    let highlighted_file_lines = preview.context_lines.as_ref().map(|lines| {
+        lines
+            .iter()
+            .map(|line| highlighter.highlight_line(file.filetype, line, ui::diff_context_style()))
+            .collect::<Vec<_>>()
+    });
     Ok(DiffView {
-        rows: build_diff_rows(&preview.diff, file.filetype, &mut highlighter),
+        rows,
         note: preview.note.clone(),
-        render_cache: DiffRenderCache::default(),
-        nav_cache: DiffNavCache::default(),
+        hunks,
+        gaps,
+        gap_expansions: HashMap::new(),
+        file_lines: preview.context_lines.clone(),
+        highlighted_file_lines,
+        display_cache: DiffDisplayCache::default(),
     })
 }
 
@@ -770,6 +1001,7 @@ pub fn build_diff_view_from_preview_data(
 pub struct DiffPreviewData {
     diff: String,
     note: Option<String>,
+    context_lines: Option<Vec<String>>,
 }
 
 async fn load_file_preview(
@@ -801,10 +1033,21 @@ async fn load_commit_preview(
         ],
     )
     .await?;
+    let context_lines = if diff_needs_context_lines(&output) {
+        load_revision_file_lines(
+            repo_root,
+            selection.commit_hash.as_str(),
+            file.path.as_str(),
+        )
+        .await?
+    } else {
+        None
+    };
 
     Ok(DiffPreviewData {
         diff: output,
         note: None,
+        context_lines,
     })
 }
 
@@ -825,10 +1068,17 @@ async fn load_branch_preview(
         ],
     )
     .await?;
+    let context_lines = if diff_needs_context_lines(&output) {
+        load_revision_file_lines(repo_root, selection.source_ref.as_str(), file.path.as_str())
+            .await?
+    } else {
+        None
+    };
 
     Ok(DiffPreviewData {
         diff: output,
         note: None,
+        context_lines,
     })
 }
 
@@ -848,9 +1098,15 @@ async fn load_tracked_preview(
         ],
     )
     .await?;
+    let context_lines = if diff_needs_context_lines(&output) {
+        load_working_tree_file_lines(repo_root, file_path).await?
+    } else {
+        None
+    };
     Ok(DiffPreviewData {
         diff: output,
         note: None,
+        context_lines,
     })
 }
 
@@ -864,6 +1120,7 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Directory or symlinked directory; no preview available.".to_string()),
+                context_lines: None,
             });
         }
         Ok(_) => {}
@@ -871,6 +1128,7 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Unable to read untracked file content.".to_string()),
+                context_lines: None,
             });
         }
     }
@@ -881,6 +1139,7 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Unable to read untracked file content.".to_string()),
+                context_lines: None,
             });
         }
     };
@@ -889,18 +1148,29 @@ async fn load_untracked_preview(
         return Ok(DiffPreviewData {
             diff: String::new(),
             note: Some("Binary or non-text file; no preview available.".to_string()),
+            context_lines: None,
         });
     }
 
     let content = String::from_utf8_lossy(&bytes);
     let diff = create_untracked_file_diff(file_path, &content);
+    let context_lines = if diff_needs_context_lines(&diff) {
+        Some(split_lines_for_context(&content))
+    } else {
+        None
+    };
     Ok(if diff.trim().is_empty() {
         DiffPreviewData {
             diff,
             note: Some("Untracked empty file; no textual hunk to preview.".to_string()),
+            context_lines: Some(split_lines_for_context(&content)),
         }
     } else {
-        DiffPreviewData { diff, note: None }
+        DiffPreviewData {
+            diff,
+            note: None,
+            context_lines,
+        }
     })
 }
 
@@ -909,6 +1179,75 @@ async fn is_directory_status_entry(repo_root: &Path, path: &str) -> bool {
         Ok(metadata) => metadata.is_dir(),
         Err(_) => false,
     }
+}
+
+async fn load_working_tree_file_lines(
+    repo_root: &Path,
+    file_path: &str,
+) -> color_eyre::Result<Option<Vec<String>>> {
+    let full_path = repo_root.join(file_path);
+    let bytes = match fs::read(full_path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(None),
+    };
+    if bytes.contains(&0) {
+        return Ok(None);
+    }
+
+    Ok(Some(split_lines_for_context(&String::from_utf8_lossy(
+        &bytes,
+    ))))
+}
+
+async fn load_revision_file_lines(
+    repo_root: &Path,
+    revision: &str,
+    file_path: &str,
+) -> color_eyre::Result<Option<Vec<String>>> {
+    let spec = format!("{revision}:{file_path}");
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["show", spec.as_str()])
+        .output()
+        .await
+        .wrap_err_with(|| format!("failed to load {spec}"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+    if output.stdout.contains(&0) {
+        return Ok(None);
+    }
+
+    Ok(Some(split_lines_for_context(&String::from_utf8_lossy(
+        &output.stdout,
+    ))))
+}
+
+fn split_lines_for_context(content: &str) -> Vec<String> {
+    let normalized = content.replace("\r\n", "\n");
+    let mut lines = normalized
+        .split('\n')
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if normalized.ends_with('\n') {
+        let _ = lines.pop();
+    }
+    lines
+}
+
+fn diff_needs_context_lines(diff: &str) -> bool {
+    let mut hunk_count = 0usize;
+    for line in diff.lines() {
+        if line.starts_with("@@ -") {
+            hunk_count += 1;
+            if hunk_count > 1 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 async fn git_output(repo_root: &Path, args: &[&str]) -> color_eyre::Result<String> {
@@ -1312,28 +1651,48 @@ fn resolve_diff_filetype(path: &str) -> Option<&'static str> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ParsedHunkHeader {
+    old_start: usize,
+    new_start: usize,
+    new_count: usize,
+}
+
 fn build_diff_rows(
     diff: &str,
     filetype: Option<&'static str>,
     highlighter: &mut SyntaxHighlighter,
-) -> Vec<DiffRow> {
+) -> (Vec<DiffRow>, Vec<DiffHunkBlock>, Vec<DiffHunkGap>) {
     let normalized = diff.replace("\r\n", "\n");
     let mut rows = Vec::new();
+    let mut hunks = Vec::new();
     let mut old_line = 0usize;
     let mut new_line = 0usize;
     let mut in_hunk = false;
     let mut hunk_index = 0usize;
+    let mut current_hunk_header: Option<ParsedHunkHeader> = None;
+    let mut current_row_start = 0usize;
 
     for raw_line in normalized.split('\n') {
         if raw_line.is_empty() && rows.is_empty() {
             continue;
         }
 
-        if let Some((parsed_old_line, parsed_new_line)) = parse_hunk_header(raw_line) {
-            old_line = parsed_old_line;
-            new_line = parsed_new_line;
+        if let Some(header) = parse_hunk_header(raw_line) {
+            if let Some(previous_header) = current_hunk_header.take() {
+                hunks.push(DiffHunkBlock {
+                    new_start: previous_header.new_start,
+                    new_count: previous_header.new_count,
+                    row_start: current_row_start,
+                    row_end: rows.len(),
+                });
+            }
+            current_row_start = rows.len();
+            old_line = header.old_start;
+            new_line = header.new_start;
             in_hunk = true;
             hunk_index = hunk_index.saturating_add(1);
+            current_hunk_header = Some(header);
             continue;
         }
 
@@ -1351,7 +1710,6 @@ fn build_diff_rows(
         match marker {
             '+' => {
                 rows.push(render_diff_row(
-                    hunk_index,
                     None,
                     Some(new_line),
                     content,
@@ -1363,7 +1721,6 @@ fn build_diff_rows(
             }
             '-' => {
                 rows.push(render_diff_row(
-                    hunk_index,
                     Some(old_line),
                     None,
                     content,
@@ -1375,7 +1732,6 @@ fn build_diff_rows(
             }
             ' ' => {
                 rows.push(render_diff_row(
-                    hunk_index,
                     Some(old_line),
                     Some(new_line),
                     content,
@@ -1390,10 +1746,35 @@ fn build_diff_rows(
         }
     }
 
-    rows
+    if let Some(previous_header) = current_hunk_header.take() {
+        hunks.push(DiffHunkBlock {
+            new_start: previous_header.new_start,
+            new_count: previous_header.new_count,
+            row_start: current_row_start,
+            row_end: rows.len(),
+        });
+    }
+
+    let mut gaps = Vec::new();
+    for (gap_index, pair) in hunks.windows(2).enumerate() {
+        let previous = &pair[0];
+        let next = &pair[1];
+        let new_start = previous.new_start.saturating_add(previous.new_count);
+        let new_count = next.new_start.saturating_sub(new_start);
+        if new_count == 0 {
+            continue;
+        }
+        gaps.push(DiffHunkGap {
+            gap_index,
+            new_start,
+            new_count,
+        });
+    }
+
+    (rows, hunks, gaps)
 }
 
-fn parse_hunk_header(raw_line: &str) -> Option<(usize, usize)> {
+fn parse_hunk_header(raw_line: &str) -> Option<ParsedHunkHeader> {
     if !raw_line.starts_with("@@ -") {
         return None;
     }
@@ -1404,11 +1785,19 @@ fn parse_hunk_header(raw_line: &str) -> Option<(usize, usize)> {
 
     let old_start = old_part.split(',').next()?.parse::<usize>().ok()?;
     let new_start = new_part.split(',').next()?.parse::<usize>().ok()?;
-    Some((old_start, new_start))
+    let new_count = new_part
+        .split_once(',')
+        .and_then(|(_, count)| count.parse::<usize>().ok())
+        .unwrap_or(1);
+
+    Some(ParsedHunkHeader {
+        old_start,
+        new_start,
+        new_count,
+    })
 }
 
 fn render_diff_row(
-    hunk_index: usize,
     old_line: Option<usize>,
     new_line: Option<usize>,
     content: &str,
@@ -1417,7 +1806,6 @@ fn render_diff_row(
     highlighter: &mut SyntaxHighlighter,
 ) -> DiffRow {
     DiffRow {
-        hunk_index,
         kind,
         old_line,
         new_line,
@@ -1425,136 +1813,10 @@ fn render_diff_row(
     }
 }
 
-fn build_unified_nav_entries(rows: &[DiffRow]) -> Vec<Option<usize>> {
-    let mut entries = Vec::with_capacity(rows.len());
-    let mut last_hunk_index = None;
-
-    for row in rows {
-        if let Some(previous_hunk_index) = last_hunk_index {
-            if row.hunk_index != previous_hunk_index {
-                entries.push(None);
-            }
-        }
-
-        entries.push(match row.kind {
-            DiffLineKind::Added | DiffLineKind::Context => row.new_line,
-            DiffLineKind::Removed => row.old_line,
-        });
-        last_hunk_index = Some(row.hunk_index);
-    }
-
-    entries
-}
-
-fn build_split_nav_entries(rows: &[DiffRow]) -> Vec<Option<usize>> {
-    let mut entries = Vec::with_capacity(rows.len());
-    let mut pending_removed: Vec<&DiffRow> = Vec::new();
-    let mut pending_added: Vec<&DiffRow> = Vec::new();
-    let mut last_hunk_index = None;
-
-    let flush_pending = |entries: &mut Vec<Option<usize>>,
-                         removed: &mut Vec<&DiffRow>,
-                         added: &mut Vec<&DiffRow>| {
-        let row_count = removed.len().max(added.len());
-        for index in 0..row_count {
-            let left = removed.get(index).copied();
-            let right = added.get(index).copied();
-            entries.push(resolve_split_target_line(left, right));
-        }
-        removed.clear();
-        added.clear();
-    };
-
-    for row in rows {
-        if let Some(previous_hunk_index) = last_hunk_index {
-            if row.hunk_index != previous_hunk_index {
-                flush_pending(&mut entries, &mut pending_removed, &mut pending_added);
-                entries.push(None);
-            }
-        }
-        last_hunk_index = Some(row.hunk_index);
-
-        match row.kind {
-            DiffLineKind::Removed => pending_removed.push(row),
-            DiffLineKind::Added => pending_added.push(row),
-            DiffLineKind::Context => {
-                flush_pending(&mut entries, &mut pending_removed, &mut pending_added);
-                entries.push(resolve_split_target_line(Some(row), Some(row)));
-            }
-        }
-    }
-
-    flush_pending(&mut entries, &mut pending_removed, &mut pending_added);
-    entries
-}
-
 fn resolve_split_target_line(left: Option<&DiffRow>, right: Option<&DiffRow>) -> Option<usize> {
     right
         .and_then(|row| row.new_line)
         .or_else(|| left.and_then(|row| row.old_line))
-}
-
-fn render_unified_lines(rows: &[DiffRow], width: usize) -> Vec<Line<'static>> {
-    let mut rendered = Vec::with_capacity(rows.len());
-    let mut last_hunk_index = None;
-
-    for row in rows {
-        if let Some(previous_hunk_index) = last_hunk_index {
-            if row.hunk_index != previous_hunk_index {
-                rendered.push(render_hunk_separator(width));
-            }
-        }
-
-        rendered.push(render_unified_code_line(row, width));
-        last_hunk_index = Some(row.hunk_index);
-    }
-
-    rendered
-}
-
-fn render_split_lines(rows: &[DiffRow], width: usize) -> Vec<Line<'static>> {
-    let total_width = width.saturating_sub(1);
-    let gutter_width = 3;
-    let side_width = total_width.saturating_sub(gutter_width) / 2;
-    let mut rendered = Vec::with_capacity(rows.len());
-    let mut pending_removed: Vec<&DiffRow> = Vec::new();
-    let mut pending_added: Vec<&DiffRow> = Vec::new();
-    let mut last_hunk_index = None;
-
-    let flush_pending = |rendered: &mut Vec<Line<'static>>,
-                         removed: &mut Vec<&DiffRow>,
-                         added: &mut Vec<&DiffRow>| {
-        let row_count = removed.len().max(added.len());
-        for index in 0..row_count {
-            let left = removed.get(index).copied();
-            let right = added.get(index).copied();
-            rendered.push(render_split_pair_line(left, right, side_width));
-        }
-        removed.clear();
-        added.clear();
-    };
-
-    for row in rows {
-        if let Some(previous_hunk_index) = last_hunk_index {
-            if row.hunk_index != previous_hunk_index {
-                flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
-                rendered.push(render_hunk_separator(total_width));
-            }
-        }
-        last_hunk_index = Some(row.hunk_index);
-
-        match row.kind {
-            DiffLineKind::Removed => pending_removed.push(row),
-            DiffLineKind::Added => pending_added.push(row),
-            DiffLineKind::Context => {
-                flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
-                rendered.push(render_split_pair_line(Some(row), Some(row), side_width));
-            }
-        }
-    }
-
-    flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
-    rendered
 }
 
 fn render_unified_code_line(row: &DiffRow, width: usize) -> Line<'static> {
@@ -1599,11 +1861,95 @@ fn render_split_pair_line(
     Line::from(spans)
 }
 
-fn render_hunk_separator(width: usize) -> Line<'static> {
-    Line::from(Span::styled(
-        " ".repeat(width.max(1)),
-        ui::diff_context_style(),
-    ))
+fn render_split_hunk_rows(
+    rows: &[DiffRow],
+    side_width: usize,
+) -> Vec<(Line<'static>, Option<usize>)> {
+    let mut rendered = Vec::with_capacity(rows.len());
+    let mut pending_removed: Vec<&DiffRow> = Vec::new();
+    let mut pending_added: Vec<&DiffRow> = Vec::new();
+
+    let flush_pending = |rendered: &mut Vec<(Line<'static>, Option<usize>)>,
+                         removed: &mut Vec<&DiffRow>,
+                         added: &mut Vec<&DiffRow>| {
+        let row_count = removed.len().max(added.len());
+        for index in 0..row_count {
+            let left = removed.get(index).copied();
+            let right = added.get(index).copied();
+            rendered.push((
+                render_split_pair_line(left, right, side_width),
+                resolve_split_target_line(left, right),
+            ));
+        }
+        removed.clear();
+        added.clear();
+    };
+
+    for row in rows {
+        match row.kind {
+            DiffLineKind::Removed => pending_removed.push(row),
+            DiffLineKind::Added => pending_added.push(row),
+            DiffLineKind::Context => {
+                flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
+                rendered.push((
+                    render_split_pair_line(Some(row), Some(row), side_width),
+                    resolve_split_target_line(Some(row), Some(row)),
+                ));
+            }
+        }
+    }
+
+    flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
+    rendered
+}
+
+fn render_expand_gap_line(
+    width: usize,
+    _remaining: usize,
+    _has_expansion: bool,
+    direction: GapExpandDirection,
+) -> Line<'static> {
+    let hint_style = ui::diff_hunk_style();
+    let action_style = ui::diff_hunk_style().add_modifier(Modifier::BOLD);
+    let label = match direction {
+        GapExpandDirection::Down => "↑↑",
+        GapExpandDirection::Up => "↓↓",
+    };
+    let side_padding = 1;
+    let trailing_padding = width
+        .saturating_sub(side_padding)
+        .saturating_sub(label.width());
+    let mut spans = vec![
+        Span::styled(" ".repeat(side_padding), hint_style),
+        Span::styled(label.to_string(), action_style),
+        Span::styled(" ".repeat(trailing_padding), hint_style),
+    ];
+    spans = fit_spans_to_width(spans, width.max(1), hint_style);
+    Line::from(spans).style(ui::diff_hunk_style())
+}
+
+fn render_expanded_context_line(
+    line_number: usize,
+    text: &str,
+    highlighted_content: Option<Vec<Span<'static>>>,
+    width: usize,
+    split: bool,
+) -> Line<'static> {
+    let row = DiffRow {
+        kind: DiffLineKind::Context,
+        old_line: Some(line_number),
+        new_line: Some(line_number),
+        content: highlighted_content
+            .unwrap_or_else(|| vec![Span::styled(text.to_string(), ui::diff_context_style())]),
+    };
+    if split {
+        let total_width = width.saturating_sub(1);
+        let gutter_width = 3;
+        let side_width = total_width.saturating_sub(gutter_width) / 2;
+        render_split_pair_line(Some(&row), Some(&row), side_width)
+    } else {
+        render_unified_code_line(&row, width)
+    }
 }
 
 fn render_split_side(row: Option<&DiffRow>, left_side: bool, width: usize) -> Vec<Span<'static>> {

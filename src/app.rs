@@ -692,6 +692,22 @@ impl App {
                 }
             }
             KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('e') => {
+                if self.active_pane == ActivePane::Diff && matches!(key_event.code, KeyCode::Enter)
+                {
+                    if self
+                        .diff_view
+                        .selected_gap_action(self.diff_view_mode, self.selected_diff_line_index)
+                        .is_some()
+                    {
+                        self.selected_diff_line_index = self.diff_view.expand_selected_gap(
+                            self.diff_view_mode,
+                            self.selected_diff_line_index,
+                            20,
+                        );
+                        return Ok(None);
+                    }
+                }
+
                 if let Some(file_path) = self.selected_file().map(|file| file.path.clone()) {
                     if self.active_pane == ActivePane::Diff {
                         if let Some(line_number) = self.diff_view.selected_line_number(
@@ -779,6 +795,19 @@ impl App {
             MouseEventKind::ScrollUp => self.page_or_scroll_diff(-3),
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                 let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
+                if let Some(display_index) =
+                    ui::diff_gap_click_at(self, mouse_event.column, mouse_event.row, width, height)
+                {
+                    self.active_pane = ActivePane::Diff;
+                    self.selected_diff_line_index = display_index;
+                    self.selected_diff_line_index = self.diff_view.expand_selected_gap(
+                        self.diff_view_mode,
+                        self.selected_diff_line_index,
+                        20,
+                    );
+                    return Ok(());
+                }
+
                 if let Some(path) =
                     ui::sidebar_file_at(self, mouse_event.column, mouse_event.row, width, height)
                 {

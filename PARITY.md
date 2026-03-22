@@ -94,7 +94,7 @@ Source cues:
 - [x] Selected diff-line highlight
 - [x] Open selected diff line in editor
 - [ ] Sidebar directory collapse / expand
-- [ ] Split-mode context expansion between hunks
+- [x] Split-mode context expansion between hunks
 - [ ] Reviewer-style diff navigation behavior
 
 Source cues:
