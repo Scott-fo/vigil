@@ -2,11 +2,11 @@ use crate::{
     app::{App, AppLaunchOptions},
     git::BlameTarget,
 };
+use color_eyre::eyre::{WrapErr, eyre};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
 };
-use color_eyre::eyre::{WrapErr, eyre};
 use std::{
     io::stdout,
     path::{Path, PathBuf},
@@ -27,7 +27,10 @@ async fn main() -> color_eyre::Result<()> {
     let launch_options = parse_launch_options()?;
     let terminal = ratatui::init();
     let _ = execute!(stdout(), EnableMouseCapture);
-    let result = App::new_with_options(launch_options).await?.run(terminal).await;
+    let result = App::new_with_options(launch_options)
+        .await?
+        .run(terminal)
+        .await;
     ratatui::restore();
     let _ = execute!(stdout(), DisableMouseCapture);
     result
@@ -84,7 +87,12 @@ fn parse_blame_launch_options(target: &str) -> color_eyre::Result<AppLaunchOptio
     let repo_root = resolve_repo_root_for_target(&absolute_file)?;
     let relative_file = absolute_file
         .strip_prefix(&repo_root)
-        .map_err(|_| eyre!("file is not inside the git repository: {}", absolute_file.display()))?
+        .map_err(|_| {
+            eyre!(
+                "file is not inside the git repository: {}",
+                absolute_file.display()
+            )
+        })?
         .to_string_lossy()
         .replace('\\', "/");
 
