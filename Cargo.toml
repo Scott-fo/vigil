@@ -1,0 +1,27 @@
+[package]
+name = "vigil"
+version = "0.1.0"
+description = "An example generated using the event-driven-async template"
+authors = ["scott <scottfo@live.com>"]
+license = "MIT"
+edition = "2024"
+
+[dependencies]
+crossterm = { version = "0.28.1", features = ["event-stream"] }
+futures = "0.3.31"
+ratatui = "0.30.0"
+tokio = { version = "1.50.0", features = ["full"] }
+color-eyre = "0.6.3"
+tree-sitter = "0.25.10"
+tree-sitter-highlight = "0.25.4"
+tree-sitter-javascript = "0.23.1"
+tree-sitter-rust = "0.23"
+notify = "8.2.0"
+unicode-width = "0.2.2"
+
+# Read the optimization guideline for more details: https://ratatui.rs/recipes/apps/release-your-app/#optimizations
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
