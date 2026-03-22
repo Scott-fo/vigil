@@ -567,38 +567,16 @@ impl App {
         file_path: &str,
         terminal: &mut ratatui::DefaultTerminal,
     ) -> color_eyre::Result<()> {
-        let editor_command = std::env::var("VISUAL")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                std::env::var("EDITOR")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-            });
-
-        let Some(editor_command) = editor_command else {
+        let Some(editor_command) = current_editor_command() else {
             self.status_message = Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
             return Ok(());
         };
 
         let full_path = self.repo_root.join(file_path);
-        let quoted_path = quote_shell_arg(&full_path.to_string_lossy());
-
-        let _ = execute!(stdout(), DisableMouseCapture);
-        ratatui::restore();
-
-        let result = task::spawn_blocking(move || {
-            std::process::Command::new("sh")
-                .args(["-lc", &format!("{editor_command} {quoted_path}")])
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-        })
-        .await;
-
-        *terminal = ratatui::init();
-        let _ = execute!(stdout(), EnableMouseCapture);
+        let command = build_editor_shell_command(&editor_command, &full_path, None);
+        let result = self
+            .run_editor_command(command, terminal)
+            .await;
 
         match result {
             Ok(Ok(status)) if status.success() => {
@@ -628,42 +606,16 @@ impl App {
         line_number: usize,
         terminal: &mut ratatui::DefaultTerminal,
     ) -> color_eyre::Result<()> {
-        let editor_command = std::env::var("VISUAL")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                std::env::var("EDITOR")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-            });
-
-        let Some(editor_command) = editor_command else {
+        let Some(editor_command) = current_editor_command() else {
             self.status_message = Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
             return Ok(());
         };
 
         let full_path = self.repo_root.join(file_path);
-        let quoted_target = format!(
-            "{}:{}",
-            quote_shell_arg(&full_path.to_string_lossy()),
-            line_number
-        );
-
-        let _ = execute!(stdout(), DisableMouseCapture);
-        ratatui::restore();
-
-        let result = task::spawn_blocking(move || {
-            std::process::Command::new("sh")
-                .args(["-lc", &format!("{editor_command} {quoted_target}")])
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-        })
-        .await;
-
-        *terminal = ratatui::init();
-        let _ = execute!(stdout(), EnableMouseCapture);
+        let command = build_editor_shell_command(&editor_command, &full_path, Some(line_number));
+        let result = self
+            .run_editor_command(command, terminal)
+            .await;
 
         match result {
             Ok(Ok(status)) if status.success() => {
@@ -685,6 +637,32 @@ impl App {
         }
 
         Ok(())
+    }
+
+    async fn run_editor_command(
+        &mut self,
+        command: String,
+        terminal: &mut ratatui::DefaultTerminal,
+    ) -> Result<Result<std::process::ExitStatus, std::io::Error>, task::JoinError> {
+        self.events.suspend();
+        let _ = execute!(stdout(), DisableMouseCapture);
+        ratatui::restore();
+
+        let result = task::spawn_blocking(move || {
+            std::process::Command::new("sh")
+                .args(["-lc", &command])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+        })
+        .await;
+
+        *terminal = ratatui::init();
+        let _ = execute!(stdout(), EnableMouseCapture);
+        self.events.resume();
+
+        result
     }
 
     fn open_discard_modal(&mut self) {
@@ -842,4 +820,35 @@ impl App {
 
 fn quote_shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn current_editor_command() -> Option<String> {
+    std::env::var("VISUAL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("EDITOR")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+fn build_editor_shell_command(
+    editor_command: &str,
+    full_path: &std::path::Path,
+    line_number: Option<usize>,
+) -> String {
+    let quoted_path = quote_shell_arg(&full_path.to_string_lossy());
+    match line_number {
+        Some(line_number) if editor_supports_plus_line(editor_command) => {
+            format!("{editor_command} +{line_number} {quoted_path}")
+        }
+        _ => format!("{editor_command} {quoted_path}"),
+    }
+}
+
+fn editor_supports_plus_line(editor_command: &str) -> bool {
+    let editor = editor_command.split_whitespace().next().unwrap_or_default();
+    let binary = editor.rsplit('/').next().unwrap_or(editor);
+    matches!(binary, "nvim" | "vim" | "vi" | "vimdiff" | "nvim-qt")
 }
