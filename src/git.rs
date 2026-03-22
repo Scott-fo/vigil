@@ -477,12 +477,16 @@ pub async fn load_files_with_status(repo_root: &Path) -> color_eyre::Result<Vec<
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
     )
     .await?;
-    let entries = parse_status_entries(&output)
-        .into_iter()
-        .filter(|entry| entry.status != "!!")
-        .map(to_file_entry)
-        .collect();
-    Ok(entries)
+    let mut files = Vec::new();
+
+    for entry in parse_status_entries(&output) {
+        if entry.status == "!!" || is_directory_status_entry(repo_root, &entry.path).await {
+            continue;
+        }
+        files.push(to_file_entry(entry));
+    }
+
+    Ok(files)
 }
 
 pub async fn load_diff_view(
@@ -598,9 +602,31 @@ async fn load_untracked_preview(
     file_path: &str,
 ) -> color_eyre::Result<FilePreview> {
     let full_path = repo_root.join(file_path);
-    let bytes = fs::read(&full_path)
-        .await
-        .wrap_err_with(|| format!("failed to read untracked file {}", full_path.display()))?;
+    match fs::metadata(&full_path).await {
+        Ok(metadata) if metadata.is_dir() => {
+            return Ok(FilePreview {
+                diff: String::new(),
+                note: Some("Directory or symlinked directory; no preview available.".to_string()),
+            });
+        }
+        Ok(_) => {}
+        Err(_) => {
+            return Ok(FilePreview {
+                diff: String::new(),
+                note: Some("Unable to read untracked file content.".to_string()),
+            });
+        }
+    }
+
+    let bytes = match fs::read(&full_path).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return Ok(FilePreview {
+                diff: String::new(),
+                note: Some("Unable to read untracked file content.".to_string()),
+            });
+        }
+    };
 
     if bytes.contains(&0) {
         return Ok(FilePreview {
@@ -619,6 +645,13 @@ async fn load_untracked_preview(
     } else {
         FilePreview { diff, note: None }
     })
+}
+
+async fn is_directory_status_entry(repo_root: &Path, path: &str) -> bool {
+    match fs::metadata(repo_root.join(path)).await {
+        Ok(metadata) => metadata.is_dir(),
+        Err(_) => false,
+    }
 }
 
 async fn git_output(repo_root: &Path, args: &[&str]) -> color_eyre::Result<String> {
