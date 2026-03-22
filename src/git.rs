@@ -49,6 +49,25 @@ pub struct CommitCompareSelection {
 }
 
 #[derive(Debug, Clone)]
+pub struct BlameTarget {
+    pub file_path: String,
+    pub line_number: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlameCommitDetails {
+    pub target: BlameTarget,
+    pub commit_hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub date: String,
+    pub subject: String,
+    pub description: String,
+    pub is_uncommitted: bool,
+    pub compare_selection: Option<CommitCompareSelection>,
+}
+
+#[derive(Debug, Clone)]
 pub struct BranchCompareSelection {
     pub source_ref: String,
     pub destination_ref: String,
@@ -392,6 +411,112 @@ pub fn resolve_commit_base_ref(commit: &CommitSearchEntry) -> String {
         .unwrap_or_else(|| EMPTY_TREE_HASH.to_string())
 }
 
+pub async fn load_blame_commit_details(
+    repo_root: &Path,
+    target: &BlameTarget,
+) -> color_eyre::Result<BlameCommitDetails> {
+    let blame_output = git_output(
+        repo_root,
+        &[
+            "blame",
+            "--porcelain",
+            "-L",
+            &format!("{0},{0}", target.line_number),
+            "--",
+            target.file_path.as_str(),
+        ],
+    )
+    .await?;
+
+    let header = parse_blame_porcelain_header(&blame_output).ok_or_else(|| {
+        eyre!(
+            "unable to parse blame output for {}:{}",
+            target.file_path,
+            target.line_number
+        )
+    })?;
+
+    if is_uncommitted_blame_hash(&header.commit_hash) {
+        return Ok(BlameCommitDetails {
+            target: target.clone(),
+            commit_hash: header.commit_hash,
+            short_hash: "working-tree".to_string(),
+            author: if header.author.is_empty() {
+                "Uncommitted".to_string()
+            } else {
+                header.author
+            },
+            date: header.date,
+            subject: if header.summary.is_empty() {
+                "Uncommitted line changes".to_string()
+            } else {
+                header.summary
+            },
+            description:
+                "This line has uncommitted changes. Commit comparison is unavailable.".to_string(),
+            is_uncommitted: true,
+            compare_selection: None,
+        });
+    }
+
+    let show_output = git_output(
+        repo_root,
+        &[
+            "show",
+            "-s",
+            "--date=short",
+            "--format=%H%x1f%h%x1f%P%x1f%ad%x1f%an%x1f%s%x1f%b",
+            header.commit_hash.as_str(),
+        ],
+    )
+    .await?;
+
+    let commit = parse_commit_show_output(&show_output)
+        .ok_or_else(|| eyre!("unable to parse commit metadata for {}", header.commit_hash))?;
+    let subject = if commit.subject.is_empty() {
+        header.summary
+    } else {
+        commit.subject
+    };
+    let description = if commit.description.trim().is_empty() {
+        "No commit description.".to_string()
+    } else {
+        commit.description
+    };
+    let compare_base = commit
+        .parent_hashes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| EMPTY_TREE_HASH.to_string());
+    let commit_hash = commit.commit_hash;
+    let short_hash = commit.short_hash;
+
+    Ok(BlameCommitDetails {
+        target: target.clone(),
+        commit_hash: commit_hash.clone(),
+        short_hash: short_hash.clone(),
+        author: if commit.author.is_empty() {
+            header.author
+        } else {
+            commit.author
+        },
+        date: if commit.date.is_empty() {
+            header.date
+        } else {
+            commit.date
+        },
+        description,
+        is_uncommitted: false,
+        compare_selection: Some(CommitCompareSelection {
+            base_ref: compare_base,
+            commit_hash: commit_hash.clone(),
+            short_hash: short_hash.clone(),
+            subject: subject.clone(),
+        }),
+        subject,
+    })
+}
+
 pub async fn load_files_with_commit_diff(
     repo_root: &Path,
     selection: &CommitCompareSelection,
@@ -517,7 +642,13 @@ pub async fn should_refresh_for_paths(
 }
 
 pub async fn resolve_repo_root() -> color_eyre::Result<PathBuf> {
+    resolve_repo_root_from(Path::new(".")).await
+}
+
+pub async fn resolve_repo_root_from(probe_path: &Path) -> color_eyre::Result<PathBuf> {
     let output = Command::new("git")
+        .arg("-C")
+        .arg(probe_path)
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .await
@@ -878,6 +1009,103 @@ fn create_untracked_file_diff(input_path: &str, content: &str) -> String {
         String::new(),
     ]
     .join("\n")
+}
+
+#[derive(Debug)]
+struct ParsedBlameHeader {
+    commit_hash: String,
+    author: String,
+    date: String,
+    summary: String,
+}
+
+#[derive(Debug)]
+struct ParsedCommitShow {
+    commit_hash: String,
+    short_hash: String,
+    parent_hashes: Vec<String>,
+    date: String,
+    author: String,
+    subject: String,
+    description: String,
+}
+
+fn parse_blame_porcelain_header(raw: &str) -> Option<ParsedBlameHeader> {
+    let mut lines = raw.lines();
+    let first_line = lines.next()?.trim();
+    let commit_hash = first_line.split_whitespace().next()?.trim();
+    if commit_hash.len() != 40 {
+        return None;
+    }
+
+    let mut author = String::new();
+    let mut date = String::new();
+    let mut summary = String::new();
+
+    for line in lines {
+        if line.starts_with('\t') {
+            break;
+        }
+        if let Some(value) = line.strip_prefix("author ") {
+            author = value.trim().to_string();
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("author-time ") {
+            date = format_unix_date(value.trim());
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("summary ") {
+            summary = value.trim().to_string();
+        }
+    }
+
+    Some(ParsedBlameHeader {
+        commit_hash: commit_hash.to_string(),
+        author,
+        date,
+        summary,
+    })
+}
+
+fn parse_commit_show_output(raw: &str) -> Option<ParsedCommitShow> {
+    let mut fields = raw.split(LOG_FIELD_SEPARATOR);
+    let commit_hash = fields.next()?.trim();
+    let short_hash = fields.next()?.trim();
+    let parents_raw = fields.next().unwrap_or("").trim();
+    let date = fields.next().unwrap_or("").trim();
+    let author = fields.next().unwrap_or("").trim();
+    let subject = fields.next().unwrap_or("").trim();
+    let description = fields.next().unwrap_or("").trim_end();
+
+    if commit_hash.is_empty() || short_hash.is_empty() {
+        return None;
+    }
+
+    Some(ParsedCommitShow {
+        commit_hash: commit_hash.to_string(),
+        short_hash: short_hash.to_string(),
+        parent_hashes: parents_raw
+            .split_whitespace()
+            .map(str::trim)
+            .filter(|parent| !parent.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+        date: date.to_string(),
+        author: author.to_string(),
+        subject: subject.to_string(),
+        description: description.to_string(),
+    })
+}
+
+fn is_uncommitted_blame_hash(hash: &str) -> bool {
+    hash.trim() == "0000000000000000000000000000000000000000"
+}
+
+fn format_unix_date(raw_seconds: &str) -> String {
+    match raw_seconds.parse::<u64>() {
+        Ok(seconds) if seconds > 0 => String::new(),
+        _ => String::new(),
+    }
 }
 
 fn parse_commit_log_entries(raw: &str) -> Vec<CommitSearchEntry> {

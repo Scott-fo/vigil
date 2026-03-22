@@ -56,7 +56,7 @@ Missing from the Rust app:
 - [x] commit history search
 - [x] open specific commit
 - [x] branch compare
-- [ ] blame mode
+- [x] blame mode
 - [ ] chooser-file integration
 - [x] help modal and current keybinding coverage
 - [ ] richer error overlays / surfacing
@@ -66,7 +66,7 @@ Missing from the Rust app:
 ### 1. CLI Entry Points
 
 - [ ] `vigil`
-- [ ] `vigil blame <file>:<line>`
+- [x] `vigil blame <file>:<line>`
 - [ ] `vigil --chooser-file <path>`
 - [ ] `-h` / `--help`
 
@@ -177,16 +177,16 @@ Source cues:
 
 ### 6. Blame Flow
 
-- [ ] Initial blame target from CLI
-- [ ] Blame overlay / panel
-- [ ] Commit hash, author, date, subject, description display
-- [ ] Uncommitted-line special case
-- [ ] Open commit compare from blamed line when available
-- [ ] Scroll blame view independently
+- [x] Initial blame target from CLI
+- [x] Blame overlay / panel
+- [x] Commit hash, author, date, subject, description display
+- [x] Uncommitted-line special case
+- [x] Open commit compare from blamed line when available
+- [x] Scroll blame view independently
 
 Notes:
 
-- This is more than `git blame` output. The old app resolves the blamed commit, loads commit metadata, and offers a jump into commit compare mode.
+- Shipped in vigil: CLI boot into a blame overlay for `file:line`, async metadata load, uncommitted-line handling, and jump into commit compare.
 
 Source cues:
 

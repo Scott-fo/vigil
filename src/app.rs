@@ -20,8 +20,8 @@ use tokio::task;
 use crate::{
     event::{Event, EventHandler},
     git::{
-        self, BranchCompareSelection, CommitCompareSelection, CommitSearchEntry, DiffView,
-        FileEntry, SharedHighlightRegistry,
+        self, BlameCommitDetails, BlameTarget, BranchCompareSelection, CommitCompareSelection,
+        CommitSearchEntry, DiffView, FileEntry, SharedHighlightRegistry,
     },
     sidebar::{self, SidebarItem},
     splash,
@@ -54,6 +54,12 @@ pub enum ReviewMode {
     WorkingTree,
     CommitCompare(CommitCompareSelection),
     BranchCompare(BranchCompareSelection),
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct AppLaunchOptions {
+    pub repo_root: Option<PathBuf>,
+    pub initial_blame_target: Option<BlameTarget>,
 }
 
 enum AppCommand {
@@ -112,6 +118,14 @@ pub struct App {
     pub highlight_registry: Option<SharedHighlightRegistry>,
     pub repo_watcher: Option<RepoWatcher>,
     pub repo_watcher_loading: bool,
+    pub blame_modal_open: bool,
+    pub blame_target: Option<BlameTarget>,
+    pub blame_loading: bool,
+    pub blame_details: Option<BlameCommitDetails>,
+    pub blame_error: Option<String>,
+    pub blame_scroll: u16,
+    pub blame_request_id: u64,
+    blame_load_task: Option<task::JoinHandle<()>>,
     pub help_modal_open: bool,
     pub theme_modal_open: bool,
     pub theme_modal_query: String,
@@ -152,7 +166,14 @@ pub struct App {
 
 impl App {
     pub async fn new() -> color_eyre::Result<Self> {
-        let repo_root = std::env::current_dir().wrap_err("failed to resolve current directory")?;
+        Self::new_with_options(AppLaunchOptions::default()).await
+    }
+
+    pub async fn new_with_options(options: AppLaunchOptions) -> color_eyre::Result<Self> {
+        let repo_root = match options.repo_root {
+            Some(path) => path,
+            None => std::env::current_dir().wrap_err("failed to resolve current directory")?,
+        };
         let preference = theme::read_theme_preference();
         let theme_name = theme::resolve_theme_name(preference.theme.as_deref()).to_string();
         let theme_mode = preference.mode.unwrap_or(ThemeMode::Dark);
@@ -178,6 +199,14 @@ impl App {
             highlight_registry: None,
             repo_watcher: None,
             repo_watcher_loading: false,
+            blame_modal_open: false,
+            blame_target: None,
+            blame_loading: false,
+            blame_details: None,
+            blame_error: None,
+            blame_scroll: 0,
+            blame_request_id: 0,
+            blame_load_task: None,
             help_modal_open: false,
             theme_modal_open: false,
             theme_modal_query: String::new(),
@@ -217,6 +246,9 @@ impl App {
         };
         app.spawn_highlight_registry_init();
         app.refresh().await?;
+        if let Some(target) = options.initial_blame_target {
+            app.open_blame_target(target);
+        }
         Ok(app)
     }
 
@@ -286,6 +318,28 @@ impl App {
 
                         if highlighted {
                             self.diff_load_task = None;
+                        }
+
+                        if self.running {
+                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        }
+                    }
+                }
+                Event::BlameLoaded { request_id, result } => {
+                    if request_id == self.blame_request_id && self.blame_modal_open {
+                        self.blame_loading = false;
+                        self.blame_load_task = None;
+
+                        match result {
+                            Ok(details) => {
+                                self.blame_target = Some(details.target.clone());
+                                self.blame_details = Some(details);
+                                self.blame_error = None;
+                            }
+                            Err(error) => {
+                                self.blame_details = None;
+                                self.blame_error = Some(error);
+                            }
                         }
 
                         if self.running {
@@ -400,6 +454,31 @@ impl App {
         &mut self,
         key_event: KeyEvent,
     ) -> color_eyre::Result<Option<AppCommand>> {
+        if self.blame_modal_open {
+            match key_event.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.close_blame_modal();
+                }
+                KeyCode::Enter | KeyCode::Char('o') => {
+                    self.open_blame_commit_compare().await?;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.scroll_blame(3);
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.scroll_blame(-3);
+                }
+                KeyCode::PageDown => {
+                    self.scroll_blame(10);
+                }
+                KeyCode::PageUp => {
+                    self.scroll_blame(-10);
+                }
+                _ => {}
+            }
+            return Ok(None);
+        }
+
         if self.help_modal_open {
             match key_event.code {
                 KeyCode::Esc | KeyCode::Char('?') | KeyCode::Enter | KeyCode::Char('q') => {
@@ -664,6 +743,10 @@ impl App {
     }
 
     async fn handle_mouse_event(&mut self, mouse_event: MouseEvent) -> color_eyre::Result<()> {
+        if self.blame_modal_open {
+            return Ok(());
+        }
+
         if self.commit_modal_open {
             return Ok(());
         }
@@ -911,6 +994,66 @@ impl App {
         self.commit_modal_open = true;
         self.commit_message.clear();
         self.commit_error = None;
+    }
+
+    fn open_blame_target(&mut self, target: BlameTarget) {
+        self.cancel_inflight_blame_load();
+        self.blame_modal_open = true;
+        self.blame_target = Some(target.clone());
+        self.blame_loading = true;
+        self.blame_details = None;
+        self.blame_error = None;
+        self.blame_scroll = 0;
+        self.blame_request_id = self.blame_request_id.saturating_add(1);
+        let request_id = self.blame_request_id;
+
+        let repo_root = self.repo_root.clone();
+        let sender = self.events.sender();
+        self.blame_load_task = Some(task::spawn(async move {
+            let result = git::load_blame_commit_details(&repo_root, &target)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(Event::BlameLoaded { request_id, result });
+        }));
+    }
+
+    fn close_blame_modal(&mut self) {
+        self.cancel_inflight_blame_load();
+        self.blame_modal_open = false;
+        self.blame_loading = false;
+        self.blame_target = None;
+        self.blame_details = None;
+        self.blame_error = None;
+        self.blame_scroll = 0;
+    }
+
+    fn cancel_inflight_blame_load(&mut self) {
+        if let Some(task) = self.blame_load_task.take() {
+            task.abort();
+        }
+    }
+
+    fn scroll_blame(&mut self, delta: i32) {
+        self.blame_scroll = if delta.is_negative() {
+            self.blame_scroll.saturating_sub(delta.unsigned_abs() as u16)
+        } else {
+            self.blame_scroll.saturating_add(delta as u16)
+        };
+    }
+
+    async fn open_blame_commit_compare(&mut self) -> color_eyre::Result<()> {
+        let Some(details) = self.blame_details.clone() else {
+            return Ok(());
+        };
+
+        let Some(selection) = details.compare_selection else {
+            self.blame_error = Some("No committed change is available for this line.".to_string());
+            return Ok(());
+        };
+
+        self.close_blame_modal();
+        self.review_mode = ReviewMode::CommitCompare(selection);
+        self.refresh().await
     }
 
     fn open_theme_modal(&mut self) {
@@ -1712,7 +1855,7 @@ impl App {
     }
 
     async fn sync_repo_state(&mut self) -> color_eyre::Result<()> {
-        let resolved_root = git::resolve_repo_root().await?;
+        let resolved_root = git::resolve_repo_root_from(&self.repo_root).await?;
         let watcher_needs_restart = self.repo_error.is_some()
             || (!self.repo_watcher_loading && self.repo_watcher.is_none())
             || self.repo_root != resolved_root;
