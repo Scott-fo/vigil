@@ -1,6 +1,6 @@
 use std::{
-    collections::HashSet,
     collections::HashMap,
+    collections::HashSet,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -355,6 +355,11 @@ pub async fn pull_from_remote(repo_root: &Path) -> color_eyre::Result<()> {
     Ok(())
 }
 
+pub async fn init_repo(repo_root: &Path) -> color_eyre::Result<()> {
+    let _ = git_output(repo_root, &["init"]).await?;
+    Ok(())
+}
+
 pub async fn list_searchable_commits(
     repo_root: &Path,
     limit: usize,
@@ -442,7 +447,9 @@ pub async fn should_refresh_for_paths(
     }
 
     let ignored_paths = git_check_ignored(repo_root, &candidate_paths).await?;
-    Ok(candidate_paths.iter().any(|path| !ignored_paths.contains(path)))
+    Ok(candidate_paths
+        .iter()
+        .any(|path| !ignored_paths.contains(path)))
 }
 
 pub async fn resolve_repo_root() -> color_eyre::Result<PathBuf> {
@@ -812,7 +819,11 @@ fn parse_diff_name_status_entries(raw: &str) -> Vec<StatusEntry> {
         match status_code {
             'R' | 'C' => {
                 let original_path = fields.get(index).copied().unwrap_or_default().to_string();
-                let path = fields.get(index + 1).copied().unwrap_or_default().to_string();
+                let path = fields
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or_default()
+                    .to_string();
                 index += 2;
 
                 if path.is_empty() {
@@ -1083,7 +1094,8 @@ fn build_split_nav_entries(rows: &[DiffRow]) -> Vec<Option<usize>> {
 }
 
 fn resolve_split_target_line(left: Option<&DiffRow>, right: Option<&DiffRow>) -> Option<usize> {
-    right.and_then(|row| row.new_line)
+    right
+        .and_then(|row| row.new_line)
         .or_else(|| left.and_then(|row| row.old_line))
 }
 

@@ -95,14 +95,15 @@ fn is_relevant_event(event: &NotifyEvent) -> bool {
         return true;
     }
 
-    event.paths.iter().any(|path| !should_ignore_event_path(path))
+    event
+        .paths
+        .iter()
+        .any(|path| !should_ignore_event_path(path))
 }
 
 fn should_ignore_event_path(path: &Path) -> bool {
     let normalized = path.to_string_lossy().replace('\\', "/");
-    normalized == ".git"
-        || normalized.ends_with("/.git")
-        || normalized.contains("/.git/")
+    normalized == ".git" || normalized.ends_with("/.git") || normalized.contains("/.git/")
 }
 
 fn collect_paths(paths: Vec<PathBuf>) -> HashSet<PathBuf> {

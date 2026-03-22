@@ -6,8 +6,8 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::git::SharedHighlightRegistry;
 use crate::git::CommitSearchEntry;
+use crate::git::SharedHighlightRegistry;
 
 #[derive(Clone, Debug)]
 pub enum Event {

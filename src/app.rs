@@ -1,23 +1,29 @@
 use std::{collections::HashSet, path::PathBuf, process::Stdio};
 
 use color_eyre::eyre::WrapErr;
+use crossterm::terminal;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyModifiers, MouseEvent,
+        MouseEventKind,
+    },
     execute,
 };
 use nucleo_matcher::{
     Config as MatcherConfig, Matcher,
     pattern::{CaseMatching, Normalization, Pattern},
 };
-use crossterm::terminal;
 use ratatui::widgets::ListState;
 use tokio::task;
 
 use crate::{
     event::{Event, EventHandler},
-    git::{self, CommitCompareSelection, CommitSearchEntry, DiffView, FileEntry, SharedHighlightRegistry},
+    git::{
+        self, CommitCompareSelection, CommitSearchEntry, DiffView, FileEntry,
+        SharedHighlightRegistry,
+    },
     sidebar::{self, SidebarItem},
-    ui,
+    splash, ui,
     watcher::RepoWatcher,
 };
 use std::io::stdout;
@@ -78,6 +84,7 @@ impl AsRef<str> for CommitSearchCandidate {
 pub struct App {
     pub running: bool,
     pub repo_root: PathBuf,
+    pub repo_error: Option<String>,
     pub events: EventHandler,
     pub active_pane: ActivePane,
     pub review_mode: ReviewMode,
@@ -114,10 +121,11 @@ pub struct App {
 
 impl App {
     pub async fn new() -> color_eyre::Result<Self> {
-        let repo_root = git::resolve_repo_root().await?;
+        let repo_root = std::env::current_dir().wrap_err("failed to resolve current directory")?;
         let mut app = Self {
             running: true,
             repo_root,
+            repo_error: None,
             events: EventHandler::new(),
             active_pane: ActivePane::Sidebar,
             review_mode: ReviewMode::WorkingTree,
@@ -149,12 +157,8 @@ impl App {
             snackbar_generation: 0,
             status_message: None,
         };
-        let watcher_error = app.start_repo_watcher();
         app.spawn_highlight_registry_init();
         app.refresh().await?;
-        if let Some(error) = watcher_error {
-            app.status_message = Some(format!("watcher unavailable: {error}"));
-        }
         Ok(app)
     }
 
@@ -190,11 +194,7 @@ impl App {
                         Ok(registry) => {
                             self.highlight_registry = Some(registry);
                             self.load_selected_diff().await?;
-                            self.status_message = Some(format!(
-                                "{} changed file{}",
-                                self.files.len(),
-                                if self.files.len() == 1 { "" } else { "s" }
-                            ));
+                            self.status_message = Some(self.current_status_message());
                         }
                         Err(error) => {
                             self.status_message =
@@ -369,6 +369,9 @@ impl App {
             KeyCode::Char('r') => {
                 self.refresh().await?;
             }
+            KeyCode::Char('i') => {
+                self.initialize_repo_if_needed().await?;
+            }
             KeyCode::Char('l') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.reset_to_working_tree().await?;
             }
@@ -415,10 +418,10 @@ impl App {
             KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('e') => {
                 if let Some(file_path) = self.selected_file().map(|file| file.path.clone()) {
                     if self.active_pane == ActivePane::Diff {
-                        if let Some(line_number) = self
-                            .diff_view
-                            .selected_line_number(self.diff_view_mode, self.selected_diff_line_index)
-                        {
+                        if let Some(line_number) = self.diff_view.selected_line_number(
+                            self.diff_view_mode,
+                            self.selected_diff_line_index,
+                        ) {
                             return Ok(Some(AppCommand::OpenFileInEditorAtLine(
                                 file_path,
                                 line_number,
@@ -501,8 +504,24 @@ impl App {
 
     async fn refresh(&mut self) -> color_eyre::Result<()> {
         let previously_selected = self.selected_file().map(|file| file.path.clone());
+        if self.is_working_tree_mode() {
+            if let Err(error) = self.sync_repo_state().await {
+                self.enter_repo_error_state(error.to_string()).await?;
+                return Ok(());
+            }
+        }
+
         let files = match &self.review_mode {
-            ReviewMode::WorkingTree => git::load_files_with_status(&self.repo_root).await?,
+            ReviewMode::WorkingTree => match git::load_files_with_status(&self.repo_root).await {
+                Ok(files) => {
+                    self.repo_error = None;
+                    files
+                }
+                Err(error) => {
+                    self.enter_repo_error_state(error.to_string()).await?;
+                    return Ok(());
+                }
+            },
             ReviewMode::CommitCompare(selection) => {
                 git::load_files_with_commit_diff(&self.repo_root, selection).await?
             }
@@ -517,7 +536,7 @@ impl App {
 
         self.sync_sidebar_state();
         self.load_selected_diff().await?;
-        self.status_message = Some(self.default_status_message());
+        self.status_message = Some(self.current_status_message());
         Ok(())
     }
 
@@ -731,15 +750,14 @@ impl App {
         terminal: &mut ratatui::DefaultTerminal,
     ) -> color_eyre::Result<()> {
         let Some(editor_command) = current_editor_command() else {
-            self.status_message = Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
+            self.status_message =
+                Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
             return Ok(());
         };
 
         let full_path = self.repo_root.join(file_path);
         let command = build_editor_shell_command(&editor_command, &full_path, None);
-        let result = self
-            .run_editor_command(command, terminal)
-            .await;
+        let result = self.run_editor_command(command, terminal).await;
 
         match result {
             Ok(Ok(status)) if status.success() => {
@@ -770,15 +788,14 @@ impl App {
         terminal: &mut ratatui::DefaultTerminal,
     ) -> color_eyre::Result<()> {
         let Some(editor_command) = current_editor_command() else {
-            self.status_message = Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
+            self.status_message =
+                Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
             return Ok(());
         };
 
         let full_path = self.repo_root.join(file_path);
         let command = build_editor_shell_command(&editor_command, &full_path, Some(line_number));
-        let result = self
-            .run_editor_command(command, terminal)
-            .await;
+        let result = self.run_editor_command(command, terminal).await;
 
         match result {
             Ok(Ok(status)) if status.success() => {
@@ -943,9 +960,11 @@ impl App {
     }
 
     fn move_diff_selection(&mut self, delta: i32) {
-        self.selected_diff_line_index = self
-            .diff_view
-            .move_selection(self.diff_view_mode, self.selected_diff_line_index, delta);
+        self.selected_diff_line_index = self.diff_view.move_selection(
+            self.diff_view_mode,
+            self.selected_diff_line_index,
+            delta,
+        );
     }
 
     pub fn filtered_commit_search_indices(&mut self) -> Vec<usize> {
@@ -954,11 +973,7 @@ impl App {
             return (0..self.commit_search_entries.len()).collect();
         }
 
-        let pattern = Pattern::parse(
-            &query,
-            CaseMatching::Ignore,
-            Normalization::Smart,
-        );
+        let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
         let candidates = self
             .commit_search_entries
             .iter()
@@ -1053,6 +1068,20 @@ impl App {
         self.running = false;
     }
 
+    pub fn show_splash(&self) -> bool {
+        self.repo_error.is_some() || (self.is_working_tree_mode() && self.files.is_empty())
+    }
+
+    pub fn splash_error(&self) -> Option<&str> {
+        self.repo_error.as_deref()
+    }
+
+    pub fn can_initialize_git_repo(&self) -> bool {
+        self.repo_error
+            .as_deref()
+            .is_some_and(splash::is_not_git_repository_error)
+    }
+
     pub fn review_mode_label(&self) -> String {
         match &self.review_mode {
             ReviewMode::WorkingTree => String::new(),
@@ -1066,10 +1095,7 @@ impl App {
         matches!(self.review_mode, ReviewMode::WorkingTree)
     }
 
-    async fn enter_commit_compare(
-        &mut self,
-        commit: CommitSearchEntry,
-    ) -> color_eyre::Result<()> {
+    async fn enter_commit_compare(&mut self, commit: CommitSearchEntry) -> color_eyre::Result<()> {
         self.review_mode = ReviewMode::CommitCompare(CommitCompareSelection {
             base_ref: git::resolve_commit_base_ref(&commit),
             commit_hash: commit.hash.clone(),
@@ -1088,6 +1114,58 @@ impl App {
         self.refresh().await
     }
 
+    async fn initialize_repo_if_needed(&mut self) -> color_eyre::Result<()> {
+        if !self.can_initialize_git_repo() {
+            return Ok(());
+        }
+
+        git::init_repo(&self.repo_root).await?;
+        self.review_mode = ReviewMode::WorkingTree;
+        self.refresh().await?;
+        self.status_message = Some(format!(
+            "initialized git repo in {}",
+            self.repo_root.display()
+        ));
+        Ok(())
+    }
+
+    async fn sync_repo_state(&mut self) -> color_eyre::Result<()> {
+        let resolved_root = git::resolve_repo_root().await?;
+        let watcher_needs_restart = self.repo_error.is_some()
+            || self.repo_watcher.is_none()
+            || self.repo_root != resolved_root;
+
+        self.repo_root = resolved_root;
+        self.repo_error = None;
+
+        if watcher_needs_restart {
+            self.repo_watcher = None;
+            if let Some(error) = self.start_repo_watcher() {
+                self.status_message = Some(format!("watcher unavailable: {error}"));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn enter_repo_error_state(&mut self, error: String) -> color_eyre::Result<()> {
+        self.repo_error = Some(error);
+        self.repo_watcher = None;
+        self.files.clear();
+        self.rebuild_sidebar_items();
+        self.selected_file_index = 0;
+        self.sync_sidebar_state();
+        self.load_selected_diff().await?;
+        self.status_message = Some(self.current_status_message());
+        Ok(())
+    }
+
+    fn current_status_message(&self) -> String {
+        self.repo_error
+            .clone()
+            .unwrap_or_else(|| self.default_status_message())
+    }
+
     fn default_status_message(&self) -> String {
         match &self.review_mode {
             ReviewMode::WorkingTree => format!(
@@ -1096,7 +1174,12 @@ impl App {
                 if self.files.len() == 1 { "" } else { "s" }
             ),
             ReviewMode::CommitCompare(selection) => {
-                format!("commit {}  {} file{}", selection.short_hash, self.files.len(), if self.files.len() == 1 { "" } else { "s" })
+                format!(
+                    "commit {}  {} file{}",
+                    selection.short_hash,
+                    self.files.len(),
+                    if self.files.len() == 1 { "" } else { "s" }
+                )
             }
         }
     }

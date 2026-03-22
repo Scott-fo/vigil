@@ -13,6 +13,7 @@ use crate::{
     app::{ActivePane, App, DiffViewMode, RemoteSyncDirection, SnackbarVariant},
     git::{self, DiffView},
     sidebar::SidebarItem,
+    splash::Splash,
 };
 use ratatui::layout::Position;
 
@@ -42,13 +43,24 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.area(),
     );
 
-    let layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(38), Constraint::Min(40)])
-        .split(frame.area());
+    if app.show_splash() {
+        frame.render_widget(
+            Splash::new(
+                app.splash_error(),
+                Style::new().fg(TEXT),
+                Style::new().fg(TEXT_MUTED),
+            ),
+            frame.area(),
+        );
+    } else {
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(38), Constraint::Min(40)])
+            .split(frame.area());
 
-    render_sidebar(frame, app, layout[0]);
-    render_diff(frame, app, layout[1]);
+        render_sidebar(frame, app, layout[0]);
+        render_diff(frame, app, layout[1]);
+    }
 
     if app.commit_modal_open {
         render_commit_modal(frame, app);
@@ -76,6 +88,10 @@ pub fn sidebar_file_at(
     terminal_width: u16,
     terminal_height: u16,
 ) -> Option<String> {
+    if app.show_splash() {
+        return None;
+    }
+
     let terminal_area = Rect::new(0, 0, terminal_width, terminal_height);
     let layout = Layout::default()
         .direction(Direction::Horizontal)
@@ -284,10 +300,13 @@ fn render_diff_body(
 }
 
 fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
-    let status = app
-        .status_message
-        .clone()
-        .unwrap_or_else(|| format!("{} changed file{}", app.files.len(), if app.files.len() == 1 { "" } else { "s" }));
+    let status = app.status_message.clone().unwrap_or_else(|| {
+        format!(
+            "{} changed file{}",
+            app.files.len(),
+            if app.files.len() == 1 { "" } else { "s" }
+        )
+    });
     let line = Paragraph::new(Line::from(Span::styled(
         status,
         Style::new().fg(TEXT_MUTED),
@@ -365,10 +384,7 @@ fn render_commit_modal(frame: &mut Frame, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let message_label = Line::from(Span::styled(
-        "Message:",
-        Style::new().fg(TEXT),
-    ));
+    let message_label = Line::from(Span::styled("Message:", Style::new().fg(TEXT)));
     let input_line = Line::from(Span::styled(
         if app.commit_message.is_empty() {
             "Enter commit message..."
@@ -392,7 +408,13 @@ fn render_commit_modal(frame: &mut Frame, app: &App) {
         },
     ));
 
-    let content = vec![message_label, Line::default(), input_line, Line::default(), hint_or_error];
+    let content = vec![
+        message_label,
+        Line::default(),
+        input_line,
+        Line::default(),
+        hint_or_error,
+    ];
     let paragraph = Paragraph::new(Text::from(content))
         .style(Style::new().bg(PANEL))
         .block(Block::new().padding(Padding::horizontal(1)));
@@ -455,8 +477,11 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
         ActivePane::Diff => "Diff focused",
     };
 
-    let lines = vec![
-        Line::from(Span::styled("Global", Style::new().fg(TEXT).add_modifier(Modifier::BOLD))),
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Global",
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        )),
         Line::from(vec![
             Span::styled("?  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
             Span::styled("toggle help", Style::new().fg(TEXT_MUTED)),
@@ -478,7 +503,10 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
             Span::styled("open commit search", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::from(vec![
-            Span::styled("Ctrl-L  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Ctrl-L  ",
+                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("reset compare mode", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::from(vec![
@@ -486,27 +514,48 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
             Span::styled("quit", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::default(),
-        Line::from(Span::styled("Navigation", Style::new().fg(TEXT).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "Navigation",
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        )),
         Line::from(vec![
-            Span::styled("j / k  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "j / k  ",
+                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("move selection", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::from(vec![
-            Span::styled("Ctrl-D / Ctrl-U  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Ctrl-D / Ctrl-U  ",
+                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("page diff", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::from(vec![
-            Span::styled("mouse wheel  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "mouse wheel  ",
+                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("scroll diff", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::default(),
-        Line::from(Span::styled("Actions", Style::new().fg(TEXT).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "Actions",
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        )),
         Line::from(vec![
-            Span::styled("enter / o / e  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "enter / o / e  ",
+                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("open in editor", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::from(vec![
-            Span::styled("space  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "space  ",
+                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("stage / unstage selected file", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::from(vec![
@@ -518,7 +567,10 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
             Span::styled("commit staged changes", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::from(vec![
-            Span::styled("p / P  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "p / P  ",
+                Style::new().fg(BLUE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("pull / push", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::default(),
@@ -527,6 +579,16 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
             Style::new().fg(TEXT_MUTED),
         )),
     ];
+
+    if app.can_initialize_git_repo() {
+        lines.insert(
+            8,
+            Line::from(vec![
+                Span::styled("i  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+                Span::styled("git init when splash is shown", Style::new().fg(TEXT_MUTED)),
+            ]),
+        );
+    }
 
     let paragraph = Paragraph::new(Text::from(lines))
         .style(Style::new().bg(PANEL))
@@ -594,7 +656,10 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
     } else if let Some(error) = app.commit_search_error.as_ref() {
         frame.render_widget(
             Paragraph::new(Text::from(vec![
-                Line::from(Span::styled("Unable to load commits.", Style::new().fg(RED))),
+                Line::from(Span::styled(
+                    "Unable to load commits.",
+                    Style::new().fg(RED),
+                )),
                 Line::default(),
                 Line::from(Span::styled(error.clone(), Style::new().fg(TEXT_MUTED))),
             ]))
@@ -636,7 +701,10 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
                     Style::new().fg(TEXT)
                 };
                 let hash_style = if selected {
-                    Style::new().bg(BLUE).fg(BACKGROUND).add_modifier(Modifier::BOLD)
+                    Style::new()
+                        .bg(BLUE)
+                        .fg(BACKGROUND)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::new().fg(BLUE).add_modifier(Modifier::BOLD)
                 };

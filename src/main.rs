@@ -9,6 +9,7 @@ pub mod app;
 pub mod event;
 pub mod git;
 pub mod sidebar;
+pub mod splash;
 pub mod ui;
 pub mod watcher;
 
