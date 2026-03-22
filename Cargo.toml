@@ -2,7 +2,6 @@
 name = "vigil"
 version = "0.1.0"
 description = "An example generated using the event-driven-async template"
-authors = ["scott <scottfo@live.com>"]
 license = "MIT"
 edition = "2024"
 
