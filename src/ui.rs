@@ -58,6 +58,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_discard_modal(frame, app);
     }
 
+    if app.commit_search_modal_open {
+        render_commit_search_modal(frame, app);
+    }
+
     if app.help_modal_open {
         render_help_modal(frame, app);
     }
@@ -179,12 +183,18 @@ fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
         .get(app.selected_file_index)
         .map(|file| file.label.clone())
         .unwrap_or_else(|| "No file selected".to_string());
+    let mode_label = app.review_mode_label();
+    let right_title = match app.active_pane {
+        ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
+        ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
+    };
     let block = bordered_panel(
         &title,
         app.active_pane == ActivePane::Diff,
-        Some(match app.active_pane {
-            ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
-            ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
+        Some(if mode_label.is_empty() {
+            right_title
+        } else {
+            format!("{right_title}  {mode_label}")
         }),
     );
     let inner = block.inner(area);
@@ -464,6 +474,14 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
             Span::styled("refresh", Style::new().fg(TEXT_MUTED)),
         ]),
         Line::from(vec![
+            Span::styled("g  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("open commit search", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl-L  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled("reset compare mode", Style::new().fg(TEXT_MUTED)),
+        ]),
+        Line::from(vec![
             Span::styled("q  ", Style::new().fg(BLUE).add_modifier(Modifier::BOLD)),
             Span::styled("quit", Style::new().fg(TEXT_MUTED)),
         ]),
@@ -514,6 +532,159 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
         .style(Style::new().bg(PANEL))
         .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(paragraph, inner);
+}
+
+fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
+    let area = centered_rect(92, 22, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(BORDER_ACTIVE))
+        .style(Style::new().bg(PANEL))
+        .title(Line::from(Span::styled(
+            " Commit Search ",
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        )));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(6),
+            Constraint::Length(2),
+        ])
+        .split(inner);
+
+    let query_display = if app.commit_search_query.is_empty() {
+        Span::styled("Search by hash or subject...", Style::new().fg(TEXT_MUTED))
+    } else {
+        Span::styled(app.commit_search_query.clone(), Style::new().fg(TEXT))
+    };
+    let query = Paragraph::new(Line::from(query_display))
+        .style(Style::new().bg(ELEMENT))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::new().fg(BORDER))
+                .padding(Padding::horizontal(1)),
+        );
+    frame.render_widget(query, chunks[0]);
+
+    let filtered_indices = app.filtered_commit_search_indices();
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(BORDER))
+        .style(Style::new().bg(PANEL));
+    let list_inner = list_block.inner(chunks[1]);
+    frame.render_widget(list_block, chunks[1]);
+
+    if app.commit_search_loading {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "Loading commits...",
+                Style::new().fg(TEXT_MUTED),
+            )))
+            .style(Style::new().bg(PANEL))
+            .block(Block::new().padding(Padding::horizontal(1))),
+            list_inner,
+        );
+    } else if let Some(error) = app.commit_search_error.as_ref() {
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(Span::styled("Unable to load commits.", Style::new().fg(RED))),
+                Line::default(),
+                Line::from(Span::styled(error.clone(), Style::new().fg(TEXT_MUTED))),
+            ]))
+            .style(Style::new().bg(PANEL))
+            .block(Block::new().padding(Padding::horizontal(1))),
+            list_inner,
+        );
+    } else if filtered_indices.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "No matching commits.",
+                Style::new().fg(TEXT_MUTED),
+            )))
+            .style(Style::new().bg(PANEL))
+            .block(Block::new().padding(Padding::horizontal(1))),
+            list_inner,
+        );
+    } else {
+        let viewport_height = list_inner.height as usize;
+        let selected_index = app
+            .commit_search_selected_index
+            .min(filtered_indices.len().saturating_sub(1));
+        let max_scroll = filtered_indices.len().saturating_sub(viewport_height);
+        let visible_start = selected_index
+            .saturating_sub(viewport_height.saturating_sub(1))
+            .min(max_scroll);
+        let visible_end = (visible_start + viewport_height).min(filtered_indices.len());
+
+        let lines = filtered_indices[visible_start..visible_end]
+            .iter()
+            .enumerate()
+            .map(|(offset, entry_index)| {
+                let display_index = visible_start + offset;
+                let selected = display_index == selected_index;
+                let commit = &app.commit_search_entries[*entry_index];
+                let base_style = if selected {
+                    Style::new().bg(BLUE).fg(BACKGROUND)
+                } else {
+                    Style::new().fg(TEXT)
+                };
+                let hash_style = if selected {
+                    Style::new().bg(BLUE).fg(BACKGROUND).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(BLUE).add_modifier(Modifier::BOLD)
+                };
+
+                Line::from(vec![
+                    Span::styled(format!("{:<10}", commit.short_hash), hash_style),
+                    Span::styled(" ", base_style),
+                    Span::styled(commit.subject.clone(), base_style),
+                ])
+                .style(base_style)
+            })
+            .collect::<Vec<_>>();
+
+        frame.render_widget(
+            Paragraph::new(Text::from(lines))
+                .style(Style::new().bg(PANEL))
+                .block(Block::new().padding(Padding::horizontal(1))),
+            list_inner,
+        );
+
+        if filtered_indices.len() > viewport_height {
+            let mut scrollbar_state = ScrollbarState::new(filtered_indices.len())
+                .position(visible_start)
+                .viewport_content_length(viewport_height);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .thumb_style(Style::new().fg(BORDER_ACTIVE))
+                .track_style(Style::new().fg(BORDER));
+            frame.render_stateful_widget(scrollbar, list_inner, &mut scrollbar_state);
+        }
+    }
+
+    let selected_label = filtered_indices
+        .get(app.commit_search_selected_index)
+        .and_then(|index| app.commit_search_entries.get(*index))
+        .map(|commit| format!("selected {}", commit.short_hash))
+        .unwrap_or_else(|| "no selection".to_string());
+    let footer = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(
+            "Type to filter. j/k move. Enter selects. Esc closes.",
+            Style::new().fg(TEXT_MUTED),
+        )),
+        Line::from(Span::styled(selected_label, Style::new().fg(OVERLAY2))),
+    ]))
+    .style(Style::new().bg(PANEL))
+    .block(Block::new().padding(Padding::horizontal(1)));
+    frame.render_widget(footer, chunks[2]);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

@@ -5,13 +5,17 @@ use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
     execute,
 };
+use nucleo_matcher::{
+    Config as MatcherConfig, Matcher,
+    pattern::{CaseMatching, Normalization, Pattern},
+};
 use crossterm::terminal;
 use ratatui::widgets::ListState;
-use tokio::{process::Command, task};
+use tokio::task;
 
 use crate::{
     event::{Event, EventHandler},
-    git::{self, DiffView, FileEntry, SharedHighlightRegistry},
+    git::{self, CommitCompareSelection, CommitSearchEntry, DiffView, FileEntry, SharedHighlightRegistry},
     sidebar::{self, SidebarItem},
     ui,
     watcher::RepoWatcher,
@@ -28,6 +32,12 @@ pub enum ActivePane {
 pub enum DiffViewMode {
     Unified,
     Split,
+}
+
+#[derive(Debug, Clone)]
+pub enum ReviewMode {
+    WorkingTree,
+    CommitCompare(CommitCompareSelection),
 }
 
 enum AppCommand {
@@ -53,12 +63,24 @@ pub struct SnackbarNotice {
     pub variant: SnackbarVariant,
 }
 
+struct CommitSearchCandidate {
+    index: usize,
+    haystack: String,
+}
+
+impl AsRef<str> for CommitSearchCandidate {
+    fn as_ref(&self) -> &str {
+        &self.haystack
+    }
+}
+
 #[derive(Debug)]
 pub struct App {
     pub running: bool,
     pub repo_root: PathBuf,
     pub events: EventHandler,
     pub active_pane: ActivePane,
+    pub review_mode: ReviewMode,
     pub files: Vec<FileEntry>,
     pub sidebar_items: Vec<SidebarItem>,
     pub collapsed_directories: HashSet<String>,
@@ -71,6 +93,13 @@ pub struct App {
     pub highlight_registry: Option<SharedHighlightRegistry>,
     pub repo_watcher: Option<RepoWatcher>,
     pub help_modal_open: bool,
+    pub commit_search_modal_open: bool,
+    pub commit_search_query: String,
+    pub commit_search_entries: Vec<CommitSearchEntry>,
+    pub commit_search_loading: bool,
+    pub commit_search_error: Option<String>,
+    pub commit_search_selected_index: usize,
+    pub commit_search_matcher: Matcher,
     pub commit_modal_open: bool,
     pub commit_message: String,
     pub commit_error: Option<String>,
@@ -91,6 +120,7 @@ impl App {
             repo_root,
             events: EventHandler::new(),
             active_pane: ActivePane::Sidebar,
+            review_mode: ReviewMode::WorkingTree,
             files: Vec::new(),
             sidebar_items: Vec::new(),
             collapsed_directories: HashSet::new(),
@@ -103,6 +133,13 @@ impl App {
             highlight_registry: None,
             repo_watcher: None,
             help_modal_open: false,
+            commit_search_modal_open: false,
+            commit_search_query: String::new(),
+            commit_search_entries: Vec::new(),
+            commit_search_loading: false,
+            commit_search_error: None,
+            commit_search_selected_index: 0,
+            commit_search_matcher: Matcher::new(MatcherConfig::DEFAULT),
             commit_modal_open: false,
             commit_message: String::new(),
             commit_error: None,
@@ -169,8 +206,31 @@ impl App {
                         terminal.draw(|frame| ui::render(frame, &mut self))?;
                     }
                 }
+                Event::CommitSearchLoaded(result) => {
+                    if self.commit_search_modal_open {
+                        self.commit_search_loading = false;
+                        match result {
+                            Ok(entries) => {
+                                self.commit_search_entries = entries;
+                                self.commit_search_error = None;
+                                self.clamp_commit_search_selection();
+                            }
+                            Err(error) => {
+                                self.commit_search_entries.clear();
+                                self.commit_search_error = Some(error);
+                                self.commit_search_selected_index = 0;
+                            }
+                        }
+
+                        if self.running {
+                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        }
+                    }
+                }
                 Event::RepoChanged(paths) => {
-                    if git::should_refresh_for_paths(&self.repo_root, &paths).await? {
+                    if self.is_working_tree_mode()
+                        && git::should_refresh_for_paths(&self.repo_root, &paths).await?
+                    {
                         self.refresh().await?;
                         if self.running {
                             terminal.draw(|frame| ui::render(frame, &mut self))?;
@@ -214,6 +274,41 @@ impl App {
             match key_event.code {
                 KeyCode::Esc | KeyCode::Char('?') | KeyCode::Enter | KeyCode::Char('q') => {
                     self.help_modal_open = false;
+                }
+                _ => {}
+            }
+            return Ok(None);
+        }
+
+        if self.commit_search_modal_open {
+            match key_event.code {
+                KeyCode::Esc => {
+                    self.close_commit_search_modal();
+                }
+                KeyCode::Enter => {
+                    if let Some(commit) = self.selected_commit_search_entry() {
+                        self.enter_commit_compare(commit).await?;
+                    }
+                    self.close_commit_search_modal();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.move_commit_search_selection(1);
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.move_commit_search_selection(-1);
+                }
+                KeyCode::Backspace => {
+                    self.commit_search_query.pop();
+                    self.clamp_commit_search_selection();
+                    self.commit_search_error = None;
+                }
+                KeyCode::Char(ch)
+                    if !key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key_event.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.commit_search_query.push(ch);
+                    self.clamp_commit_search_selection();
+                    self.commit_search_error = None;
                 }
                 _ => {}
             }
@@ -274,6 +369,9 @@ impl App {
             KeyCode::Char('r') => {
                 self.refresh().await?;
             }
+            KeyCode::Char('l') if key_event.modifiers == KeyModifiers::CONTROL => {
+                self.reset_to_working_tree().await?;
+            }
             KeyCode::Char('p') => {
                 self.start_pull();
             }
@@ -282,6 +380,9 @@ impl App {
             }
             KeyCode::Char('c') => {
                 self.open_commit_modal();
+            }
+            KeyCode::Char('g') => {
+                self.open_commit_search_modal();
             }
             KeyCode::Char('v') => {
                 self.diff_view_mode = match self.diff_view_mode {
@@ -359,17 +460,6 @@ impl App {
                     self.diff_scroll = u16::MAX;
                 }
             },
-            KeyCode::Char('g') => {
-                let branch = self
-                    .current_branch()
-                    .await
-                    .unwrap_or_else(|_| "HEAD".to_string());
-                self.status_message = Some(format!(
-                    "repo: {}  branch: {}",
-                    self.repo_root.display(),
-                    branch
-                ));
-            }
             _ => {}
         }
 
@@ -389,6 +479,10 @@ impl App {
             return Ok(());
         }
 
+        if self.commit_search_modal_open {
+            return Ok(());
+        }
+
         match mouse_event.kind {
             MouseEventKind::ScrollDown => self.page_or_scroll_diff(3),
             MouseEventKind::ScrollUp => self.page_or_scroll_diff(-3),
@@ -405,25 +499,14 @@ impl App {
         Ok(())
     }
 
-    async fn current_branch(&self) -> color_eyre::Result<String> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&self.repo_root)
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .await
-            .wrap_err("failed to query current branch")?;
-
-        if !output.status.success() {
-            return Ok("HEAD".to_string());
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    }
-
     async fn refresh(&mut self) -> color_eyre::Result<()> {
         let previously_selected = self.selected_file().map(|file| file.path.clone());
-        let files = git::load_files_with_status(&self.repo_root).await?;
+        let files = match &self.review_mode {
+            ReviewMode::WorkingTree => git::load_files_with_status(&self.repo_root).await?,
+            ReviewMode::CommitCompare(selection) => {
+                git::load_files_with_commit_diff(&self.repo_root, selection).await?
+            }
+        };
         self.files = files;
         self.rebuild_sidebar_items();
 
@@ -434,11 +517,7 @@ impl App {
 
         self.sync_sidebar_state();
         self.load_selected_diff().await?;
-        self.status_message = Some(format!(
-            "{} changed file{}",
-            self.files.len(),
-            if self.files.len() == 1 { "" } else { "s" }
-        ));
+        self.status_message = Some(self.default_status_message());
         Ok(())
     }
 
@@ -481,14 +560,25 @@ impl App {
     async fn load_selected_diff(&mut self) -> color_eyre::Result<()> {
         self.diff_scroll = 0;
         self.diff_view = match self.selected_file() {
-            Some(file) => {
-                git::load_diff_view(
-                    &self.repo_root,
-                    file,
-                    self.highlight_registry.as_deref(),
-                )
-                .await?
-            }
+            Some(file) => match &self.review_mode {
+                ReviewMode::WorkingTree => {
+                    git::load_diff_view_for_working_tree(
+                        &self.repo_root,
+                        file,
+                        self.highlight_registry.as_deref(),
+                    )
+                    .await?
+                }
+                ReviewMode::CommitCompare(selection) => {
+                    git::load_diff_view_for_commit_compare(
+                        &self.repo_root,
+                        file,
+                        selection,
+                        self.highlight_registry.as_deref(),
+                    )
+                    .await?
+                }
+            },
             None => DiffView::empty("No changed files found."),
         };
         self.selected_diff_line_index = self.diff_view.first_selectable_index(self.diff_view_mode);
@@ -496,6 +586,11 @@ impl App {
     }
 
     async fn toggle_selected_file_stage(&mut self) -> color_eyre::Result<()> {
+        if !self.is_working_tree_mode() {
+            self.status_message = Some("stage/unstage is unavailable in compare mode".to_string());
+            return Ok(());
+        }
+
         let Some(file) = self.selected_file().cloned() else {
             return Ok(());
         };
@@ -515,6 +610,11 @@ impl App {
     }
 
     fn open_commit_modal(&mut self) {
+        if !self.is_working_tree_mode() {
+            self.status_message = Some("commit is unavailable in compare mode".to_string());
+            return;
+        }
+
         if self.staged_file_count() == 0 {
             return;
         }
@@ -522,6 +622,35 @@ impl App {
         self.commit_modal_open = true;
         self.commit_message.clear();
         self.commit_error = None;
+    }
+
+    fn open_commit_search_modal(&mut self) {
+        if self.commit_search_modal_open {
+            return;
+        }
+
+        self.commit_search_modal_open = true;
+        self.commit_search_query.clear();
+        self.commit_search_entries.clear();
+        self.commit_search_loading = true;
+        self.commit_search_error = None;
+        self.commit_search_selected_index = 0;
+
+        let repo_root = self.repo_root.clone();
+        let sender = self.events.sender();
+        task::spawn(async move {
+            let result = git::list_searchable_commits(&repo_root, 12_000)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(Event::CommitSearchLoaded(result));
+        });
+    }
+
+    fn close_commit_search_modal(&mut self) {
+        self.commit_search_modal_open = false;
+        self.commit_search_loading = false;
+        self.commit_search_error = None;
+        self.commit_search_selected_index = 0;
     }
 
     fn close_commit_modal(&mut self) {
@@ -700,6 +829,10 @@ impl App {
     }
 
     fn open_discard_modal(&mut self) {
+        if !self.is_working_tree_mode() {
+            self.status_message = Some("discard is unavailable in compare mode".to_string());
+            return;
+        }
         self.discard_target = self.selected_file().cloned();
     }
 
@@ -815,6 +948,65 @@ impl App {
             .move_selection(self.diff_view_mode, self.selected_diff_line_index, delta);
     }
 
+    pub fn filtered_commit_search_indices(&mut self) -> Vec<usize> {
+        let query = self.commit_search_query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return (0..self.commit_search_entries.len()).collect();
+        }
+
+        let pattern = Pattern::parse(
+            &query,
+            CaseMatching::Ignore,
+            Normalization::Smart,
+        );
+        let candidates = self
+            .commit_search_entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| CommitSearchCandidate {
+                index,
+                haystack: format!("{} {} {}", entry.short_hash, entry.hash, entry.subject),
+            })
+            .collect::<Vec<_>>();
+
+        pattern
+            .match_list(candidates, &mut self.commit_search_matcher)
+            .into_iter()
+            .map(|(candidate, _score)| candidate.index)
+            .collect()
+    }
+
+    fn clamp_commit_search_selection(&mut self) {
+        let filtered_len = self.filtered_commit_search_indices().len();
+        self.commit_search_selected_index = self
+            .commit_search_selected_index
+            .min(filtered_len.saturating_sub(1));
+    }
+
+    fn move_commit_search_selection(&mut self, delta: i32) {
+        let filtered_len = self.filtered_commit_search_indices().len();
+        if filtered_len == 0 {
+            self.commit_search_selected_index = 0;
+            return;
+        }
+
+        let current = self.commit_search_selected_index.min(filtered_len - 1);
+        let next = if delta.is_negative() {
+            current.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            current.saturating_add(delta as usize)
+        }
+        .min(filtered_len - 1);
+        self.commit_search_selected_index = next;
+    }
+
+    fn selected_commit_search_entry(&mut self) -> Option<CommitSearchEntry> {
+        self.filtered_commit_search_indices()
+            .get(self.commit_search_selected_index)
+            .and_then(|index| self.commit_search_entries.get(*index))
+            .cloned()
+    }
+
     fn page_diff(&mut self, delta: i32) {
         self.move_diff_selection(delta);
     }
@@ -859,6 +1051,54 @@ impl App {
 
     fn quit(&mut self) {
         self.running = false;
+    }
+
+    pub fn review_mode_label(&self) -> String {
+        match &self.review_mode {
+            ReviewMode::WorkingTree => String::new(),
+            ReviewMode::CommitCompare(selection) => {
+                format!("Commit {}: {}", selection.short_hash, selection.subject)
+            }
+        }
+    }
+
+    fn is_working_tree_mode(&self) -> bool {
+        matches!(self.review_mode, ReviewMode::WorkingTree)
+    }
+
+    async fn enter_commit_compare(
+        &mut self,
+        commit: CommitSearchEntry,
+    ) -> color_eyre::Result<()> {
+        self.review_mode = ReviewMode::CommitCompare(CommitCompareSelection {
+            base_ref: git::resolve_commit_base_ref(&commit),
+            commit_hash: commit.hash.clone(),
+            short_hash: commit.short_hash.clone(),
+            subject: commit.subject.clone(),
+        });
+        self.refresh().await
+    }
+
+    async fn reset_to_working_tree(&mut self) -> color_eyre::Result<()> {
+        if self.is_working_tree_mode() {
+            return Ok(());
+        }
+
+        self.review_mode = ReviewMode::WorkingTree;
+        self.refresh().await
+    }
+
+    fn default_status_message(&self) -> String {
+        match &self.review_mode {
+            ReviewMode::WorkingTree => format!(
+                "{} changed file{}",
+                self.files.len(),
+                if self.files.len() == 1 { "" } else { "s" }
+            ),
+            ReviewMode::CommitCompare(selection) => {
+                format!("commit {}  {} file{}", selection.short_hash, self.files.len(), if self.files.len() == 1 { "" } else { "s" })
+            }
+        }
     }
 }
 

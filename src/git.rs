@@ -18,6 +18,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::{app::DiffViewMode, ui};
 
 pub type SharedHighlightRegistry = Arc<HighlightRegistry>;
+const LOG_FIELD_SEPARATOR: char = '\u{001f}';
+const LOG_RECORD_SEPARATOR: char = '\u{001e}';
+pub const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -25,6 +28,24 @@ pub struct FileEntry {
     pub path: String,
     pub label: String,
     pub filetype: Option<&'static str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommitSearchEntry {
+    pub hash: String,
+    pub short_hash: String,
+    pub parent_hashes: Vec<String>,
+    pub author: String,
+    pub date: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommitCompareSelection {
+    pub base_ref: String,
+    pub commit_hash: String,
+    pub short_hash: String,
+    pub subject: String,
 }
 
 #[derive(Debug, Default)]
@@ -334,6 +355,55 @@ pub async fn pull_from_remote(repo_root: &Path) -> color_eyre::Result<()> {
     Ok(())
 }
 
+pub async fn list_searchable_commits(
+    repo_root: &Path,
+    limit: usize,
+) -> color_eyre::Result<Vec<CommitSearchEntry>> {
+    let output = git_output(
+        repo_root,
+        &[
+            "log",
+            &format!("--max-count={}", limit.max(1)),
+            "--date=short",
+            "--pretty=format:%H%x1f%P%x1f%h%x1f%ad%x1f%an%x1f%s%x1e",
+        ],
+    )
+    .await?;
+
+    Ok(parse_commit_log_entries(&output))
+}
+
+pub fn resolve_commit_base_ref(commit: &CommitSearchEntry) -> String {
+    commit
+        .parent_hashes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| EMPTY_TREE_HASH.to_string())
+}
+
+pub async fn load_files_with_commit_diff(
+    repo_root: &Path,
+    selection: &CommitCompareSelection,
+) -> color_eyre::Result<Vec<FileEntry>> {
+    let output = git_output(
+        repo_root,
+        &[
+            "diff",
+            "--name-status",
+            "--find-renames",
+            "-z",
+            selection.base_ref.as_str(),
+            selection.commit_hash.as_str(),
+        ],
+    )
+    .await?;
+
+    Ok(parse_diff_name_status_entries(&output)
+        .into_iter()
+        .map(to_file_entry)
+        .collect())
+}
+
 pub async fn should_refresh_for_paths(
     repo_root: &Path,
     changed_paths: &[PathBuf],
@@ -413,7 +483,33 @@ pub async fn load_diff_view(
     file: &FileEntry,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
+    load_diff_view_for_working_tree(repo_root, file, highlight_registry).await
+}
+
+pub async fn load_diff_view_for_working_tree(
+    repo_root: &Path,
+    file: &FileEntry,
+    highlight_registry: Option<&HighlightRegistry>,
+) -> color_eyre::Result<DiffView> {
     let preview = load_file_preview(repo_root, file).await?;
+    build_diff_view_from_preview(preview, file, highlight_registry)
+}
+
+pub async fn load_diff_view_for_commit_compare(
+    repo_root: &Path,
+    file: &FileEntry,
+    selection: &CommitCompareSelection,
+    highlight_registry: Option<&HighlightRegistry>,
+) -> color_eyre::Result<DiffView> {
+    let preview = load_commit_preview(repo_root, file, selection).await?;
+    build_diff_view_from_preview(preview, file, highlight_registry)
+}
+
+fn build_diff_view_from_preview(
+    preview: FilePreview,
+    file: &FileEntry,
+    highlight_registry: Option<&HighlightRegistry>,
+) -> color_eyre::Result<DiffView> {
     if preview.diff.trim().is_empty() {
         let message = preview
             .note
@@ -441,6 +537,31 @@ async fn load_file_preview(repo_root: &Path, file: &FileEntry) -> color_eyre::Re
     } else {
         load_tracked_preview(repo_root, &file.path).await
     }
+}
+
+async fn load_commit_preview(
+    repo_root: &Path,
+    file: &FileEntry,
+    selection: &CommitCompareSelection,
+) -> color_eyre::Result<FilePreview> {
+    let output = git_output(
+        repo_root,
+        &[
+            "diff",
+            "--no-color",
+            "--find-renames",
+            selection.base_ref.as_str(),
+            selection.commit_hash.as_str(),
+            "--",
+            file.path.as_str(),
+        ],
+    )
+    .await?;
+
+    Ok(FilePreview {
+        diff: output,
+        note: None,
+    })
 }
 
 async fn load_tracked_preview(
@@ -593,6 +714,40 @@ fn create_untracked_file_diff(input_path: &str, content: &str) -> String {
     .join("\n")
 }
 
+fn parse_commit_log_entries(raw: &str) -> Vec<CommitSearchEntry> {
+    raw.split(LOG_RECORD_SEPARATOR)
+        .map(str::trim)
+        .filter(|record| !record.is_empty())
+        .filter_map(|record| {
+            let mut fields = record.split(LOG_FIELD_SEPARATOR);
+            let hash = fields.next()?.trim();
+            let parents_raw = fields.next().unwrap_or("").trim();
+            let short_hash = fields.next().unwrap_or("").trim();
+            let date = fields.next().unwrap_or("").trim();
+            let author = fields.next().unwrap_or("").trim();
+            let subject = fields.next().unwrap_or("").trim();
+
+            if hash.is_empty() || short_hash.is_empty() {
+                return None;
+            }
+
+            Some(CommitSearchEntry {
+                hash: hash.to_string(),
+                short_hash: short_hash.to_string(),
+                parent_hashes: parents_raw
+                    .split_whitespace()
+                    .map(str::trim)
+                    .filter(|parent| !parent.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect(),
+                author: author.to_string(),
+                date: date.to_string(),
+                subject: subject.to_string(),
+            })
+        })
+        .collect()
+}
+
 fn parse_status_entries(raw: &str) -> Vec<StatusEntry> {
     let mut entries = Vec::new();
     let fields: Vec<&str> = raw.split('\0').collect();
@@ -635,6 +790,56 @@ fn parse_status_entries(raw: &str) -> Vec<StatusEntry> {
             path: first_path,
             original_path: None,
         });
+    }
+
+    entries
+}
+
+fn parse_diff_name_status_entries(raw: &str) -> Vec<StatusEntry> {
+    let mut entries = Vec::new();
+    let fields: Vec<&str> = raw.split('\0').collect();
+    let mut index = 0;
+
+    while index < fields.len() {
+        let status_field = fields[index].trim();
+        index += 1;
+
+        if status_field.is_empty() {
+            continue;
+        }
+
+        let status_code = status_field.chars().next().unwrap_or(' ');
+        match status_code {
+            'R' | 'C' => {
+                let original_path = fields.get(index).copied().unwrap_or_default().to_string();
+                let path = fields.get(index + 1).copied().unwrap_or_default().to_string();
+                index += 2;
+
+                if path.is_empty() {
+                    continue;
+                }
+
+                entries.push(StatusEntry {
+                    status: status_code.to_string(),
+                    path,
+                    original_path: (!original_path.is_empty()).then_some(original_path),
+                });
+            }
+            _ => {
+                let path = fields.get(index).copied().unwrap_or_default().to_string();
+                index += 1;
+
+                if path.is_empty() {
+                    continue;
+                }
+
+                entries.push(StatusEntry {
+                    status: status_code.to_string(),
+                    path,
+                    original_path: None,
+                });
+            }
+        }
     }
 
     entries

@@ -7,11 +7,13 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::git::SharedHighlightRegistry;
+use crate::git::CommitSearchEntry;
 
 #[derive(Clone, Debug)]
 pub enum Event {
     Crossterm(CrosstermEvent),
     HighlightRegistryReady(Result<SharedHighlightRegistry, String>),
+    CommitSearchLoaded(Result<Vec<CommitSearchEntry>, String>),
     RepoChanged(Vec<PathBuf>),
     RemoteSyncFinished(Result<String, String>),
     ClearSnackbar(u64),

@@ -36,6 +36,7 @@ tree-sitter-nix = "0.3.0"
 tree-sitter-markdown = "0.7.1"
 notify = "8.2.0"
 unicode-width = "0.2.2"
+nucleo-matcher = "0.3.1"
 
 # Read the optimization guideline for more details: https://ratatui.rs/recipes/apps/release-your-app/#optimizations
 [profile.release]
