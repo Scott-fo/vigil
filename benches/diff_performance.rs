@@ -8,6 +8,7 @@ use vigil::{
 
 const FILETYPE: Option<&'static str> = Some("tsx");
 const SPLIT_RENDER_WIDTH: usize = 160;
+const VIEWPORT_HEIGHT: usize = 40;
 
 static LARGE_TSX_DIFF: LazyLock<String> = LazyLock::new(build_large_tsx_diff);
 
@@ -121,6 +122,9 @@ fn bench_diff_pipeline(c: &mut Criterion) {
     let plain_view = build_diff_view_from_diff_text(diff, FILETYPE);
     let mut highlighted_view = plain_view.clone();
     highlighted_view.apply_syntax_highlighting(FILETYPE, &registry);
+    let display_line_count = plain_view.clone().display_line_count(DiffViewMode::Split);
+    let scrolled_viewport_start = display_line_count / 2;
+    let scrolled_viewport_end = (scrolled_viewport_start + VIEWPORT_HEIGHT).min(display_line_count);
 
     let mut group = c.benchmark_group("diff_pipeline");
     group.sample_size(20);
@@ -138,6 +142,42 @@ fn bench_diff_pipeline(c: &mut Criterion) {
             || plain_view.clone(),
             |mut view| {
                 view.apply_syntax_highlighting(FILETYPE, &registry);
+                black_box(view.display_line_count(DiffViewMode::Split));
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group.bench_function("highlight_visible_split_view", |b| {
+        b.iter_batched(
+            || plain_view.clone(),
+            |mut view| {
+                view.apply_syntax_highlighting_for_display_range(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    0,
+                    VIEWPORT_HEIGHT,
+                    FILETYPE,
+                    &registry,
+                );
+                black_box(view.display_line_count(DiffViewMode::Split));
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group.bench_function("highlight_visible_split_view_scrolled", |b| {
+        b.iter_batched(
+            || plain_view.clone(),
+            |mut view| {
+                view.apply_syntax_highlighting_for_display_range(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    scrolled_viewport_start,
+                    scrolled_viewport_end,
+                    FILETYPE,
+                    &registry,
+                );
                 black_box(view.display_line_count(DiffViewMode::Split));
             },
             BatchSize::LargeInput,
@@ -170,6 +210,22 @@ fn bench_diff_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let mut view = build_diff_view_from_diff_text(black_box(diff), FILETYPE);
             view.apply_syntax_highlighting(FILETYPE, &registry);
+            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            black_box(lines.len());
+        });
+    });
+
+    group.bench_function("initial_viewport_pipeline_split", |b| {
+        b.iter(|| {
+            let mut view = build_diff_view_from_diff_text(black_box(diff), FILETYPE);
+            view.apply_syntax_highlighting_for_display_range(
+                DiffViewMode::Split,
+                SPLIT_RENDER_WIDTH,
+                0,
+                VIEWPORT_HEIGHT,
+                FILETYPE,
+                &registry,
+            );
             let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
             black_box(lines.len());
         });

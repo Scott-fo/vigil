@@ -6,10 +6,7 @@ use ratatui::{
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
-use crate::{
-    app::{ActivePane, App, DiffViewMode},
-    git::DiffView,
-};
+use crate::app::{ActivePane, App};
 
 use super::{
     border_active_color, border_color, bordered_panel, diff_mode_label, highlight_line,
@@ -46,74 +43,72 @@ pub(super) fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(inner);
 
-    render_diff_body(
-        frame,
-        &mut app.diff_scroll,
-        &mut app.diff_view,
-        app.selected_diff_line_index,
-        app.active_pane == ActivePane::Diff,
-        app.diff_view_mode,
-        chunks[0],
-    );
+    render_diff_body(frame, app, chunks[0]);
     render_status_line(frame, app, chunks[1]);
 }
 
-fn render_diff_body(
-    frame: &mut Frame,
-    diff_scroll: &mut u16,
-    diff_view: &mut DiffView,
-    selected_diff_line_index: usize,
-    diff_focused: bool,
-    mode: DiffViewMode,
-    area: Rect,
-) {
-    let rendered_lines = diff_view.rendered_lines(mode, area.width as usize);
+fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
+    let diff_focused = app.active_pane == ActivePane::Diff;
+    let mode = app.diff_view_mode;
     let viewport_height = area.height as usize;
-    let max_scroll = rendered_lines
-        .len()
-        .saturating_sub(viewport_height)
-        .min(u16::MAX as usize) as u16;
-    if *diff_scroll > max_scroll {
-        *diff_scroll = max_scroll;
-    }
+    let (visible_start, visible_end, rendered_line_count, visible_lines) = {
+        let rendered_lines = app.diff_view.rendered_lines(mode, area.width as usize);
+        let max_scroll = rendered_lines
+            .len()
+            .saturating_sub(viewport_height)
+            .min(u16::MAX as usize) as u16;
+        if app.diff_scroll > max_scroll {
+            app.diff_scroll = max_scroll;
+        }
 
-    let selected_index = selected_diff_line_index.min(rendered_lines.len().saturating_sub(1));
-    if diff_focused {
-        if selected_index < *diff_scroll as usize {
-            *diff_scroll = selected_index.min(max_scroll as usize) as u16;
-        } else {
-            let visible_end = (*diff_scroll as usize).saturating_add(viewport_height);
-            if viewport_height > 0 && selected_index >= visible_end {
-                *diff_scroll = selected_index
-                    .saturating_add(1)
-                    .saturating_sub(viewport_height)
-                    .min(max_scroll as usize) as u16;
+        let selected_index = app
+            .selected_diff_line_index
+            .min(rendered_lines.len().saturating_sub(1));
+        if diff_focused {
+            if selected_index < app.diff_scroll as usize {
+                app.diff_scroll = selected_index.min(max_scroll as usize) as u16;
+            } else {
+                let visible_end = (app.diff_scroll as usize).saturating_add(viewport_height);
+                if viewport_height > 0 && selected_index >= visible_end {
+                    app.diff_scroll = selected_index
+                        .saturating_add(1)
+                        .saturating_sub(viewport_height)
+                        .min(max_scroll as usize) as u16;
+                }
             }
         }
-    }
 
-    let visible_start = (*diff_scroll as usize).min(max_scroll as usize);
-    let visible_end = (visible_start + viewport_height).min(rendered_lines.len());
-    let visible_lines = rendered_lines[visible_start..visible_end]
-        .iter()
-        .enumerate()
-        .map(|(offset, line)| {
-            let display_index = visible_start + offset;
-            if diff_focused && display_index == selected_index {
-                highlight_line(line)
-            } else {
-                line.clone()
-            }
-        })
-        .collect::<Vec<_>>();
+        let visible_start = (app.diff_scroll as usize).min(max_scroll as usize);
+        let visible_end = (visible_start + viewport_height).min(rendered_lines.len());
+        let visible_lines = rendered_lines[visible_start..visible_end]
+            .iter()
+            .enumerate()
+            .map(|(offset, line)| {
+                let display_index = visible_start + offset;
+                if diff_focused && display_index == selected_index {
+                    highlight_line(line)
+                } else {
+                    line.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        (
+            visible_start,
+            visible_end,
+            rendered_lines.len(),
+            visible_lines,
+        )
+    };
+    app.update_diff_viewport(mode, area.width as usize, visible_start, visible_end);
     let paragraph = Paragraph::new(Text::from(visible_lines))
         .style(Style::new().fg(text_color()).bg(panel_color()))
         .scroll((0, 0));
     frame.render_widget(paragraph, area);
 
-    if rendered_lines.len() > viewport_height {
-        let mut scrollbar_state = ScrollbarState::new(rendered_lines.len())
-            .position(*diff_scroll as usize)
+    if rendered_line_count > viewport_height {
+        let mut scrollbar_state = ScrollbarState::new(rendered_line_count)
+            .position(app.diff_scroll as usize)
             .viewport_content_length(viewport_height);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)

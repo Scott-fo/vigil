@@ -25,6 +25,7 @@ pub type SharedHighlightRegistry = Arc<HighlightRegistry>;
 const LOG_FIELD_SEPARATOR: char = '\u{001f}';
 const LOG_RECORD_SEPARATOR: char = '\u{001e}';
 pub const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const VIEWPORT_HIGHLIGHT_PADDING_ROWS: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -242,7 +243,7 @@ impl DiffView {
             return;
         }
 
-        let (lines, nav) = if self.rows.is_empty() {
+        let (lines, nav, row_refs) = if self.rows.is_empty() {
             (
                 vec![Line::from(Span::styled(
                     self.note
@@ -251,6 +252,7 @@ impl DiffView {
                     ui::diff_meta_style(),
                 ))],
                 vec![None],
+                vec![DisplayRowRefs::default()],
             )
         } else {
             match mode {
@@ -263,6 +265,7 @@ impl DiffView {
         cache.width = width;
         cache.lines = lines;
         cache.nav = nav;
+        cache.row_refs = row_refs;
         cache.valid = true;
     }
 
@@ -274,58 +277,90 @@ impl DiffView {
     fn build_unified_display(
         &self,
         width: usize,
-    ) -> (Vec<Line<'static>>, Vec<Option<DisplayNavTarget>>) {
+    ) -> (
+        Vec<Line<'static>>,
+        Vec<Option<DisplayNavTarget>>,
+        Vec<DisplayRowRefs>,
+    ) {
         let mut lines = Vec::new();
         let mut nav = Vec::new();
+        let mut row_refs = Vec::new();
 
         for (hunk_offset, hunk) in self.hunks.iter().enumerate() {
-            for row in &self.rows[hunk.row_start..hunk.row_end] {
+            for row_index in hunk.row_start..hunk.row_end {
+                let row = &self.rows[row_index];
                 let line_number = match row.kind {
                     DiffLineKind::Added | DiffLineKind::Context => row.new_line,
                     DiffLineKind::Removed => row.old_line,
                 };
                 lines.push(render_unified_code_line(row, width));
                 nav.push(line_number.map(DisplayNavTarget::Line));
+                row_refs.push(match row.kind {
+                    DiffLineKind::Removed => DisplayRowRefs {
+                        left: Some(row_index),
+                        right: None,
+                    },
+                    DiffLineKind::Added | DiffLineKind::Context => DisplayRowRefs {
+                        left: None,
+                        right: Some(row_index),
+                    },
+                });
             }
 
             if let Some(gap) = self.gaps.get(hunk_offset) {
-                self.push_gap_display_rows(&mut lines, &mut nav, gap, width, false);
+                self.push_gap_display_rows(&mut lines, &mut nav, &mut row_refs, gap, width, false);
             }
         }
 
-        (lines, nav)
+        (lines, nav, row_refs)
     }
 
     fn build_split_display(
         &self,
         width: usize,
-    ) -> (Vec<Line<'static>>, Vec<Option<DisplayNavTarget>>) {
+    ) -> (
+        Vec<Line<'static>>,
+        Vec<Option<DisplayNavTarget>>,
+        Vec<DisplayRowRefs>,
+    ) {
         let total_width = width.saturating_sub(1);
         let gutter_width = 3;
         let side_width = total_width.saturating_sub(gutter_width) / 2;
         let mut lines = Vec::new();
         let mut nav = Vec::new();
+        let mut row_refs = Vec::new();
 
         for (hunk_offset, hunk) in self.hunks.iter().enumerate() {
-            for (line, target_line) in
-                render_split_hunk_rows(&self.rows[hunk.row_start..hunk.row_end], side_width)
-            {
+            for (line, target_line, refs) in render_split_hunk_rows(
+                &self.rows[hunk.row_start..hunk.row_end],
+                hunk.row_start,
+                side_width,
+            ) {
                 lines.push(line);
                 nav.push(target_line.map(DisplayNavTarget::Line));
+                row_refs.push(refs);
             }
 
             if let Some(gap) = self.gaps.get(hunk_offset) {
-                self.push_gap_display_rows(&mut lines, &mut nav, gap, total_width, true);
+                self.push_gap_display_rows(
+                    &mut lines,
+                    &mut nav,
+                    &mut row_refs,
+                    gap,
+                    total_width,
+                    true,
+                );
             }
         }
 
-        (lines, nav)
+        (lines, nav, row_refs)
     }
 
     fn push_gap_display_rows(
         &self,
         lines: &mut Vec<Line<'static>>,
         nav: &mut Vec<Option<DisplayNavTarget>>,
+        row_refs: &mut Vec<DisplayRowRefs>,
         gap: &DiffHunkGap,
         width: usize,
         split: bool,
@@ -352,6 +387,7 @@ impl DiffView {
                     split,
                 ));
                 nav.push(Some(DisplayNavTarget::Line(line_number)));
+                row_refs.push(DisplayRowRefs::default());
             }
         }
 
@@ -369,6 +405,7 @@ impl DiffView {
                 gap.gap_index,
                 GapExpandDirection::Up,
             )));
+            row_refs.push(DisplayRowRefs::default());
             lines.push(render_expand_gap_line(
                 width,
                 remaining,
@@ -379,6 +416,7 @@ impl DiffView {
                 gap.gap_index,
                 GapExpandDirection::Down,
             )));
+            row_refs.push(DisplayRowRefs::default());
         }
 
         if let Some(file_lines) = self.file_lines.as_ref() {
@@ -397,6 +435,7 @@ impl DiffView {
                     split,
                 ));
                 nav.push(Some(DisplayNavTarget::Line(line_number)));
+                row_refs.push(DisplayRowRefs::default());
             }
         }
     }
@@ -444,6 +483,127 @@ impl DiffView {
             apply_completed_highlighting(&mut self.rows, result);
         }
         self.invalidate_display_cache();
+    }
+
+    pub fn apply_syntax_highlighting_for_display_range(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        start: usize,
+        end: usize,
+        filetype: Option<&'static str>,
+        registry: &HighlightRegistry,
+    ) {
+        let Some(filetype) = filetype else {
+            return;
+        };
+
+        self.ensure_display_cache(mode, width);
+        let row_ref_count = self.display_cache.entry(mode).row_refs.len();
+        let start = start.min(row_ref_count);
+        let end = end.min(row_ref_count);
+        if start >= end {
+            return;
+        }
+
+        let (left_window, right_window) = {
+            let row_refs = &self.display_cache.entry(mode).row_refs;
+            collect_display_highlight_windows(&row_refs[start..end], self.rows.len())
+        };
+        let left = left_window.and_then(|(window_start, window_end)| {
+            prepare_side_highlighting_in_row_window(
+                &self.rows,
+                HighlightSide::Left,
+                window_start,
+                window_end,
+            )
+        });
+        let right = right_window.and_then(|(window_start, window_end)| {
+            prepare_side_highlighting_in_row_window(
+                &self.rows,
+                HighlightSide::Right,
+                window_start,
+                window_end,
+            )
+        });
+        let should_parallelize = left.is_some()
+            && right.is_some()
+            && std::thread::available_parallelism()
+                .map(|parallelism| parallelism.get() > 1)
+                .unwrap_or(false);
+
+        let (left_result, right_result) = if should_parallelize {
+            std::thread::scope(|scope| {
+                let right_task = scope
+                    .spawn(move || right.and_then(|request| request.highlight(filetype, registry)));
+                let left_result = left.and_then(|request| request.highlight(filetype, registry));
+                let right_result = right_task.join().ok().flatten();
+                (left_result, right_result)
+            })
+        } else {
+            (
+                left.and_then(|request| request.highlight(filetype, registry)),
+                right.and_then(|request| request.highlight(filetype, registry)),
+            )
+        };
+
+        if let Some(result) = left_result {
+            apply_completed_highlighting(&mut self.rows, result);
+        }
+        if let Some(result) = right_result {
+            apply_completed_highlighting(&mut self.rows, result);
+        }
+        self.invalidate_display_cache();
+    }
+
+    pub fn is_display_range_fully_highlighted(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        start: usize,
+        end: usize,
+    ) -> bool {
+        self.ensure_display_cache(mode, width);
+        let row_refs = &self.display_cache.entry(mode).row_refs;
+        let start = start.min(row_refs.len());
+        let end = end.min(row_refs.len());
+        if start >= end {
+            return true;
+        }
+
+        row_refs[start..end]
+            .iter()
+            .all(|refs| refs.is_fully_highlighted(&self.rows, mode))
+    }
+
+    pub fn merge_highlighting_from(&mut self, other: &Self) {
+        if self.rows.len() != other.rows.len() {
+            return;
+        }
+
+        let mut changed = false;
+        for (row, other_row) in self.rows.iter_mut().zip(other.rows.iter()) {
+            if row.kind != other_row.kind
+                || row.old_line != other_row.old_line
+                || row.new_line != other_row.new_line
+                || row.text != other_row.text
+            {
+                return;
+            }
+
+            if row.syntax.left.is_none() && other_row.syntax.left.is_some() {
+                row.syntax.left = other_row.syntax.left.clone();
+                changed = true;
+            }
+            if row.syntax.right.is_none() && other_row.syntax.right.is_some() {
+                row.syntax.right = other_row.syntax.right.clone();
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.invalidate_display_cache();
+        }
     }
 }
 
@@ -505,10 +665,25 @@ fn prepare_side_highlighting(
     rows: &[DiffRow],
     side: HighlightSide,
 ) -> Option<PreparedHighlightSide> {
+    prepare_side_highlighting_in_row_window(rows, side, 0, rows.len().saturating_sub(1))
+}
+
+fn prepare_side_highlighting_in_row_window(
+    rows: &[DiffRow],
+    side: HighlightSide,
+    start: usize,
+    end: usize,
+) -> Option<PreparedHighlightSide> {
+    if rows.is_empty() || start > end {
+        return None;
+    }
+
+    let start = start.min(rows.len().saturating_sub(1));
+    let end = end.min(rows.len().saturating_sub(1));
     let mut source_len = 0usize;
     let mut row_count = 0usize;
 
-    for row in rows {
+    for row in &rows[start..=end] {
         if side.includes(row.kind) {
             source_len += row.text.len();
             row_count += 1;
@@ -523,7 +698,7 @@ fn prepare_side_highlighting(
     source.reserve(source_len + row_count.saturating_sub(1));
     let mut row_indices = Vec::with_capacity(row_count);
 
-    for (row_index, row) in rows.iter().enumerate() {
+    for (row_offset, row) in rows[start..=end].iter().enumerate() {
         if !side.includes(row.kind) {
             continue;
         }
@@ -532,7 +707,7 @@ fn prepare_side_highlighting(
             source.push('\n');
         }
         source.push_str(&row.text);
-        row_indices.push(row_index);
+        row_indices.push(start + row_offset);
     }
 
     Some(PreparedHighlightSide {
@@ -585,6 +760,7 @@ struct CachedDisplay {
     width: usize,
     lines: Vec<Line<'static>>,
     nav: Vec<Option<DisplayNavTarget>>,
+    row_refs: Vec<DisplayRowRefs>,
     valid: bool,
 }
 
@@ -594,6 +770,38 @@ enum DisplayNavTarget {
     Gap(usize, GapExpandDirection),
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct DisplayRowRefs {
+    left: Option<usize>,
+    right: Option<usize>,
+}
+
+impl DisplayRowRefs {
+    fn is_fully_highlighted(self, rows: &[DiffRow], mode: DiffViewMode) -> bool {
+        match mode {
+            DiffViewMode::Unified => self
+                .left
+                .map(|row_index| rows[row_index].syntax.left.is_some())
+                .or_else(|| {
+                    self.right
+                        .map(|row_index| rows[row_index].syntax.right.is_some())
+                })
+                .unwrap_or(true),
+            DiffViewMode::Split => {
+                let left_ready = self
+                    .left
+                    .map(|row_index| rows[row_index].syntax.left.is_some())
+                    .unwrap_or(true);
+                let right_ready = self
+                    .right
+                    .map(|row_index| rows[row_index].syntax.right.is_some())
+                    .unwrap_or(true);
+                left_ready && right_ready
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct StatusEntry {
     status: String,
@@ -601,7 +809,7 @@ struct StatusEntry {
     original_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DiffLineKind {
     Context,
     Added,
@@ -2122,37 +2330,51 @@ fn render_split_pair_line(
 
 fn render_split_hunk_rows(
     rows: &[DiffRow],
+    row_index_offset: usize,
     side_width: usize,
-) -> Vec<(Line<'static>, Option<usize>)> {
+) -> Vec<(Line<'static>, Option<usize>, DisplayRowRefs)> {
     let mut rendered = Vec::with_capacity(rows.len());
-    let mut pending_removed: Vec<&DiffRow> = Vec::new();
-    let mut pending_added: Vec<&DiffRow> = Vec::new();
+    let mut pending_removed: Vec<(usize, &DiffRow)> = Vec::new();
+    let mut pending_added: Vec<(usize, &DiffRow)> = Vec::new();
 
-    let flush_pending = |rendered: &mut Vec<(Line<'static>, Option<usize>)>,
-                         removed: &mut Vec<&DiffRow>,
-                         added: &mut Vec<&DiffRow>| {
+    let flush_pending = |rendered: &mut Vec<(Line<'static>, Option<usize>, DisplayRowRefs)>,
+                         removed: &mut Vec<(usize, &DiffRow)>,
+                         added: &mut Vec<(usize, &DiffRow)>| {
         let row_count = removed.len().max(added.len());
         for index in 0..row_count {
             let left = removed.get(index).copied();
             let right = added.get(index).copied();
             rendered.push((
-                render_split_pair_line(left, right, side_width),
-                resolve_split_target_line(left, right),
+                render_split_pair_line(
+                    left.map(|(_, row)| row),
+                    right.map(|(_, row)| row),
+                    side_width,
+                ),
+                resolve_split_target_line(left.map(|(_, row)| row), right.map(|(_, row)| row)),
+                DisplayRowRefs {
+                    left: left.map(|(row_index, _)| row_index),
+                    right: right.map(|(row_index, _)| row_index),
+                },
             ));
         }
         removed.clear();
         added.clear();
     };
 
-    for row in rows {
+    for (row_offset, row) in rows.iter().enumerate() {
+        let row_index = row_index_offset + row_offset;
         match row.kind {
-            DiffLineKind::Removed => pending_removed.push(row),
-            DiffLineKind::Added => pending_added.push(row),
+            DiffLineKind::Removed => pending_removed.push((row_index, row)),
+            DiffLineKind::Added => pending_added.push((row_index, row)),
             DiffLineKind::Context => {
                 flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
                 rendered.push((
                     render_split_pair_line(Some(row), Some(row), side_width),
                     resolve_split_target_line(Some(row), Some(row)),
+                    DisplayRowRefs {
+                        left: Some(row_index),
+                        right: Some(row_index),
+                    },
                 ));
             }
         }
@@ -2722,6 +2944,45 @@ fn push_syntax_token(
         end,
         highlight_name,
     });
+}
+
+fn collect_display_highlight_windows(
+    row_refs: &[DisplayRowRefs],
+    row_count: usize,
+) -> (Option<(usize, usize)>, Option<(usize, usize)>) {
+    let mut left_min = None;
+    let mut left_max = None;
+    let mut right_min = None;
+    let mut right_max = None;
+
+    for refs in row_refs {
+        if let Some(row_index) = refs.left {
+            left_min = Some(left_min.map_or(row_index, |current: usize| current.min(row_index)));
+            left_max = Some(left_max.map_or(row_index, |current: usize| current.max(row_index)));
+        }
+        if let Some(row_index) = refs.right {
+            right_min = Some(right_min.map_or(row_index, |current: usize| current.min(row_index)));
+            right_max = Some(right_max.map_or(row_index, |current: usize| current.max(row_index)));
+        }
+    }
+
+    (
+        expand_row_window(left_min.zip(left_max), row_count),
+        expand_row_window(right_min.zip(right_max), row_count),
+    )
+}
+
+fn expand_row_window(window: Option<(usize, usize)>, row_count: usize) -> Option<(usize, usize)> {
+    let (start, end) = window?;
+    if row_count == 0 {
+        return None;
+    }
+
+    Some((
+        start.saturating_sub(VIEWPORT_HIGHLIGHT_PADDING_ROWS),
+        end.saturating_add(VIEWPORT_HIGHLIGHT_PADDING_ROWS)
+            .min(row_count.saturating_sub(1)),
+    ))
 }
 
 #[derive(Clone, Copy)]

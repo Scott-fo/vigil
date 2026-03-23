@@ -88,6 +88,7 @@ struct DiffCacheEntry {
     key: DiffCacheKey,
     plain: DiffView,
     highlighted: Option<DiffView>,
+    highlight_complete: bool,
 }
 
 #[derive(Debug, Default)]
@@ -100,30 +101,45 @@ impl DiffViewCache {
         self.touch_entry(key).map(|entry| entry.plain.clone())
     }
 
-    fn get_highlighted(&mut self, key: &DiffCacheKey) -> Option<DiffView> {
-        self.touch_entry(key)
-            .and_then(|entry| entry.highlighted.clone())
+    fn get_highlighted(&mut self, key: &DiffCacheKey) -> Option<(DiffView, bool)> {
+        self.touch_entry(key).and_then(|entry| {
+            entry
+                .highlighted
+                .clone()
+                .map(|view| (view, entry.highlight_complete))
+        })
     }
 
     fn insert_plain(&mut self, key: DiffCacheKey, plain: DiffView) {
-        let highlighted = self.remove_entry(&key).and_then(|entry| entry.highlighted);
+        let (highlighted, highlight_complete) = self
+            .remove_entry(&key)
+            .map(|entry| (entry.highlighted, entry.highlight_complete))
+            .unwrap_or((None, false));
         self.entries.push_back(DiffCacheEntry {
             key,
             plain,
             highlighted,
+            highlight_complete,
         });
         self.trim();
     }
 
-    fn insert_highlighted(&mut self, key: DiffCacheKey, highlighted: DiffView) {
+    fn insert_highlighted(&mut self, key: DiffCacheKey, highlighted: DiffView, complete: bool) {
         if let Some(mut entry) = self.remove_entry(&key) {
-            entry.highlighted = Some(highlighted);
+            match entry.highlighted.as_mut() {
+                Some(existing) if !complete => existing.merge_highlighting_from(&highlighted),
+                Some(existing) if complete => *existing = highlighted,
+                Some(_) => {}
+                None => entry.highlighted = Some(highlighted),
+            }
+            entry.highlight_complete |= complete;
             self.entries.push_back(entry);
         } else {
             self.entries.push_back(DiffCacheEntry {
                 key,
                 plain: highlighted.clone(),
                 highlighted: Some(highlighted),
+                highlight_complete: complete,
             });
         }
         self.trim();
@@ -169,6 +185,27 @@ pub struct SnackbarNotice {
     pub variant: SnackbarVariant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DiffViewport {
+    mode: DiffViewMode,
+    width: usize,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DiffHighlightJobKind {
+    Viewport(DiffViewport),
+    Full,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiffHighlightJob {
+    request_id: u64,
+    key: DiffCacheKey,
+    kind: DiffHighlightJobKind,
+}
+
 struct CommitSearchCandidate {
     index: usize,
     haystack: String,
@@ -200,6 +237,10 @@ pub struct App {
     pub selected_diff_line_index: usize,
     pub diff_request_id: u64,
     diff_load_task: Option<task::JoinHandle<()>>,
+    diff_highlight_task: Option<task::JoinHandle<()>>,
+    diff_highlight_job: Option<DiffHighlightJob>,
+    diff_highlight_complete: bool,
+    diff_viewport: Option<DiffViewport>,
     diff_view_cache: DiffViewCache,
     diff_cache_generation: u64,
     pending_diff_cache_key: Option<DiffCacheKey>,
@@ -300,6 +341,10 @@ impl App {
             selected_diff_line_index: 0,
             diff_request_id: 0,
             diff_load_task: None,
+            diff_highlight_task: None,
+            diff_highlight_job: None,
+            diff_highlight_complete: false,
+            diff_viewport: None,
             diff_view_cache: DiffViewCache::default(),
             diff_cache_generation: 0,
             pending_diff_cache_key: None,
@@ -359,8 +404,14 @@ impl App {
         Ok(app)
     }
 
+    fn redraw(&mut self, terminal: &mut ratatui::DefaultTerminal) -> color_eyre::Result<()> {
+        terminal.draw(|frame| ui::render(frame, self))?;
+        self.maybe_queue_diff_highlight();
+        Ok(())
+    }
+
     pub async fn run(mut self, mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
-        terminal.draw(|frame| ui::render(frame, &mut self))?;
+        self.redraw(&mut terminal)?;
 
         while self.running {
             match self.events.next().await? {
@@ -383,7 +434,7 @@ impl App {
                     };
 
                     if self.running && should_redraw {
-                        terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        self.redraw(&mut terminal)?;
                     }
                 }
                 Event::HighlightRegistryReady(result) => {
@@ -401,45 +452,71 @@ impl App {
                     }
 
                     if self.running {
-                        terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        self.redraw(&mut terminal)?;
                     }
                 }
-                Event::DiffLoaded {
-                    request_id,
-                    highlighted,
-                    result,
-                } => {
+                Event::DiffLoaded { request_id, result } => {
                     if request_id == self.diff_request_id {
+                        self.diff_load_task = None;
                         match result {
                             Ok(mut diff_view) => {
                                 if let Some(cache_key) = self.pending_diff_cache_key.clone() {
-                                    if highlighted {
-                                        self.diff_view_cache
-                                            .insert_highlighted(cache_key, diff_view.clone());
-                                    } else {
-                                        self.diff_view_cache
-                                            .insert_plain(cache_key, diff_view.clone());
-                                    }
+                                    self.diff_view_cache
+                                        .insert_plain(cache_key, diff_view.clone());
                                 }
                                 let max_index =
                                     diff_view.last_selectable_index(self.diff_view_mode);
                                 self.selected_diff_line_index =
                                     self.selected_diff_line_index.min(max_index);
                                 self.diff_view = diff_view;
+                                self.diff_highlight_complete = self.highlight_registry.is_none();
                                 self.status_message = Some(self.current_status_message());
                             }
                             Err(error) => {
                                 self.diff_view = DiffView::empty(error);
+                                self.diff_highlight_complete = true;
                             }
                         }
 
-                        if highlighted || self.highlight_registry.is_none() {
-                            self.diff_load_task = None;
-                            self.pending_diff_cache_key = None;
+                        if self.running {
+                            self.redraw(&mut terminal)?;
+                        }
+                    }
+                }
+                Event::DiffHighlightUpdated {
+                    request_id,
+                    complete,
+                    result,
+                } => {
+                    if request_id == self.diff_request_id {
+                        self.diff_highlight_task = None;
+                        self.diff_highlight_job = None;
+
+                        match result {
+                            Ok(diff_view) => {
+                                if let Some(cache_key) = self.pending_diff_cache_key.clone() {
+                                    self.diff_view_cache.insert_highlighted(
+                                        cache_key,
+                                        diff_view.clone(),
+                                        complete,
+                                    );
+                                }
+                                if complete {
+                                    self.diff_view = diff_view;
+                                    self.diff_highlight_complete = true;
+                                } else {
+                                    self.diff_view.merge_highlighting_from(&diff_view);
+                                }
+                                self.status_message = Some(self.current_status_message());
+                            }
+                            Err(error) => {
+                                self.status_message =
+                                    Some(format!("syntax highlight failed: {error}"));
+                            }
                         }
 
                         if self.running {
-                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                            self.redraw(&mut terminal)?;
                         }
                     }
                 }
@@ -453,7 +530,7 @@ impl App {
                         self.diff_view_cache.insert_plain(key.clone(), plain);
                         if let Some(highlighted_view) = highlighted {
                             self.diff_view_cache
-                                .insert_highlighted(key, highlighted_view);
+                                .insert_highlighted(key, highlighted_view, false);
                         }
                     }
                 }
@@ -475,7 +552,7 @@ impl App {
                         }
 
                         if self.running {
-                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                            self.redraw(&mut terminal)?;
                         }
                     }
                 }
@@ -496,7 +573,7 @@ impl App {
                         }
 
                         if self.running {
-                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                            self.redraw(&mut terminal)?;
                         }
                     }
                 }
@@ -518,7 +595,7 @@ impl App {
                         }
 
                         if self.running {
-                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                            self.redraw(&mut terminal)?;
                         }
                     }
                 }
@@ -549,7 +626,7 @@ impl App {
                             self.restart_repo_watcher();
                         }
                         if self.running {
-                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                            self.redraw(&mut terminal)?;
                         }
                     }
                 }
@@ -565,14 +642,14 @@ impl App {
                     }
 
                     if self.running {
-                        terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        self.redraw(&mut terminal)?;
                     }
                 }
                 Event::ClearSnackbar(generation) => {
                     if self.snackbar_generation == generation {
                         self.snackbar_notice = None;
                         if self.running {
-                            terminal.draw(|frame| ui::render(frame, &mut self))?;
+                            self.redraw(&mut terminal)?;
                         }
                     }
                 }
@@ -1146,6 +1223,7 @@ impl App {
         self.cancel_inflight_diff_load();
         self.diff_request_id = self.diff_request_id.saturating_add(1);
         let request_id = self.diff_request_id;
+        self.diff_highlight_complete = false;
         self.pending_diff_cache_key = None;
 
         if reset_viewport {
@@ -1161,43 +1239,23 @@ impl App {
         self.spawn_diff_prefetch();
 
         let cache_key = self.diff_cache_key(&file);
-        if self.highlight_registry.is_some() {
-            if let Some(mut diff_view) = self.diff_view_cache.get_highlighted(&cache_key) {
-                let max_index = diff_view.last_selectable_index(self.diff_view_mode);
-                self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
-                self.diff_view = diff_view;
-                self.status_message = Some(self.current_status_message());
-                return;
-            }
+        self.pending_diff_cache_key = Some(cache_key.clone());
+        if let Some((mut diff_view, highlight_complete)) =
+            self.diff_view_cache.get_highlighted(&cache_key)
+        {
+            let max_index = diff_view.last_selectable_index(self.diff_view_mode);
+            self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
+            self.diff_view = diff_view;
+            self.diff_highlight_complete = highlight_complete;
+            self.status_message = Some(self.current_status_message());
+            return;
         }
 
         if let Some(mut plain_diff_view) = self.diff_view_cache.get_plain(&cache_key) {
             let max_index = plain_diff_view.last_selectable_index(self.diff_view_mode);
             self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
-            self.diff_view = plain_diff_view.clone();
+            self.diff_view = plain_diff_view;
             self.status_message = Some(self.current_status_message());
-
-            let Some(highlight_registry) = self.highlight_registry.clone() else {
-                return;
-            };
-
-            self.pending_diff_cache_key = Some(cache_key);
-            let sender = self.events.sender();
-            let filetype = file.filetype;
-            self.diff_load_task = Some(task::spawn(async move {
-                let highlighted_result = task::spawn_blocking(move || {
-                    plain_diff_view
-                        .apply_syntax_highlighting(filetype, highlight_registry.as_ref());
-                    Ok::<_, String>(plain_diff_view)
-                })
-                .await
-                .unwrap_or_else(|error| Err(error.to_string()));
-                let _ = sender.send(Event::DiffLoaded {
-                    request_id,
-                    highlighted: true,
-                    result: highlighted_result,
-                });
-            }));
             return;
         }
 
@@ -1207,11 +1265,8 @@ impl App {
 
         let review_mode = self.review_mode.clone();
         let repo_root = self.repo_root.clone();
-        let highlight_registry = self.highlight_registry.clone();
         let sender = self.events.sender();
         let plain_file = file.clone();
-        let filetype = file.filetype;
-        self.pending_diff_cache_key = Some(cache_key);
 
         self.diff_load_task = Some(task::spawn(async move {
             let preview_result = match &review_mode {
@@ -1231,7 +1286,6 @@ impl App {
                 Err(error) => {
                     let _ = sender.send(Event::DiffLoaded {
                         request_id,
-                        highlighted: false,
                         result: Err(error.to_string()),
                     });
                     return;
@@ -1249,7 +1303,6 @@ impl App {
                 Ok(diff_view) => {
                     let _ = sender.send(Event::DiffLoaded {
                         request_id,
-                        highlighted: false,
                         result: Ok(diff_view.clone()),
                     });
                     diff_view
@@ -1257,29 +1310,12 @@ impl App {
                 Err(error) => {
                     let _ = sender.send(Event::DiffLoaded {
                         request_id,
-                        highlighted: false,
                         result: Err(error),
                     });
                     return;
                 }
             };
-
-            let Some(highlight_registry) = highlight_registry else {
-                return;
-            };
-
-            let highlighted_result = task::spawn_blocking(move || {
-                let mut highlighted_view = plain_diff_view;
-                highlighted_view.apply_syntax_highlighting(filetype, highlight_registry.as_ref());
-                Ok::<_, String>(highlighted_view)
-            })
-            .await
-            .unwrap_or_else(|error| Err(error.to_string()));
-            let _ = sender.send(Event::DiffLoaded {
-                request_id,
-                highlighted: true,
-                result: highlighted_result,
-            });
+            let _ = plain_diff_view;
         }));
     }
 
@@ -1287,7 +1323,133 @@ impl App {
         if let Some(task) = self.diff_load_task.take() {
             task.abort();
         }
+        self.cancel_inflight_diff_highlight();
         self.pending_diff_cache_key = None;
+        self.diff_highlight_complete = false;
+    }
+
+    fn cancel_inflight_diff_highlight(&mut self) {
+        if let Some(task) = self.diff_highlight_task.take() {
+            task.abort();
+        }
+        self.diff_highlight_job = None;
+    }
+
+    fn maybe_queue_diff_highlight(&mut self) {
+        let Some(highlight_registry) = self.highlight_registry.clone() else {
+            self.diff_highlight_complete = true;
+            return;
+        };
+        let Some(cache_key) = self.pending_diff_cache_key.clone() else {
+            return;
+        };
+        let Some(filetype) = self.selected_file().and_then(|file| file.filetype) else {
+            self.diff_highlight_complete = true;
+            return;
+        };
+        let Some(viewport) = self.diff_viewport else {
+            return;
+        };
+
+        let viewport_ready = self.diff_view.is_display_range_fully_highlighted(
+            viewport.mode,
+            viewport.width,
+            viewport.start,
+            viewport.end,
+        );
+
+        if !viewport_ready {
+            let needs_new_viewport_job = !matches!(
+                self.diff_highlight_job.as_ref(),
+                Some(DiffHighlightJob {
+                    request_id,
+                    key,
+                    kind: DiffHighlightJobKind::Viewport(existing_viewport),
+                }) if *request_id == self.diff_request_id
+                    && *key == cache_key
+                    && *existing_viewport == viewport
+            );
+            if needs_new_viewport_job {
+                self.cancel_inflight_diff_highlight();
+                self.spawn_selected_diff_highlight(
+                    cache_key,
+                    filetype,
+                    highlight_registry,
+                    DiffHighlightJobKind::Viewport(viewport),
+                );
+            }
+            return;
+        }
+
+        if self.diff_highlight_complete {
+            return;
+        }
+
+        let full_inflight = matches!(
+            self.diff_highlight_job.as_ref(),
+            Some(DiffHighlightJob {
+                request_id,
+                key,
+                kind: DiffHighlightJobKind::Full,
+            }) if *request_id == self.diff_request_id && *key == cache_key
+        );
+        if full_inflight {
+            return;
+        }
+
+        self.cancel_inflight_diff_highlight();
+        self.spawn_selected_diff_highlight(
+            cache_key,
+            filetype,
+            highlight_registry,
+            DiffHighlightJobKind::Full,
+        );
+    }
+
+    fn spawn_selected_diff_highlight(
+        &mut self,
+        cache_key: DiffCacheKey,
+        filetype: &'static str,
+        highlight_registry: SharedHighlightRegistry,
+        kind: DiffHighlightJobKind,
+    ) {
+        let request_id = self.diff_request_id;
+        let sender = self.events.sender();
+        let mut diff_view = self.diff_view.clone();
+        self.diff_highlight_job = Some(DiffHighlightJob {
+            request_id,
+            key: cache_key,
+            kind: kind.clone(),
+        });
+        self.diff_highlight_task = Some(task::spawn(async move {
+            let complete = matches!(kind, DiffHighlightJobKind::Full);
+            let result = task::spawn_blocking(move || {
+                match kind {
+                    DiffHighlightJobKind::Viewport(viewport) => {
+                        diff_view.apply_syntax_highlighting_for_display_range(
+                            viewport.mode,
+                            viewport.width,
+                            viewport.start,
+                            viewport.end,
+                            Some(filetype),
+                            highlight_registry.as_ref(),
+                        );
+                    }
+                    DiffHighlightJobKind::Full => {
+                        diff_view
+                            .apply_syntax_highlighting(Some(filetype), highlight_registry.as_ref());
+                    }
+                }
+                Ok::<_, String>(diff_view)
+            })
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+            let _ = sender.send(Event::DiffHighlightUpdated {
+                request_id,
+                complete,
+                result,
+            });
+        }));
     }
 
     async fn toggle_selected_file_stage(&mut self) -> color_eyre::Result<()> {
@@ -1958,6 +2120,21 @@ impl App {
             self.selected_diff_line_index,
             delta,
         );
+    }
+
+    pub fn update_diff_viewport(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        visible_start: usize,
+        visible_end: usize,
+    ) {
+        self.diff_viewport = (width > 0 && visible_start < visible_end).then_some(DiffViewport {
+            mode,
+            width,
+            start: visible_start,
+            end: visible_end,
+        });
     }
 
     pub fn filtered_commit_search_indices(&mut self) -> Vec<usize> {
