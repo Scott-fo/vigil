@@ -714,11 +714,11 @@ struct CompletedHighlightSide {
 
 impl HighlightSide {
     fn includes(self, kind: DiffLineKind) -> bool {
-        match (self, kind) {
-            (Self::Left, DiffLineKind::Removed | DiffLineKind::Context) => true,
-            (Self::Right, DiffLineKind::Added | DiffLineKind::Context) => true,
-            _ => false,
-        }
+        matches!(
+            (self, kind),
+            (Self::Left, DiffLineKind::Removed | DiffLineKind::Context)
+                | (Self::Right, DiffLineKind::Added | DiffLineKind::Context)
+        )
     }
 
     fn assign(self, row: &mut DiffRow, tokens: Vec<SyntaxToken>) {
@@ -780,7 +780,10 @@ fn prepare_exact_side_highlighting(
             HighlightSide::Right => row.new_line,
         }?;
         let line_index = line_number.saturating_sub(1);
-        let tokens = highlighted_lines.get(line_index).cloned().unwrap_or_default();
+        let tokens = highlighted_lines
+            .get(line_index)
+            .cloned()
+            .unwrap_or_default();
         row_indices.push(row_index);
         exact_row_lines.push(tokens);
     }
