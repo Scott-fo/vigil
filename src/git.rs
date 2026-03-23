@@ -81,7 +81,6 @@ pub struct DiffView {
     gaps: Vec<DiffHunkGap>,
     gap_expansions: HashMap<usize, DiffGapExpansion>,
     file_lines: Option<Vec<String>>,
-    highlighted_file_lines: Option<Vec<Vec<Span<'static>>>>,
     display_cache: DiffDisplayCache,
 }
 
@@ -94,7 +93,6 @@ impl DiffView {
             gaps: Vec::new(),
             gap_expansions: HashMap::new(),
             file_lines: None,
-            highlighted_file_lines: None,
             display_cache: DiffDisplayCache::default(),
         }
     }
@@ -345,10 +343,7 @@ impl DiffView {
                 lines.push(render_expanded_context_line(
                     line_number,
                     &text,
-                    self.highlighted_file_lines
-                        .as_ref()
-                        .and_then(|highlighted| highlighted.get(start + offset))
-                        .cloned(),
+                    None,
                     width,
                     split,
                 ));
@@ -393,10 +388,7 @@ impl DiffView {
                 lines.push(render_expanded_context_line(
                     line_number,
                     &text,
-                    self.highlighted_file_lines
-                        .as_ref()
-                        .and_then(|highlighted| highlighted.get(start + offset))
-                        .cloned(),
+                    None,
                     width,
                     split,
                 ));
@@ -407,6 +399,87 @@ impl DiffView {
 
     fn invalidate_display_cache(&mut self) {
         self.display_cache = DiffDisplayCache::default();
+    }
+
+    fn apply_syntax_highlighting(
+        &mut self,
+        filetype: Option<&'static str>,
+        registry: &HighlightRegistry,
+    ) {
+        let Some(filetype) = filetype else {
+            return;
+        };
+
+        let mut highlighter = SyntaxHighlighter::new(Some(registry));
+        apply_side_syntax_highlighting(&mut self.rows, &mut highlighter, filetype, HighlightSide::Left);
+        apply_side_syntax_highlighting(
+            &mut self.rows,
+            &mut highlighter,
+            filetype,
+            HighlightSide::Right,
+        );
+        self.invalidate_display_cache();
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum HighlightSide {
+    Left,
+    Right,
+}
+
+impl HighlightSide {
+    fn includes(self, kind: DiffLineKind) -> bool {
+        match (self, kind) {
+            (Self::Left, DiffLineKind::Removed | DiffLineKind::Context) => true,
+            (Self::Right, DiffLineKind::Added | DiffLineKind::Context) => true,
+            _ => false,
+        }
+    }
+
+    fn assign(self, row: &mut DiffRow, tokens: Vec<SyntaxToken>) {
+        match self {
+            Self::Left => row.syntax.left = Some(tokens),
+            Self::Right => row.syntax.right = Some(tokens),
+        }
+    }
+}
+
+fn apply_side_syntax_highlighting(
+    rows: &mut [DiffRow],
+    highlighter: &mut SyntaxHighlighter<'_>,
+    filetype: &'static str,
+    side: HighlightSide,
+) {
+    let mut source = String::new();
+    let mut row_indices = Vec::new();
+
+    for (row_index, row) in rows.iter().enumerate() {
+        if !side.includes(row.kind) {
+            continue;
+        }
+
+        if !row_indices.is_empty() {
+            source.push('\n');
+        }
+        source.push_str(&row.text);
+        row_indices.push(row_index);
+    }
+
+    if row_indices.is_empty() {
+        return;
+    }
+
+    let Some(highlighted_lines) = highlighter.highlight_buffer_lines(filetype, &source) else {
+        return;
+    };
+
+    if highlighted_lines.len() != row_indices.len() {
+        return;
+    }
+
+    for (row_index, tokens) in row_indices.into_iter().zip(highlighted_lines) {
+        side.assign(&mut rows[row_index], tokens);
     }
 }
 
@@ -465,7 +538,37 @@ struct DiffRow {
     kind: DiffLineKind,
     old_line: Option<usize>,
     new_line: Option<usize>,
-    content: Vec<Span<'static>>,
+    text: String,
+    syntax: DiffRowSyntax,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DiffRowSyntax {
+    left: Option<Vec<SyntaxToken>>,
+    right: Option<Vec<SyntaxToken>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SyntaxToken {
+    text: String,
+    highlight_name: Option<&'static str>,
+}
+
+impl DiffRow {
+    fn unified_content(&self) -> Option<&[SyntaxToken]> {
+        match self.kind {
+            DiffLineKind::Removed => self.syntax.left.as_deref(),
+            DiffLineKind::Added | DiffLineKind::Context => self.syntax.right.as_deref(),
+        }
+    }
+
+    fn side_content(&self, left_side: bool) -> Option<&[SyntaxToken]> {
+        if left_side {
+            self.syntax.left.as_deref()
+        } else {
+            self.syntax.right.as_deref()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1045,24 +1148,22 @@ pub fn build_diff_view_from_preview_data(
         return Ok(DiffView::empty(message));
     }
 
-    let mut highlighter = SyntaxHighlighter::new(highlight_registry);
-    let (rows, hunks, gaps) = build_diff_rows(&preview.diff, file.filetype, &mut highlighter);
-    let highlighted_file_lines = preview.context_lines.as_ref().map(|lines| {
-        lines
-            .iter()
-            .map(|line| highlighter.highlight_line(file.filetype, line, ui::diff_context_style()))
-            .collect::<Vec<_>>()
-    });
-    Ok(DiffView {
+    let (rows, hunks, gaps) = build_diff_rows(&preview.diff, file.filetype);
+    let mut diff_view = DiffView {
         rows,
         note: preview.note.clone(),
         hunks,
         gaps,
         gap_expansions: HashMap::new(),
         file_lines: preview.context_lines.clone(),
-        highlighted_file_lines,
         display_cache: DiffDisplayCache::default(),
-    })
+    };
+
+    if let Some(registry) = highlight_registry {
+        diff_view.apply_syntax_highlighting(file.filetype, registry);
+    }
+
+    Ok(diff_view)
 }
 
 #[derive(Debug, Clone)]
@@ -1726,11 +1827,11 @@ struct ParsedHunkHeader {
     new_count: usize,
 }
 
-fn build_diff_rows(
-    diff: &str,
-    filetype: Option<&'static str>,
-    highlighter: &mut SyntaxHighlighter,
-) -> (Vec<DiffRow>, Vec<DiffHunkBlock>, Vec<DiffHunkGap>) {
+fn build_diff_rows(diff: &str, _filetype: Option<&'static str>) -> (
+    Vec<DiffRow>,
+    Vec<DiffHunkBlock>,
+    Vec<DiffHunkGap>,
+) {
     let normalized = diff.replace("\r\n", "\n");
     let mut rows = Vec::new();
     let mut hunks = Vec::new();
@@ -1782,8 +1883,6 @@ fn build_diff_rows(
                     Some(new_line),
                     content,
                     DiffLineKind::Added,
-                    filetype,
-                    highlighter,
                 ));
                 new_line += 1;
             }
@@ -1793,8 +1892,6 @@ fn build_diff_rows(
                     None,
                     content,
                     DiffLineKind::Removed,
-                    filetype,
-                    highlighter,
                 ));
                 old_line += 1;
             }
@@ -1804,8 +1901,6 @@ fn build_diff_rows(
                     Some(new_line),
                     content,
                     DiffLineKind::Context,
-                    filetype,
-                    highlighter,
                 ));
                 old_line += 1;
                 new_line += 1;
@@ -1870,14 +1965,13 @@ fn render_diff_row(
     new_line: Option<usize>,
     content: &str,
     kind: DiffLineKind,
-    filetype: Option<&'static str>,
-    highlighter: &mut SyntaxHighlighter,
 ) -> DiffRow {
     DiffRow {
         kind,
         old_line,
         new_line,
-        content: highlighter.highlight_line(filetype, content, base_style(kind)),
+        text: content.to_string(),
+        syntax: DiffRowSyntax::default(),
     }
 }
 
@@ -1911,7 +2005,7 @@ fn render_unified_code_line(row: &DiffRow, width: usize) -> Line<'static> {
         ),
         Span::styled(format!("{marker} "), sign_style),
     ];
-    spans.extend(row.content.clone());
+    spans.extend(render_row_content(row.unified_content(), &row.text, base_style));
     let padded = fit_spans_to_width(spans, width.saturating_sub(1), base_style);
     Line::from(padded).style(base_style)
 }
@@ -1999,7 +2093,7 @@ fn render_expand_gap_line(
 fn render_expanded_context_line(
     line_number: usize,
     text: &str,
-    highlighted_content: Option<Vec<Span<'static>>>,
+    highlighted_content: Option<Vec<SyntaxToken>>,
     width: usize,
     split: bool,
 ) -> Line<'static> {
@@ -2007,8 +2101,11 @@ fn render_expanded_context_line(
         kind: DiffLineKind::Context,
         old_line: Some(line_number),
         new_line: Some(line_number),
-        content: highlighted_content
-            .unwrap_or_else(|| vec![Span::styled(text.to_string(), ui::diff_context_style())]),
+        text: text.to_string(),
+        syntax: DiffRowSyntax {
+            left: highlighted_content.clone(),
+            right: highlighted_content,
+        },
     };
     if split {
         let total_width = width.saturating_sub(1);
@@ -2035,8 +2132,33 @@ fn render_split_side(row: Option<&DiffRow>, left_side: bool, width: usize) -> Ve
         format_line_number(line_number),
         base_style.patch(ui::line_number_style()),
     )];
-    spans.extend(row.content.clone());
+    spans.extend(render_row_content(row.side_content(left_side), &row.text, base_style));
     fit_spans_to_width(spans, width, base_style)
+}
+
+fn render_row_content(
+    syntax_tokens: Option<&[SyntaxToken]>,
+    text: &str,
+    fallback: Style,
+) -> Vec<Span<'static>> {
+    let Some(tokens) = syntax_tokens else {
+        return vec![Span::styled(text.to_string(), fallback)];
+    };
+
+    if tokens.is_empty() {
+        return vec![Span::styled(text.to_string(), fallback)];
+    }
+
+    tokens
+        .iter()
+        .map(|token| {
+            let style = token
+                .highlight_name
+                .map(|name| ui::syntax_style(name, fallback))
+                .unwrap_or(fallback);
+            Span::styled(token.text.clone(), style)
+        })
+        .collect()
 }
 
 fn fit_spans_to_width(
@@ -2418,88 +2540,108 @@ impl<'a> SyntaxHighlighter<'a> {
         }
     }
 
-    fn highlight_line(
+    fn highlight_buffer_lines(
         &mut self,
-        filetype: Option<&'static str>,
-        line: &str,
-        fallback: Style,
-    ) -> Vec<Span<'static>> {
-        let Some(filetype) = filetype else {
-            return vec![Span::styled(line.to_string(), fallback)];
-        };
+        filetype: &'static str,
+        source: &str,
+    ) -> Option<Vec<Vec<SyntaxToken>>> {
+        if source.is_empty() {
+            return Some(vec![Vec::new()]);
+        }
+
         if filetype == "markdown" {
-            return highlight_markdown_line(line, fallback);
+            return Some(source.split('\n').map(highlight_markdown_line_tokens).collect());
         }
-        let Some(registry) = self.registry else {
-            return vec![Span::styled(line.to_string(), fallback)];
-        };
-        let Some(config) = registry.config(filetype) else {
-            return vec![Span::styled(line.to_string(), fallback)];
-        };
 
-        let Ok(events) = self
+        let registry = self.registry?;
+        let config = registry.config(filetype)?;
+        let events = self
             .highlighter
-            .highlight(config, line.as_bytes(), None, |_| None)
-        else {
-            return vec![Span::styled(line.to_string(), fallback)];
-        };
+            .highlight(config, source.as_bytes(), None, |_| None)
+            .ok()?;
+        highlight_events_to_lines(source, events)
+    }
 
-        let mut style_stack = vec![fallback];
-        let mut spans = Vec::new();
+}
 
-        for event in events {
-            match event {
-                Ok(HighlightEvent::HighlightStart(highlight)) => {
-                    let name = HIGHLIGHT_NAMES.get(highlight.0).copied().unwrap_or("");
-                    style_stack.push(ui::syntax_style(name, fallback));
-                }
-                Ok(HighlightEvent::HighlightEnd) => {
-                    if style_stack.len() > 1 {
-                        let _ = style_stack.pop();
-                    }
-                }
-                Ok(HighlightEvent::Source { start, end }) => {
-                    if start < end && end <= line.len() {
-                        spans.push(Span::styled(
-                            line[start..end].to_string(),
-                            *style_stack.last().unwrap_or(&fallback),
-                        ));
-                    }
-                }
-                Err(_) => return vec![Span::styled(line.to_string(), fallback)],
+fn push_syntax_token(
+    tokens: &mut Vec<SyntaxToken>,
+    text: &str,
+    highlight_name: Option<&'static str>,
+) {
+    if text.is_empty() {
+        return;
+    }
+
+    if let Some(last) = tokens.last_mut()
+        && last.highlight_name == highlight_name
+    {
+        last.text.push_str(text);
+        return;
+    }
+
+    tokens.push(SyntaxToken {
+        text: text.to_string(),
+        highlight_name,
+    });
+}
+
+fn highlight_events_to_lines(
+    source: &str,
+    events: impl Iterator<Item = Result<HighlightEvent, tree_sitter_highlight::Error>>,
+) -> Option<Vec<Vec<SyntaxToken>>> {
+    let mut lines = Vec::new();
+    let mut current_line = Vec::new();
+    let mut highlight_stack = vec![None];
+
+    for event in events {
+        match event {
+            Ok(HighlightEvent::HighlightStart(highlight)) => {
+                highlight_stack.push(HIGHLIGHT_NAMES.get(highlight.0).copied());
             }
+            Ok(HighlightEvent::HighlightEnd) => {
+                if highlight_stack.len() > 1 {
+                    let _ = highlight_stack.pop();
+                }
+            }
+            Ok(HighlightEvent::Source { start, end }) => {
+                if start >= end || end > source.len() {
+                    continue;
+                }
+
+                push_highlighted_source(
+                    &mut lines,
+                    &mut current_line,
+                    &source[start..end],
+                    *highlight_stack.last().unwrap_or(&None),
+                );
+            }
+            Err(_) => return None,
         }
+    }
 
-        if spans.is_empty() {
-            vec![Span::styled(line.to_string(), fallback)]
-        } else {
-            spans
+    lines.push(current_line);
+    Some(lines)
+}
+
+fn push_highlighted_source(
+    lines: &mut Vec<Vec<SyntaxToken>>,
+    current_line: &mut Vec<SyntaxToken>,
+    text: &str,
+    highlight_name: Option<&'static str>,
+) {
+    for segment in text.split_inclusive('\n') {
+        let segment_text = segment.strip_suffix('\n').unwrap_or(segment);
+        push_syntax_token(current_line, segment_text, highlight_name);
+
+        if segment.ends_with('\n') {
+            lines.push(std::mem::take(current_line));
         }
     }
 }
 
-fn markdown_style(name: &str, fallback: Style) -> Style {
-    match name {
-        "heading" => ui::syntax_style("type", fallback).add_modifier(Modifier::BOLD),
-        "quote" => ui::syntax_style("comment", fallback),
-        "list" => ui::syntax_style("keyword", fallback),
-        "code" => ui::syntax_style("string", fallback),
-        "link_label" => ui::syntax_style("function", fallback),
-        "link_url" => ui::syntax_style("string", fallback),
-        "label" => ui::syntax_style("label", fallback),
-        "rule" => ui::syntax_style("operator", fallback),
-        _ => fallback,
-    }
-}
-
-fn push_markdown_span(spans: &mut Vec<Span<'static>>, text: &str, style: Style) {
-    if !text.is_empty() {
-        spans.push(Span::styled(text.to_string(), style));
-    }
-}
-
-fn highlight_markdown_inline(text: &str, fallback: Style) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
+fn highlight_markdown_inline_tokens(text: &str) -> Vec<SyntaxToken> {
+    let mut tokens = Vec::new();
     let mut index = 0;
 
     while index < text.len() {
@@ -2509,11 +2651,7 @@ fn highlight_markdown_inline(text: &str, fallback: Style) -> Vec<Span<'static>> 
             && let Some(end) = rest.find('`')
         {
             let code_end = index + 1 + end + 1;
-            push_markdown_span(
-                &mut spans,
-                &text[index..code_end],
-                markdown_style("code", fallback),
-            );
+            push_syntax_token(&mut tokens, &text[index..code_end], Some("markup.raw"));
             index = code_end;
             continue;
         }
@@ -2525,19 +2663,19 @@ fn highlight_markdown_inline(text: &str, fallback: Style) -> Vec<Span<'static>> 
             let label_text_end = index + label_end + 1;
             let url_start = index + label_end + 2;
             let url_end = url_start + url_end;
-            push_markdown_span(&mut spans, "[", fallback);
-            push_markdown_span(
-                &mut spans,
+            push_syntax_token(&mut tokens, "[", None);
+            push_syntax_token(
+                &mut tokens,
                 &text[index + 1..label_text_end],
-                markdown_style("link_label", fallback),
+                Some("markup.link.label"),
             );
-            push_markdown_span(&mut spans, "](", fallback);
-            push_markdown_span(
-                &mut spans,
+            push_syntax_token(&mut tokens, "](", None);
+            push_syntax_token(
+                &mut tokens,
                 &text[url_start..url_end],
-                markdown_style("link_url", fallback),
+                Some("markup.link.url"),
             );
-            push_markdown_span(&mut spans, ")", fallback);
+            push_syntax_token(&mut tokens, ")", None);
             index = url_end + 1;
             continue;
         }
@@ -2551,15 +2689,11 @@ fn highlight_markdown_inline(text: &str, fallback: Style) -> Vec<Span<'static>> 
         if next_break == 0 {
             next_break = remainder.chars().next().map(char::len_utf8).unwrap_or(1);
         }
-        push_markdown_span(&mut spans, &remainder[..next_break], fallback);
+        push_syntax_token(&mut tokens, &remainder[..next_break], None);
         index += next_break;
     }
 
-    if spans.is_empty() {
-        vec![Span::styled(text.to_string(), fallback)]
-    } else {
-        spans
-    }
+    tokens
 }
 
 fn markdown_list_prefix_len(text: &str) -> Option<usize> {
@@ -2580,82 +2714,70 @@ fn markdown_list_prefix_len(text: &str) -> Option<usize> {
     None
 }
 
-fn highlight_markdown_line(line: &str, fallback: Style) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
+fn highlight_markdown_line_tokens(line: &str) -> Vec<SyntaxToken> {
+    let mut tokens = Vec::new();
     let indent_len = line.len() - line.trim_start().len();
     let (indent, trimmed) = line.split_at(indent_len);
-    push_markdown_span(&mut spans, indent, fallback);
+    push_syntax_token(&mut tokens, indent, None);
 
     if trimmed.is_empty() {
-        return if spans.is_empty() {
-            vec![Span::styled(String::new(), fallback)]
-        } else {
-            spans
-        };
+        return tokens;
     }
 
     let bare = trimmed.trim();
     if bare.len() >= 3 && bare.chars().all(|ch| matches!(ch, '-' | '*' | '_')) {
-        push_markdown_span(&mut spans, trimmed, markdown_style("rule", fallback));
-        return spans;
+        push_syntax_token(&mut tokens, trimmed, Some("operator"));
+        return tokens;
     }
 
     for fence in ["```", "~~~"] {
         if let Some(rest) = trimmed.strip_prefix(fence) {
-            push_markdown_span(&mut spans, fence, markdown_style("code", fallback));
+            push_syntax_token(&mut tokens, fence, Some("markup.raw"));
             let ws_len = rest.len() - rest.trim_start().len();
             let (ws, info) = rest.split_at(ws_len);
-            push_markdown_span(&mut spans, ws, fallback);
-            push_markdown_span(&mut spans, info, markdown_style("label", fallback));
-            return spans;
+            push_syntax_token(&mut tokens, ws, None);
+            push_syntax_token(&mut tokens, info, Some("label"));
+            return tokens;
         }
     }
 
     if let Some(rest) = trimmed.strip_prefix("> ") {
-        push_markdown_span(&mut spans, "> ", markdown_style("quote", fallback));
-        spans.extend(highlight_markdown_inline(rest, fallback));
-        return spans;
+        push_syntax_token(&mut tokens, "> ", Some("markup.quote"));
+        tokens.extend(highlight_markdown_inline_tokens(rest));
+        return tokens;
     }
 
     let heading_marker_len = trimmed.bytes().take_while(|byte| *byte == b'#').count();
     if (1..=6).contains(&heading_marker_len) && trimmed[heading_marker_len..].starts_with(' ') {
-        push_markdown_span(
-            &mut spans,
-            &trimmed[..heading_marker_len],
-            markdown_style("heading", fallback),
-        );
-        push_markdown_span(&mut spans, " ", fallback);
-        push_markdown_span(
-            &mut spans,
+        push_syntax_token(&mut tokens, &trimmed[..heading_marker_len], Some("markup.heading"));
+        push_syntax_token(&mut tokens, " ", None);
+        push_syntax_token(
+            &mut tokens,
             &trimmed[heading_marker_len + 1..],
-            markdown_style("heading", fallback),
+            Some("markup.heading"),
         );
-        return spans;
+        return tokens;
     }
 
     if let Some(prefix_len) = markdown_list_prefix_len(trimmed) {
-        push_markdown_span(
-            &mut spans,
-            &trimmed[..prefix_len],
-            markdown_style("list", fallback),
-        );
+        push_syntax_token(&mut tokens, &trimmed[..prefix_len], Some("markup.list"));
         let rest = &trimmed[prefix_len..];
         if let Some(task_rest) = rest.strip_prefix("[ ] ") {
-            push_markdown_span(&mut spans, "[ ] ", markdown_style("list", fallback));
-            spans.extend(highlight_markdown_inline(task_rest, fallback));
-            return spans;
+            push_syntax_token(&mut tokens, "[ ] ", Some("markup.list.unchecked"));
+            tokens.extend(highlight_markdown_inline_tokens(task_rest));
+            return tokens;
         }
         if let Some(task_rest) = rest.strip_prefix("[x] ").or_else(|| rest.strip_prefix("[X] ")) {
-            push_markdown_span(&mut spans, &rest[..4], markdown_style("list", fallback));
-            spans.extend(highlight_markdown_inline(task_rest, fallback));
-            return spans;
+            push_syntax_token(&mut tokens, &rest[..4], Some("markup.list.checked"));
+            tokens.extend(highlight_markdown_inline_tokens(task_rest));
+            return tokens;
         }
-        spans.extend(highlight_markdown_inline(rest, fallback));
-        return spans;
+        tokens.extend(highlight_markdown_inline_tokens(rest));
+        return tokens;
     }
 
-    spans.extend(highlight_markdown_inline(trimmed, fallback));
-    spans
+    tokens.extend(highlight_markdown_inline_tokens(trimmed));
+    tokens
 }
 
 fn register_highlight_config(
@@ -2688,7 +2810,6 @@ mod tests {
     fn highlights_rust_go_typescript_and_markdown_without_falling_back() {
         let registry = HighlightRegistry::new().expect("highlight registry should initialize");
         let mut highlighter = SyntaxHighlighter::new(Some(&registry));
-        let fallback = ui::diff_context_style();
 
         for (filetype, line) in [
             ("rust", "let value = Foo::new(bar);"),
@@ -2697,7 +2818,11 @@ mod tests {
             ("tsx", "<Card title=\"demo\">{value}</Card>"),
             ("markdown", "# Heading"),
         ] {
-            let spans = highlighter.highlight_line(Some(filetype), line, fallback);
+            let spans = highlighter
+                .highlight_buffer_lines(filetype, line)
+                .expect("highlighting should succeed")
+                .pop()
+                .unwrap_or_default();
             assert!(
                 spans.len() > 1,
                 "expected syntax highlighting for {filetype}, got fallback spans: {spans:?}"
