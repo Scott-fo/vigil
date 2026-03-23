@@ -6,7 +6,10 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::git::{BlameCommitDetails, CommitSearchEntry, DiffView, SharedHighlightRegistry};
+use crate::{
+    app::DiffCacheKey,
+    git::{BlameCommitDetails, CommitSearchEntry, DiffView, SharedHighlightRegistry},
+};
 use crate::watcher::RepoWatcher;
 
 #[derive(Debug)]
@@ -17,6 +20,12 @@ pub enum Event {
         request_id: u64,
         highlighted: bool,
         result: Result<DiffView, String>,
+    },
+    DiffPrefetched {
+        generation: u64,
+        key: DiffCacheKey,
+        plain: DiffView,
+        highlighted: Option<DiffView>,
     },
     BlameLoaded {
         request_id: u64,

@@ -1,4 +1,8 @@
-use std::{collections::HashSet, path::PathBuf, process::Stdio};
+use std::{
+    collections::{HashSet, VecDeque},
+    path::PathBuf,
+    process::Stdio,
+};
 
 use color_eyre::eyre::WrapErr;
 use crossterm::terminal;
@@ -69,6 +73,84 @@ enum AppCommand {
     OpenFileInEditorAtLine(String, usize),
 }
 
+const DIFF_CACHE_CAPACITY: usize = 32;
+const DIFF_PREFETCH_DISTANCE: usize = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffCacheKey {
+    review_scope: String,
+    file_path: String,
+    file_status: String,
+}
+
+#[derive(Debug, Clone)]
+struct DiffCacheEntry {
+    key: DiffCacheKey,
+    plain: DiffView,
+    highlighted: Option<DiffView>,
+}
+
+#[derive(Debug, Default)]
+struct DiffViewCache {
+    entries: VecDeque<DiffCacheEntry>,
+}
+
+impl DiffViewCache {
+    fn get_plain(&mut self, key: &DiffCacheKey) -> Option<DiffView> {
+        self.touch_entry(key).map(|entry| entry.plain.clone())
+    }
+
+    fn get_highlighted(&mut self, key: &DiffCacheKey) -> Option<DiffView> {
+        self.touch_entry(key)
+            .and_then(|entry| entry.highlighted.clone())
+    }
+
+    fn insert_plain(&mut self, key: DiffCacheKey, plain: DiffView) {
+        let highlighted = self.remove_entry(&key).and_then(|entry| entry.highlighted);
+        self.entries.push_back(DiffCacheEntry {
+            key,
+            plain,
+            highlighted,
+        });
+        self.trim();
+    }
+
+    fn insert_highlighted(&mut self, key: DiffCacheKey, highlighted: DiffView) {
+        if let Some(mut entry) = self.remove_entry(&key) {
+            entry.highlighted = Some(highlighted);
+            self.entries.push_back(entry);
+        } else {
+            self.entries.push_back(DiffCacheEntry {
+                key,
+                plain: highlighted.clone(),
+                highlighted: Some(highlighted),
+            });
+        }
+        self.trim();
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    fn touch_entry(&mut self, key: &DiffCacheKey) -> Option<&DiffCacheEntry> {
+        let entry = self.remove_entry(key)?;
+        self.entries.push_back(entry);
+        self.entries.back()
+    }
+
+    fn remove_entry(&mut self, key: &DiffCacheKey) -> Option<DiffCacheEntry> {
+        let index = self.entries.iter().position(|entry| &entry.key == key)?;
+        self.entries.remove(index)
+    }
+
+    fn trim(&mut self) {
+        while self.entries.len() > DIFF_CACHE_CAPACITY {
+            let _ = self.entries.pop_front();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteSyncDirection {
     Pull,
@@ -118,6 +200,9 @@ pub struct App {
     pub selected_diff_line_index: usize,
     pub diff_request_id: u64,
     diff_load_task: Option<task::JoinHandle<()>>,
+    diff_view_cache: DiffViewCache,
+    diff_cache_generation: u64,
+    pending_diff_cache_key: Option<DiffCacheKey>,
     pub highlight_registry: Option<SharedHighlightRegistry>,
     pub repo_watcher: Option<RepoWatcher>,
     pub repo_watcher_loading: bool,
@@ -168,6 +253,25 @@ pub struct App {
 }
 
 impl App {
+    fn build_diff_cache_key(review_mode: &ReviewMode, file: &FileEntry) -> DiffCacheKey {
+        let review_scope = match review_mode {
+            ReviewMode::WorkingTree => "working-tree".to_string(),
+            ReviewMode::CommitCompare(selection) => {
+                format!("commit:{}:{}", selection.base_ref, selection.commit_hash)
+            }
+            ReviewMode::BranchCompare(selection) => format!(
+                "branch:{}:{}",
+                selection.source_ref, selection.destination_ref
+            ),
+        };
+
+        DiffCacheKey {
+            review_scope,
+            file_path: file.path.clone(),
+            file_status: file.status.clone(),
+        }
+    }
+
     pub async fn new(options: AppLaunchOptions) -> color_eyre::Result<Self> {
         let repo_root = match options.repo_root {
             Some(path) => path,
@@ -196,6 +300,9 @@ impl App {
             selected_diff_line_index: 0,
             diff_request_id: 0,
             diff_load_task: None,
+            diff_view_cache: DiffViewCache::default(),
+            diff_cache_generation: 0,
+            pending_diff_cache_key: None,
             highlight_registry: None,
             repo_watcher: None,
             repo_watcher_loading: false,
@@ -283,6 +390,7 @@ impl App {
                     match result {
                         Ok(registry) => {
                             self.highlight_registry = Some(registry);
+                            self.spawn_highlight_prewarm();
                             self.queue_selected_diff_load(false, false);
                             self.status_message = Some(self.current_status_message());
                         }
@@ -304,6 +412,14 @@ impl App {
                     if request_id == self.diff_request_id {
                         match result {
                             Ok(mut diff_view) => {
+                                if let Some(cache_key) = self.pending_diff_cache_key.clone() {
+                                    if highlighted {
+                                        self.diff_view_cache
+                                            .insert_highlighted(cache_key, diff_view.clone());
+                                    } else {
+                                        self.diff_view_cache.insert_plain(cache_key, diff_view.clone());
+                                    }
+                                }
                                 let max_index =
                                     diff_view.last_selectable_index(self.diff_view_mode);
                                 self.selected_diff_line_index =
@@ -316,12 +432,26 @@ impl App {
                             }
                         }
 
-                        if highlighted {
+                        if highlighted || self.highlight_registry.is_none() {
                             self.diff_load_task = None;
+                            self.pending_diff_cache_key = None;
                         }
 
                         if self.running {
                             terminal.draw(|frame| ui::render(frame, &mut self))?;
+                        }
+                    }
+                }
+                Event::DiffPrefetched {
+                    generation,
+                    key,
+                    plain,
+                    highlighted,
+                } => {
+                    if generation == self.diff_cache_generation {
+                        self.diff_view_cache.insert_plain(key.clone(), plain);
+                        if let Some(highlighted_view) = highlighted {
+                            self.diff_view_cache.insert_highlighted(key, highlighted_view);
                         }
                     }
                 }
@@ -846,6 +976,9 @@ impl App {
                 git::load_files_with_branch_diff(&self.repo_root, selection).await?
             }
         };
+        self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
+        self.diff_view_cache.clear();
+        self.pending_diff_cache_key = None;
         self.files = files;
         self.rebuild_sidebar_items();
 
@@ -866,6 +999,127 @@ impl App {
 
     fn selected_file(&self) -> Option<&FileEntry> {
         self.files.get(self.selected_file_index)
+    }
+
+    fn diff_cache_key(&self, file: &FileEntry) -> DiffCacheKey {
+        Self::build_diff_cache_key(&self.review_mode, file)
+    }
+
+    fn spawn_highlight_prewarm(&self) {
+        let Some(registry) = self.highlight_registry.clone() else {
+            return;
+        };
+
+        task::spawn_blocking(move || {
+            git::prewarm_highlight_registry(registry.as_ref());
+        });
+    }
+
+    fn spawn_diff_prefetch(&self) {
+        let Some(selected_visible_index) = self.selected_visible_file_index() else {
+            return;
+        };
+
+        let visible_paths = self.visible_file_paths();
+        if visible_paths.is_empty() {
+            return;
+        }
+
+        let mut prefetch_files = Vec::new();
+        for distance in 1..=DIFF_PREFETCH_DISTANCE {
+            for candidate_index in [
+                selected_visible_index.checked_sub(distance),
+                selected_visible_index.checked_add(distance),
+            ] {
+                let Some(candidate_index) = candidate_index else {
+                    continue;
+                };
+                let Some(path) = visible_paths.get(candidate_index) else {
+                    continue;
+                };
+                let Some(file_index) = self.file_index_by_path(path) else {
+                    continue;
+                };
+                let file = self.files[file_index].clone();
+                let cache_key = self.diff_cache_key(&file);
+                if self.highlight_registry.is_some() {
+                    if self.diff_view_cache.entries.iter().any(|entry| {
+                        entry.key == cache_key && entry.highlighted.is_some()
+                    }) {
+                        continue;
+                    }
+                } else if self
+                    .diff_view_cache
+                    .entries
+                    .iter()
+                    .any(|entry| entry.key == cache_key)
+                {
+                    continue;
+                }
+                prefetch_files.push((cache_key, file));
+            }
+        }
+
+        if prefetch_files.is_empty() {
+            return;
+        }
+
+        let generation = self.diff_cache_generation;
+        let review_mode = self.review_mode.clone();
+        let repo_root = self.repo_root.clone();
+        let highlight_registry = self.highlight_registry.clone();
+        let sender = self.events.sender();
+
+        task::spawn(async move {
+            for (cache_key, file) in prefetch_files {
+                let preview_result = match &review_mode {
+                    ReviewMode::WorkingTree => {
+                        git::load_diff_preview_for_working_tree(&repo_root, &file).await
+                    }
+                    ReviewMode::CommitCompare(selection) => {
+                        git::load_diff_preview_for_commit_compare(&repo_root, &file, selection).await
+                    }
+                    ReviewMode::BranchCompare(selection) => {
+                        git::load_diff_preview_for_branch_compare(&repo_root, &file, selection).await
+                    }
+                };
+
+                let Ok(preview) = preview_result else {
+                    continue;
+                };
+
+                let plain_file = file.clone();
+                let plain_result = task::spawn_blocking(move || {
+                    git::build_diff_view_from_preview_data(&preview, &plain_file, None)
+                })
+                .await;
+
+                let Ok(Ok(plain_view)) = plain_result else {
+                    continue;
+                };
+
+                let highlighted_view = if let Some(registry) = highlight_registry.clone() {
+                    let filetype = file.filetype;
+                    let plain_for_highlight = plain_view.clone();
+                    task::spawn_blocking(move || {
+                        let mut view = plain_for_highlight;
+                        view.apply_syntax_highlighting(filetype, registry.as_ref());
+                        view
+                    })
+                    .await
+                    .ok()
+                } else {
+                    None
+                };
+
+                let _ = sender.send(Event::DiffPrefetched {
+                    generation,
+                    key: cache_key,
+                    plain: plain_view,
+                    highlighted: highlighted_view,
+                });
+            }
+        });
     }
 
     fn file_index_by_path(&self, path: &str) -> Option<usize> {
@@ -900,6 +1154,7 @@ impl App {
         self.cancel_inflight_diff_load();
         self.diff_request_id = self.diff_request_id.saturating_add(1);
         let request_id = self.diff_request_id;
+        self.pending_diff_cache_key = None;
 
         if reset_viewport {
             self.diff_scroll = 0;
@@ -911,6 +1166,48 @@ impl App {
             return;
         };
 
+        self.spawn_diff_prefetch();
+
+        let cache_key = self.diff_cache_key(&file);
+        if self.highlight_registry.is_some() {
+            if let Some(mut diff_view) = self.diff_view_cache.get_highlighted(&cache_key) {
+                let max_index = diff_view.last_selectable_index(self.diff_view_mode);
+                self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
+                self.diff_view = diff_view;
+                self.status_message = Some(self.current_status_message());
+                return;
+            }
+        }
+
+        if let Some(mut plain_diff_view) = self.diff_view_cache.get_plain(&cache_key) {
+            let max_index = plain_diff_view.last_selectable_index(self.diff_view_mode);
+            self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
+            self.diff_view = plain_diff_view.clone();
+            self.status_message = Some(self.current_status_message());
+
+            let Some(highlight_registry) = self.highlight_registry.clone() else {
+                return;
+            };
+
+            self.pending_diff_cache_key = Some(cache_key);
+            let sender = self.events.sender();
+            let filetype = file.filetype;
+            self.diff_load_task = Some(task::spawn(async move {
+                let highlighted_result = task::spawn_blocking(move || {
+                    plain_diff_view.apply_syntax_highlighting(filetype, highlight_registry.as_ref());
+                    Ok::<_, String>(plain_diff_view)
+                })
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()));
+                let _ = sender.send(Event::DiffLoaded {
+                    request_id,
+                    highlighted: true,
+                    result: highlighted_result,
+                });
+            }));
+            return;
+        }
+
         if show_loading {
             self.diff_view = DiffView::empty("Loading diff...");
         }
@@ -919,6 +1216,9 @@ impl App {
         let repo_root = self.repo_root.clone();
         let highlight_registry = self.highlight_registry.clone();
         let sender = self.events.sender();
+        let plain_file = file.clone();
+        let filetype = file.filetype;
+        self.pending_diff_cache_key = Some(cache_key);
 
         self.diff_load_task = Some(task::spawn(async move {
             let preview_result = match &review_mode {
@@ -945,33 +1245,40 @@ impl App {
                 }
             };
 
-            let plain_preview = preview.clone();
-            let plain_file = file.clone();
             let plain_result = task::spawn_blocking(move || {
-                git::build_diff_view_from_preview_data(&plain_preview, &plain_file, None)
+                git::build_diff_view_from_preview_data(&preview, &plain_file, None)
                     .map_err(|error| error.to_string())
             })
             .await
             .unwrap_or_else(|error| Err(error.to_string()));
-            let _ = sender.send(Event::DiffLoaded {
-                request_id,
-                highlighted: false,
-                result: plain_result,
-            });
+
+            let plain_diff_view = match plain_result {
+                Ok(diff_view) => {
+                    let _ = sender.send(Event::DiffLoaded {
+                        request_id,
+                        highlighted: false,
+                        result: Ok(diff_view.clone()),
+                    });
+                    diff_view
+                }
+                Err(error) => {
+                    let _ = sender.send(Event::DiffLoaded {
+                        request_id,
+                        highlighted: false,
+                        result: Err(error),
+                    });
+                    return;
+                }
+            };
 
             let Some(highlight_registry) = highlight_registry else {
                 return;
             };
 
-            let highlighted_preview = preview;
-            let highlighted_file = file;
             let highlighted_result = task::spawn_blocking(move || {
-                git::build_diff_view_from_preview_data(
-                    &highlighted_preview,
-                    &highlighted_file,
-                    Some(highlight_registry.as_ref()),
-                )
-                .map_err(|error| error.to_string())
+                let mut highlighted_view = plain_diff_view;
+                highlighted_view.apply_syntax_highlighting(filetype, highlight_registry.as_ref());
+                Ok::<_, String>(highlighted_view)
             })
             .await
             .unwrap_or_else(|error| Err(error.to_string()));
@@ -987,6 +1294,7 @@ impl App {
         if let Some(task) = self.diff_load_task.take() {
             task.abort();
         }
+        self.pending_diff_cache_key = None;
     }
 
     async fn toggle_selected_file_stage(&mut self) -> color_eyre::Result<()> {

@@ -332,21 +332,20 @@ pub fn syntax_style(name: &str, fallback: Style) -> Style {
         | "method.call" => {
             Style::new().fg(palette.syntax_function)
         }
-        "variable"
-        | "variable.builtin"
-        | "variable.parameter"
-        | "variable.member"
-        | "property"
-        | "property.definition"
-        | "parameter"
-        | "label"
+        "label"
         | "module"
         | "module.builtin"
         | "namespace"
-        | "constant"
-        | "constant.builtin" => {
+        | "variable.parameter"
+        | "property"
+        | "property.definition"
+        | "parameter"
+        | "field" => {
             Style::new().fg(palette.syntax_variable)
         }
+        "constant" | "constant.builtin" => Style::new().fg(palette.syntax_number),
+        "variable" | "variable.member" => Style::new(),
+        "variable.builtin" => Style::new().fg(palette.syntax_variable),
         "string"
         | "character"
         | "character.special"

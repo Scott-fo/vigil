@@ -73,7 +73,7 @@ pub struct BranchCompareSelection {
     pub destination_ref: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DiffView {
     rows: Vec<DiffRow>,
     pub note: Option<String>,
@@ -401,7 +401,7 @@ impl DiffView {
         self.display_cache = DiffDisplayCache::default();
     }
 
-    fn apply_syntax_highlighting(
+    pub(crate) fn apply_syntax_highlighting(
         &mut self,
         filetype: Option<&'static str>,
         registry: &HighlightRegistry,
@@ -483,7 +483,7 @@ fn apply_side_syntax_highlighting(
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct DiffDisplayCache {
     unified: CachedDisplay,
     split: CachedDisplay,
@@ -505,7 +505,7 @@ impl DiffDisplayCache {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct CachedDisplay {
     width: usize,
     lines: Vec<Line<'static>>,
@@ -2562,6 +2562,19 @@ impl<'a> SyntaxHighlighter<'a> {
         highlight_events_to_lines(source, events)
     }
 
+}
+
+pub fn prewarm_highlight_registry(registry: &HighlightRegistry) {
+    let mut highlighter = SyntaxHighlighter::new(Some(registry));
+    for (filetype, sample) in [
+        ("rust", "fn build_user(id: usize) -> User { User::new(id) }"),
+        ("go", "func BuildUser(id int) User { return NewUser(id) }"),
+        ("typescript", "const user: User = await loadUser(id);"),
+        ("tsx", "<Card title=\"demo\">{value}</Card>"),
+        ("markdown", "# Prefetch"),
+    ] {
+        let _ = highlighter.highlight_buffer_lines(filetype, sample);
+    }
 }
 
 fn push_syntax_token(
