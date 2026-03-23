@@ -10,7 +10,9 @@ use ratatui::{
 };
 
 use crate::{
-    app::{ActivePane, App, BranchCompareField, DiffViewMode, RemoteSyncDirection, SnackbarVariant},
+    app::{
+        ActivePane, App, BranchCompareField, DiffViewMode, RemoteSyncDirection, SnackbarVariant,
+    },
     git::{self, DiffView},
     sidebar::SidebarItem,
     splash::Splash,
@@ -610,63 +612,87 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
         Line::from(vec![
             Span::styled(
                 "?  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("toggle help", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "tab  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("switch sidebar / diff focus", Style::new().fg(text_muted_color())),
+            Span::styled(
+                "switch sidebar / diff focus",
+                Style::new().fg(text_muted_color()),
+            ),
         ]),
         Line::from(vec![
             Span::styled(
                 "v  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("toggle unified / split diff", Style::new().fg(text_muted_color())),
+            Span::styled(
+                "toggle unified / split diff",
+                Style::new().fg(text_muted_color()),
+            ),
         ]),
         Line::from(vec![
             Span::styled(
                 "r  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("refresh", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "g  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("open commit search", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "b  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("open branch compare", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "t  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("open theme picker", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "Ctrl-L  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("reset compare mode", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "q  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("quit", Style::new().fg(text_muted_color())),
         ]),
@@ -678,21 +704,27 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
         Line::from(vec![
             Span::styled(
                 "j / k  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("move selection", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "Ctrl-D / Ctrl-U  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("page diff", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "mouse wheel  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("scroll diff", Style::new().fg(text_muted_color())),
         ]),
@@ -704,49 +736,72 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
         Line::from(vec![
             Span::styled(
                 "enter / o / e  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("open in editor", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "enter on gap  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("expand selected gap row", Style::new().fg(text_muted_color())),
+            Span::styled(
+                "expand selected gap row",
+                Style::new().fg(text_muted_color()),
+            ),
         ]),
         Line::from(vec![
             Span::styled(
                 "click gap rows  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("top row expands up, bottom row expands down", Style::new().fg(text_muted_color())),
+            Span::styled(
+                "top row expands up, bottom row expands down",
+                Style::new().fg(text_muted_color()),
+            ),
         ]),
         Line::from(vec![
             Span::styled(
                 "space  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("stage / unstage selected file", Style::new().fg(text_muted_color())),
+            Span::styled(
+                "stage / unstage selected file",
+                Style::new().fg(text_muted_color()),
+            ),
         ]),
         Line::from(vec![
             Span::styled(
                 "d  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("discard selected file", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "c  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("commit staged changes", Style::new().fg(text_muted_color())),
         ]),
         Line::from(vec![
             Span::styled(
                 "p / P  ",
-                Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(primary_color())
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("pull / push", Style::new().fg(text_muted_color())),
         ]),
@@ -763,9 +818,14 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
             Line::from(vec![
                 Span::styled(
                     "i  ",
-                    Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+                    Style::new()
+                        .fg(primary_color())
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("git init when splash is shown", Style::new().fg(text_muted_color())),
+                Span::styled(
+                    "git init when splash is shown",
+                    Style::new().fg(text_muted_color()),
+                ),
             ]),
         );
     }
@@ -997,10 +1057,15 @@ fn render_theme_modal(frame: &mut Frame, app: &mut App) {
     let mode_line = Paragraph::new(Line::from(vec![
         Span::styled(
             "mode  ",
-            Style::new().fg(primary_color()).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(primary_color())
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(app.theme_mode.as_str(), Style::new().fg(text_color())),
-        Span::styled("  m toggles light/dark preview", Style::new().fg(text_muted_color())),
+        Span::styled(
+            "  m toggles light/dark preview",
+            Style::new().fg(text_muted_color()),
+        ),
     ]))
     .style(Style::new().bg(panel_color()))
     .block(Block::new().padding(Padding::horizontal(1)));
@@ -1078,7 +1143,11 @@ fn render_theme_modal(frame: &mut Frame, app: &mut App) {
             Style::new().fg(text_muted_color()),
         )),
         Line::from(Span::styled(
-            format!("previewing {} ({})", app.theme_name, app.theme_mode.as_str()),
+            format!(
+                "previewing {} ({})",
+                app.theme_name,
+                app.theme_mode.as_str()
+            ),
             Style::new().fg(diff_context_color()),
         )),
     ]))
@@ -1112,9 +1181,15 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
         .split(inner);
 
     let query_display = if app.commit_search_query.is_empty() {
-        Span::styled("Search by hash or subject...", Style::new().fg(text_muted_color()))
+        Span::styled(
+            "Search by hash or subject...",
+            Style::new().fg(text_muted_color()),
+        )
     } else {
-        Span::styled(app.commit_search_query.clone(), Style::new().fg(text_color()))
+        Span::styled(
+            app.commit_search_query.clone(),
+            Style::new().fg(text_color()),
+        )
     };
     let query = Paragraph::new(Line::from(query_display))
         .style(Style::new().bg(element_color()))
@@ -1152,7 +1227,10 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
                     Style::new().fg(error_color()),
                 )),
                 Line::default(),
-                Line::from(Span::styled(error.clone(), Style::new().fg(text_muted_color()))),
+                Line::from(Span::styled(
+                    error.clone(),
+                    Style::new().fg(text_muted_color()),
+                )),
             ]))
             .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(1))),
@@ -1199,7 +1277,9 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
                         .fg(selected_list_item_text_color())
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::new().fg(primary_color()).add_modifier(Modifier::BOLD)
+                    Style::new()
+                        .fg(primary_color())
+                        .add_modifier(Modifier::BOLD)
                 };
 
                 Line::from(vec![
@@ -1241,7 +1321,10 @@ fn render_commit_search_modal(frame: &mut Frame, app: &mut App) {
             "Type to filter. j/k move. Enter selects. Esc closes.",
             Style::new().fg(text_muted_color()),
         )),
-        Line::from(Span::styled(selected_label, Style::new().fg(diff_context_color()))),
+        Line::from(Span::styled(
+            selected_label,
+            Style::new().fg(diff_context_color()),
+        )),
     ]))
     .style(Style::new().bg(panel_color()))
     .block(Block::new().padding(Padding::horizontal(1)));
@@ -1359,7 +1442,10 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
                     Style::new().fg(error_color()),
                 )),
                 Line::default(),
-                Line::from(Span::styled(error.clone(), Style::new().fg(text_muted_color()))),
+                Line::from(Span::styled(
+                    error.clone(),
+                    Style::new().fg(text_muted_color()),
+                )),
             ]))
             .style(Style::new().bg(panel_color()))
             .block(Block::new().padding(Padding::horizontal(1))),
@@ -1434,7 +1520,9 @@ fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
             format!(
                 "source: {}  destination: {}",
                 app.branch_compare_source_ref.as_deref().unwrap_or("none"),
-                app.branch_compare_destination_ref.as_deref().unwrap_or("none")
+                app.branch_compare_destination_ref
+                    .as_deref()
+                    .unwrap_or("none")
             ),
             Style::new().fg(diff_context_color()),
         )),
@@ -1469,7 +1557,11 @@ fn top_right_rect(width: u16, height: u16, top: u16, area: Rect) -> Rect {
 fn bordered_panel(title: &str, active: bool, right_title: Option<String>) -> Block<'static> {
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(if active { border_active_color() } else { border_color() }))
+        .border_style(Style::new().fg(if active {
+            border_active_color()
+        } else {
+            border_color()
+        }))
         .style(Style::new().bg(panel_color()))
         .title(Line::from(Span::styled(
             format!(" {} ", title),
@@ -1568,7 +1660,9 @@ pub fn syntax_style(name: &str, fallback: Style) -> Style {
         "number" | "boolean" => Style::new().fg(palette.syntax_number),
         "type" | "type.builtin" | "attribute" => Style::new().fg(palette.syntax_type),
         "operator" => Style::new().fg(palette.syntax_operator),
-        "punctuation" | "punctuation.delimiter" | "punctuation.bracket" => Style::new().fg(text_color()),
+        "punctuation" | "punctuation.delimiter" | "punctuation.bracket" => {
+            Style::new().fg(text_color())
+        }
         "property.builtin" | "tag" => Style::new().fg(palette.syntax_function),
         _ => fallback,
     };

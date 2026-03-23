@@ -107,7 +107,13 @@ async fn collect_watch_directories(repo_root: &Path) -> Result<Vec<PathBuf>, Str
 async fn git_visible_paths(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
     let output = git_output(
         repo_root,
-        &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
         None,
     )
     .await?;
@@ -224,7 +230,10 @@ async fn git_output(
             .map_err(|error| error.to_string())?;
     }
 
-    let output = child.wait_with_output().await.map_err(|error| error.to_string())?;
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|error| error.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }

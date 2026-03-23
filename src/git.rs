@@ -1250,7 +1250,7 @@ fn diff_needs_context_lines(diff: &str) -> bool {
     false
 }
 
-async fn git_output(repo_root: &Path, args: &[&str]) -> color_eyre::Result<String> {
+pub async fn git_output(repo_root: &Path, args: &[&str]) -> color_eyre::Result<String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_root)

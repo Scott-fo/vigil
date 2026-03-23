@@ -60,7 +60,7 @@ pub enum ReviewMode {
 pub struct AppLaunchOptions {
     pub repo_root: Option<PathBuf>,
     pub initial_blame_target: Option<BlameTarget>,
-    pub chooser_file_path: Option<PathBuf>,
+    pub chooser_file: Option<PathBuf>,
 }
 
 enum AppCommand {
@@ -167,11 +167,7 @@ pub struct App {
 }
 
 impl App {
-    pub async fn new() -> color_eyre::Result<Self> {
-        Self::new_with_options(AppLaunchOptions::default()).await
-    }
-
-    pub async fn new_with_options(options: AppLaunchOptions) -> color_eyre::Result<Self> {
+    pub async fn new(options: AppLaunchOptions) -> color_eyre::Result<Self> {
         let repo_root = match options.repo_root {
             Some(path) => path,
             None => std::env::current_dir().wrap_err("failed to resolve current directory")?,
@@ -183,7 +179,7 @@ impl App {
         let mut app = Self {
             running: true,
             repo_root,
-            chooser_file_path: options.chooser_file_path,
+            chooser_file_path: options.chooser_file,
             repo_error: None,
             events: EventHandler::new(),
             active_pane: ActivePane::Sidebar,

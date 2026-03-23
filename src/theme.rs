@@ -1,5 +1,9 @@
 use ratatui::style::Color;
-use std::{env, fs, io, path::PathBuf, sync::atomic::{AtomicU8, AtomicUsize, Ordering}};
+use std::{
+    env, fs, io,
+    path::PathBuf,
+    sync::atomic::{AtomicU8, AtomicUsize, Ordering},
+};
 
 pub const DEFAULT_THEME_NAME: &str = "catppuccin-macchiato";
 
@@ -2879,7 +2883,10 @@ pub fn resolve_theme_name(preferred: Option<&str>) -> &'static str {
 }
 
 pub fn set_active_theme(name: &str, mode: ThemeMode) -> &'static ThemeDefinition {
-    let index = THEMES.iter().position(|theme| theme.name == name).unwrap_or(0);
+    let index = THEMES
+        .iter()
+        .position(|theme| theme.name == name)
+        .unwrap_or(0);
     ACTIVE_THEME_INDEX.store(index, Ordering::Relaxed);
     ACTIVE_THEME_MODE.store(mode.as_index(), Ordering::Relaxed);
     &THEMES[index]

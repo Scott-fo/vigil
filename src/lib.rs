@@ -1,0 +1,9 @@
+pub mod app;
+pub mod cli;
+pub mod event;
+pub mod git;
+pub mod sidebar;
+pub mod splash;
+pub mod theme;
+pub mod ui;
+pub mod watcher;
