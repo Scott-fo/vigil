@@ -18,6 +18,7 @@ use tokio::fs;
 use tokio::task;
 
 use crate::theme::config;
+use crate::ui::splash;
 use crate::{
     event::{Event, EventHandler},
     git::{
@@ -25,7 +26,6 @@ use crate::{
         CommitSearchEntry, DiffView, FileEntry, SharedHighlightRegistry,
     },
     sidebar::{self, SidebarItem},
-    splash,
     theme::{self, ThemeMode},
     ui,
     watcher::RepoWatcher,
@@ -689,33 +689,32 @@ impl App {
                 }
             }
             KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('e') => {
-                if self.active_pane == ActivePane::Diff && matches!(key_event.code, KeyCode::Enter)
-                {
-                    if self
+                if self.active_pane == ActivePane::Diff
+                    && matches!(key_event.code, KeyCode::Enter)
+                    && self
                         .diff_view
                         .selected_gap_action(self.diff_view_mode, self.selected_diff_line_index)
                         .is_some()
-                    {
-                        self.selected_diff_line_index = self.diff_view.expand_selected_gap(
-                            self.diff_view_mode,
-                            self.selected_diff_line_index,
-                            20,
-                        );
-                        return Ok(None);
-                    }
+                {
+                    self.selected_diff_line_index = self.diff_view.expand_selected_gap(
+                        self.diff_view_mode,
+                        self.selected_diff_line_index,
+                        20,
+                    );
+                    return Ok(None);
                 }
 
-                if let Some(file_path) = self.selected_file().map(|file| file.path.clone()) {
-                    if self.active_pane == ActivePane::Diff {
-                        if let Some(line_number) = self.diff_view.selected_line_number(
-                            self.diff_view_mode,
-                            self.selected_diff_line_index,
-                        ) {
-                            return Ok(Some(AppCommand::OpenFileInEditorAtLine(
-                                file_path,
-                                line_number,
-                            )));
-                        }
+                if let Some(file_path) = self.selected_file().map(|file| file.path.clone())
+                    && self.active_pane == ActivePane::Diff
+                {
+                    if let Some(line_number) = self
+                        .diff_view
+                        .selected_line_number(self.diff_view_mode, self.selected_diff_line_index)
+                    {
+                        return Ok(Some(AppCommand::OpenFileInEditorAtLine(
+                            file_path,
+                            line_number,
+                        )));
                     }
 
                     return Ok(Some(AppCommand::OpenFileInEditor(file_path)));
@@ -818,11 +817,11 @@ impl App {
 
     async fn refresh(&mut self) -> color_eyre::Result<()> {
         let previously_selected = self.selected_file().map(|file| file.path.clone());
-        if self.is_working_tree_mode() {
-            if let Err(error) = self.sync_repo_state().await {
-                self.enter_repo_error_state(error.to_string()).await?;
-                return Ok(());
-            }
+        if self.is_working_tree_mode()
+            && let Err(error) = self.sync_repo_state().await
+        {
+            self.enter_repo_error_state(error.to_string()).await?;
+            return Ok(());
         }
 
         let files = match &self.review_mode {
@@ -1722,11 +1721,7 @@ impl App {
         }
 
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-        let candidates = self
-            .branch_compare_available_refs
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
+        let candidates = self.branch_compare_available_refs.to_vec();
         pattern
             .match_list(candidates, &mut self.branch_compare_matcher)
             .into_iter()
@@ -1758,11 +1753,11 @@ impl App {
             return;
         }
 
-        if let Some(existing) = current_ref.as_ref() {
-            if let Some(index) = filtered.iter().position(|ref_name| ref_name == existing) {
-                *current_index = index;
-                return;
-            }
+        if let Some(existing) = current_ref.as_ref()
+            && let Some(index) = filtered.iter().position(|ref_name| ref_name == existing)
+        {
+            *current_index = index;
+            return;
         }
 
         *current_ref = filtered.first().cloned();
@@ -1990,10 +1985,10 @@ impl App {
                 return true;
             }
 
-            if let Ok(metadata) = fs::metadata(path).await {
-                if metadata.is_dir() {
-                    return true;
-                }
+            if let Ok(metadata) = fs::metadata(path).await
+                && metadata.is_dir()
+            {
+                return true;
             }
         }
 

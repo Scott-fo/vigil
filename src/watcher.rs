@@ -40,11 +40,11 @@ impl RepoWatcher {
 
         let watcher = RecommendedWatcher::new(
             move |result: notify::Result<NotifyEvent>| {
-                if let Ok(event) = result {
-                    if is_relevant_event(&event) {
-                        maybe_watch_new_directories(&watcher_ref_for_callback, &event.paths);
-                        let _ = signal_sender.send(event.paths);
-                    }
+                if let Ok(event) = result
+                    && is_relevant_event(&event)
+                {
+                    maybe_watch_new_directories(&watcher_ref_for_callback, &event.paths);
+                    let _ = signal_sender.send(event.paths);
                 }
             },
             Config::default(),
@@ -191,10 +191,10 @@ fn maybe_watch_new_directories(
         if should_ignore_event_path(path) {
             continue;
         }
-        if let Ok(metadata) = std::fs::metadata(path) {
-            if metadata.is_dir() {
-                let _ = watcher.watch(path, RecursiveMode::NonRecursive);
-            }
+        if let Ok(metadata) = std::fs::metadata(path)
+            && metadata.is_dir()
+        {
+            let _ = watcher.watch(path, RecursiveMode::NonRecursive);
         }
     }
 }

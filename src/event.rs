@@ -98,10 +98,10 @@ impl EventTask {
         let mut reader = crossterm::event::EventStream::new();
 
         while let Some(result) = reader.next().await {
-            if let Ok(event) = result {
-                if !self.send(Event::Crossterm(event)) {
-                    break;
-                }
+            if let Ok(event) = result
+                && !self.send(Event::Crossterm(event))
+            {
+                break;
             }
         }
 

@@ -6,10 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use strum_macros::{EnumString, IntoStaticStr};
 
-use self::{
-    bank::THEMES,
-    config::{persist_theme_preference, read_theme_preference},
-};
+use self::bank::THEMES;
 
 pub const DEFAULT_THEME_NAME: &str = "catppuccin-macchiato";
 
