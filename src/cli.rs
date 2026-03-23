@@ -122,3 +122,38 @@ async fn resolve_blame_launch_options(target: BlameLocation) -> color_eyre::Resu
         }),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::BlameLocation;
+    use std::{path::PathBuf, str::FromStr};
+
+    #[test]
+    fn parses_blame_location() {
+        let target = BlameLocation::from_str("src/main.rs:42").unwrap();
+
+        assert_eq!(target.file_path, PathBuf::from("src/main.rs"));
+        assert_eq!(target.line_number, 42);
+    }
+
+    #[test]
+    fn rejects_missing_line_separator() {
+        let error = BlameLocation::from_str("src/main.rs").unwrap_err();
+
+        assert_eq!(error, "expected <file>:<line>");
+    }
+
+    #[test]
+    fn rejects_invalid_line_number() {
+        let error = BlameLocation::from_str("src/main.rs:not-a-number").unwrap_err();
+
+        assert_eq!(error, "invalid line number: not-a-number");
+    }
+
+    #[test]
+    fn rejects_zero_line_number() {
+        let error = BlameLocation::from_str("src/main.rs:0").unwrap_err();
+
+        assert_eq!(error, "line number must be >= 1");
+    }
+}
