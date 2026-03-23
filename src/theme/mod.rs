@@ -2,6 +2,7 @@ pub mod bank;
 
 use crate::theme::bank::THEMES;
 use ratatui::style::Color;
+use serde::{Deserialize, Serialize};
 use strum_macros::{EnumString, IntoStaticStr};
 
 use std::{
@@ -12,9 +13,10 @@ use std::{
 
 pub const DEFAULT_THEME_NAME: &str = "catppuccin-macchiato";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, IntoStaticStr, Serialize, Deserialize)]
 #[repr(u8)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
     Dark = 0,
     Light = 1,
@@ -32,10 +34,6 @@ impl ThemeMode {
         }
     }
 
-    fn as_index(self) -> u8 {
-        self as u8
-    }
-
     fn from_index(value: u8) -> Self {
         match value {
             1 => Self::Light,
@@ -44,9 +42,10 @@ impl ThemeMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemePreference {
     pub theme: Option<String>,
+    #[serde(rename = "theme_mode")]
     pub mode: Option<ThemeMode>,
 }
 
@@ -138,8 +137,10 @@ pub fn set_active_theme(name: &str, mode: ThemeMode) -> &'static ThemeDefinition
         .iter()
         .position(|theme| theme.name == name)
         .unwrap_or(0);
+
     ACTIVE_THEME_INDEX.store(index, Ordering::Relaxed);
-    ACTIVE_THEME_MODE.store(mode.as_index(), Ordering::Relaxed);
+    ACTIVE_THEME_MODE.store(mode as u8, Ordering::Relaxed);
+
     &THEMES[index]
 }
 
@@ -159,9 +160,11 @@ pub fn active_palette() -> ThemePalette {
 
 pub fn read_theme_preference() -> ThemePreference {
     let file_preference = read_theme_preference_from_config();
+
     let env_theme = env::var("VIGIL_THEME")
         .ok()
         .filter(|value| !value.trim().is_empty());
+
     let env_mode = env::var("VIGIL_THEME_MODE")
         .ok()
         .and_then(|value| value.trim().parse().ok());
@@ -177,14 +180,14 @@ pub fn persist_theme_preference(theme: &str, mode: ThemeMode) -> io::Result<()> 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(
-        path,
-        format!(
-            "{{\n  \"theme\": \"{}\",\n  \"theme_mode\": \"{}\"\n}}\n",
-            theme,
-            mode.as_str()
-        ),
-    )
+
+    let preference = ThemePreference {
+        theme: Some(theme.to_owned()),
+        mode: Some(mode),
+    };
+
+    let contents = serde_json::to_string_pretty(&preference).map_err(io::Error::other)?;
+    fs::write(path, format!("{contents}\n"))
 }
 
 fn read_theme_preference_from_config() -> ThemePreference {
@@ -197,11 +200,10 @@ fn read_theme_preference_from_config() -> ThemePreference {
         };
     };
 
-    ThemePreference {
-        theme: extract_json_string_value(&contents, "theme"),
-        mode: extract_json_string_value(&contents, "theme_mode")
-            .and_then(|value| value.trim().parse().ok()),
-    }
+    serde_json::from_str(&contents).unwrap_or(ThemePreference {
+        theme: None,
+        mode: None,
+    })
 }
 
 fn resolve_tui_config_path() -> PathBuf {
@@ -222,39 +224,4 @@ fn resolve_tui_config_path() -> PathBuf {
 
 fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from)
-}
-
-fn extract_json_string_value(contents: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{}\"", key);
-    let start = contents.find(&needle)?;
-    let rest = &contents[start + needle.len()..];
-    let colon = rest.find(':')?;
-    let mut chars = rest[colon + 1..].chars();
-
-    while let Some(ch) = chars.next() {
-        if ch.is_whitespace() {
-            continue;
-        }
-        if ch != '"' {
-            return None;
-        }
-
-        let mut value = String::new();
-        let mut escaped = false;
-        for ch in chars {
-            if escaped {
-                value.push(ch);
-                escaped = false;
-                continue;
-            }
-            match ch {
-                '\\' => escaped = true,
-                '"' => return Some(value),
-                _ => value.push(ch),
-            }
-        }
-        return None;
-    }
-
-    None
 }
