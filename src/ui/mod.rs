@@ -298,14 +298,37 @@ pub fn syntax_style(name: &str, fallback: Style) -> Style {
     let palette = palette();
     let style = match name {
         "comment" | "comment.documentation" => Style::new().fg(palette.syntax_comment),
-        "keyword" => Style::new()
+        "keyword"
+        | "keyword.conditional"
+        | "keyword.conditional.ternary"
+        | "keyword.coroutine"
+        | "keyword.debug"
+        | "keyword.directive"
+        | "keyword.exception"
+        | "keyword.function"
+        | "keyword.import"
+        | "keyword.modifier"
+        | "keyword.operator"
+        | "keyword.repeat"
+        | "keyword.return"
+        | "keyword.type"
+        | "conditional"
+        | "exception"
+        | "repeat" => Style::new()
             .fg(palette.syntax_keyword)
             .add_modifier(Modifier::BOLD),
         "function"
         | "function.builtin"
+        | "function.call"
         | "function.method"
+        | "function.method.call"
+        | "function.method.builtin"
+        | "function.macro"
+        | "function.special"
         | "constructor"
-        | "constructor.builtin" => {
+        | "constructor.builtin"
+        | "method"
+        | "method.call" => {
             Style::new().fg(palette.syntax_function)
         }
         "variable"
@@ -313,22 +336,48 @@ pub fn syntax_style(name: &str, fallback: Style) -> Style {
         | "variable.parameter"
         | "variable.member"
         | "property"
+        | "property.definition"
+        | "parameter"
+        | "label"
+        | "module"
+        | "module.builtin"
+        | "namespace"
         | "constant"
         | "constant.builtin" => {
             Style::new().fg(palette.syntax_variable)
         }
-        "string" | "string.escape" | "string.special" => Style::new().fg(palette.syntax_string),
-        "number" | "boolean" => Style::new().fg(palette.syntax_number),
-        "type" | "type.builtin" | "attribute" => Style::new().fg(palette.syntax_type),
-        "operator" => Style::new().fg(palette.syntax_operator),
+        "string"
+        | "character"
+        | "character.special"
+        | "string.escape"
+        | "string.regexp"
+        | "string.special"
+        | "string.special.url"
+        | "string.special.key"
+        | "string.special.path"
+        | "string.special.regex"
+        | "string.special.symbol"
+        | "string.special.uri" => Style::new().fg(palette.syntax_string),
+        "number" | "number.float" | "boolean" => Style::new().fg(palette.syntax_number),
+        "type"
+        | "type.builtin"
+        | "type.definition"
+        | "type.qualifier"
+        | "attribute"
+        | "attribute.builtin"
+        | "tag.attribute" => Style::new().fg(palette.syntax_type),
+        "operator" | "delimiter" => Style::new().fg(palette.syntax_operator),
         "punctuation"
         | "punctuation.delimiter"
         | "punctuation.bracket"
         | "punctuation.special"
+        | "tag.delimiter"
         | "embedded" => {
             Style::new().fg(text_color())
         }
-        "property.builtin" | "tag" => Style::new().fg(palette.syntax_function),
+        "property.builtin" | "tag" | "tag.builtin" | "tag.error" => {
+            Style::new().fg(palette.syntax_function)
+        }
         _ => fallback,
     };
     fallback.patch(style)

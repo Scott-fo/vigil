@@ -497,32 +497,79 @@ pub enum GapExpandDirection {
 
 static HIGHLIGHT_NAMES: &[&str] = &[
     "attribute",
+    "attribute.builtin",
     "boolean",
+    "character",
+    "character.special",
     "comment",
     "comment.documentation",
+    "conditional",
     "constant",
     "constant.builtin",
     "constructor",
     "constructor.builtin",
+    "delimiter",
     "embedded",
+    "exception",
     "function",
     "function.builtin",
+    "function.call",
     "function.method",
+    "function.method.call",
+    "function.method.builtin",
+    "function.macro",
+    "function.special",
     "keyword",
+    "keyword.conditional",
+    "keyword.conditional.ternary",
+    "keyword.coroutine",
+    "keyword.debug",
+    "keyword.directive",
+    "keyword.exception",
+    "keyword.function",
+    "keyword.import",
+    "keyword.modifier",
+    "keyword.operator",
+    "keyword.repeat",
+    "keyword.return",
+    "keyword.type",
+    "label",
+    "method",
+    "method.call",
+    "module",
+    "module.builtin",
+    "namespace",
     "number",
+    "number.float",
     "operator",
+    "parameter",
     "property",
+    "property.definition",
     "property.builtin",
     "punctuation",
     "punctuation.bracket",
     "punctuation.delimiter",
     "punctuation.special",
+    "repeat",
     "string",
     "string.escape",
+    "string.regexp",
     "string.special",
+    "string.special.url",
+    "string.special.key",
+    "string.special.path",
+    "string.special.regex",
+    "string.special.symbol",
+    "string.special.uri",
     "tag",
+    "tag.attribute",
+    "tag.builtin",
+    "tag.delimiter",
+    "tag.error",
     "type",
     "type.builtin",
+    "type.definition",
+    "type.qualifier",
     "variable",
     "variable.builtin",
     "variable.member",
@@ -2060,15 +2107,53 @@ impl std::fmt::Debug for HighlightRegistry {
 impl HighlightRegistry {
     pub fn new() -> color_eyre::Result<Self> {
         let mut configs = HashMap::new();
+        let ecma_highlights = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/ecma/highlights.scm"
+        ));
+        let ecma_locals = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/ecma/locals.scm"
+        ));
+        let ecma_injections = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/ecma/injections.scm"
+        ));
+        let jsx_nvim_highlights = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/jsx/highlights.scm"
+        ));
+        let jsx_nvim_injections = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/jsx/injections.scm"
+        ));
+        let typescript_highlights_query = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/typescript/highlights.scm"
+        ));
+        let typescript_locals_query = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/typescript/locals.scm"
+        ));
+        let typescript_injections_query = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/typescript/injections.scm"
+        ));
 
         register_highlight_config(
             &mut configs,
             "rust",
             tree_sitter_rust::LANGUAGE.into(),
             "rust",
-            tree_sitter_rust::HIGHLIGHTS_QUERY,
-            tree_sitter_rust::INJECTIONS_QUERY,
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/nvim-treesitter/rust/highlights.scm"
+            )),
             "",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/nvim-treesitter/rust/locals.scm"
+            )),
         )?;
 
         register_highlight_config(
@@ -2096,39 +2181,32 @@ impl HighlightRegistry {
             tree_sitter_javascript::LOCALS_QUERY,
         )?;
 
-        let typescript_highlights = format!(
-            "{}\n{}",
-            tree_sitter_javascript::HIGHLIGHT_QUERY,
-            tree_sitter_typescript::HIGHLIGHTS_QUERY
-        );
-        let typescript_locals = format!(
-            "{}\n{}",
-            tree_sitter_javascript::LOCALS_QUERY,
-            tree_sitter_typescript::LOCALS_QUERY
-        );
+        let typescript_highlights =
+            format!("{ecma_highlights}\n{typescript_highlights_query}");
+        let typescript_locals = format!("{ecma_locals}\n{typescript_locals_query}");
+        let typescript_injections = format!("{ecma_injections}\n{typescript_injections_query}");
         register_highlight_config(
             &mut configs,
             "typescript",
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             "typescript",
             &typescript_highlights,
-            tree_sitter_javascript::INJECTIONS_QUERY,
+            &typescript_injections,
             &typescript_locals,
         )?;
 
         let tsx_highlights = format!(
-            "{}\n{}\n{}",
-            tree_sitter_javascript::HIGHLIGHT_QUERY,
-            tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
-            tree_sitter_typescript::HIGHLIGHTS_QUERY
+            "{ecma_highlights}\n{typescript_highlights_query}\n{jsx_nvim_highlights}"
         );
+        let tsx_injections =
+            format!("{ecma_injections}\n{typescript_injections_query}\n{jsx_nvim_injections}");
         register_highlight_config(
             &mut configs,
             "tsx",
             tree_sitter_typescript::LANGUAGE_TSX.into(),
             "tsx",
             &tsx_highlights,
-            tree_sitter_javascript::INJECTIONS_QUERY,
+            &tsx_injections,
             &typescript_locals,
         )?;
 
@@ -2147,9 +2225,15 @@ impl HighlightRegistry {
             "go",
             tree_sitter_go::LANGUAGE.into(),
             "go",
-            tree_sitter_go::HIGHLIGHTS_QUERY,
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/nvim-treesitter/go/highlights.scm"
+            )),
             "",
-            "",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/nvim-treesitter/go/locals.scm"
+            )),
         )?;
 
         register_highlight_config(
@@ -2177,7 +2261,12 @@ impl HighlightRegistry {
             "csharp",
             tree_sitter_c_sharp::LANGUAGE.into(),
             "c_sharp",
-            "",
+            include_str!(
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/vendor/tree-sitter-c-sharp/highlights.scm"
+                )
+            ),
             "",
             "",
         )?;
@@ -2385,4 +2474,34 @@ fn register_highlight_config(
     config.configure(HIGHLIGHT_NAMES);
     configs.insert(key, config);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_highlight_registry() {
+        HighlightRegistry::new().expect("highlight registry should initialize");
+    }
+
+    #[test]
+    fn highlights_rust_go_and_typescript_without_falling_back() {
+        let registry = HighlightRegistry::new().expect("highlight registry should initialize");
+        let mut highlighter = SyntaxHighlighter::new(Some(&registry));
+        let fallback = ui::diff_context_style();
+
+        for (filetype, line) in [
+            ("rust", "let value = Foo::new(bar);"),
+            ("go", "func buildUser(id int) Foo { return NewUser(id) }"),
+            ("typescript", "const value: Foo = await loadUser(id);"),
+            ("tsx", "<Card title=\"demo\">{value}</Card>"),
+        ] {
+            let spans = highlighter.highlight_line(Some(filetype), line, fallback);
+            assert!(
+                spans.len() > 1,
+                "expected syntax highlighting for {filetype}, got fallback spans: {spans:?}"
+            );
+        }
+    }
 }
