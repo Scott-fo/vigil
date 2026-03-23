@@ -241,6 +241,7 @@ pub struct App {
     diff_highlight_job: Option<DiffHighlightJob>,
     diff_highlight_complete: bool,
     diff_viewport: Option<DiffViewport>,
+    background_tasks: Vec<task::JoinHandle<()>>,
     diff_view_cache: DiffViewCache,
     diff_cache_generation: u64,
     pending_diff_cache_key: Option<DiffCacheKey>,
@@ -345,6 +346,7 @@ impl App {
             diff_highlight_job: None,
             diff_highlight_complete: false,
             diff_viewport: None,
+            background_tasks: Vec::new(),
             diff_view_cache: DiffViewCache::default(),
             diff_cache_generation: 0,
             pending_diff_cache_key: None,
@@ -1094,7 +1096,7 @@ impl App {
         });
     }
 
-    fn spawn_diff_prefetch(&self) {
+    fn spawn_diff_prefetch(&mut self) {
         let Some(selected_visible_index) = self.selected_visible_file_index() else {
             return;
         };
@@ -1151,7 +1153,7 @@ impl App {
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
 
-        task::spawn(async move {
+        self.track_background_task(task::spawn(async move {
             for (cache_key, file) in prefetch_files {
                 let preview_result = match &review_mode {
                     ReviewMode::WorkingTree => {
@@ -1192,7 +1194,7 @@ impl App {
                     highlighted: None,
                 });
             }
-        });
+        }));
     }
 
     fn file_index_by_path(&self, path: &str) -> Option<usize> {
@@ -1618,12 +1620,12 @@ impl App {
 
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
-        task::spawn(async move {
+        self.track_background_task(task::spawn(async move {
             let result = git::list_searchable_commits(&repo_root, 12_000)
                 .await
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::CommitSearchLoaded(result));
-        });
+        }));
     }
 
     fn close_commit_search_modal(&mut self) {
@@ -1652,12 +1654,12 @@ impl App {
 
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
-        task::spawn(async move {
+        self.track_background_task(task::spawn(async move {
             let result = git::list_comparable_refs(&repo_root)
                 .await
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::BranchCompareLoaded(result));
-        });
+        }));
     }
 
     fn close_branch_compare_modal(&mut self) {
@@ -1754,13 +1756,13 @@ impl App {
         self.remote_sync = Some(RemoteSyncDirection::Push);
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
-        task::spawn(async move {
+        self.track_background_task(task::spawn(async move {
             let result = git::push_to_remote(&repo_root)
                 .await
                 .map(|_| "Pushed to remote".to_string())
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::RemoteSyncFinished(result));
-        });
+        }));
     }
 
     fn start_pull(&mut self) {
@@ -1771,13 +1773,13 @@ impl App {
         self.remote_sync = Some(RemoteSyncDirection::Pull);
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
-        task::spawn(async move {
+        self.track_background_task(task::spawn(async move {
             let result = git::pull_from_remote(&repo_root)
                 .await
                 .map(|_| "Pulled from remote".to_string())
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::RemoteSyncFinished(result));
-        });
+        }));
     }
 
     async fn run_command(
@@ -2041,10 +2043,10 @@ impl App {
         self.snackbar_notice = Some(SnackbarNotice { message, variant });
 
         let sender = self.events.sender();
-        task::spawn(async move {
+        self.track_background_task(task::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             let _ = sender.send(Event::ClearSnackbar(generation));
-        });
+        }));
     }
 
     pub fn filtered_theme_names(&mut self) -> Vec<&'static str> {
@@ -2300,9 +2302,9 @@ impl App {
         }
     }
 
-    fn spawn_highlight_registry_init(&self) {
+    fn spawn_highlight_registry_init(&mut self) {
         let sender = self.events.sender();
-        task::spawn(async move {
+        self.track_background_task(task::spawn(async move {
             let result = task::spawn_blocking(git::HighlightRegistry::new).await;
             let event = match result {
                 Ok(Ok(registry)) => Event::HighlightRegistryReady(Ok(registry.into())),
@@ -2310,7 +2312,7 @@ impl App {
                 Err(error) => Event::HighlightRegistryReady(Err(error.to_string())),
             };
             let _ = sender.send(event);
-        });
+        }));
     }
 
     fn spawn_repo_watcher_init(&mut self) {
@@ -2321,10 +2323,10 @@ impl App {
         self.repo_watcher_loading = true;
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
-        task::spawn(async move {
+        self.track_background_task(task::spawn(async move {
             let result = RepoWatcher::initialize(repo_root.clone(), sender.clone()).await;
             let _ = sender.send(Event::RepoWatcherReady(repo_root, result));
-        });
+        }));
     }
 
     fn restart_repo_watcher(&mut self) {
@@ -2333,7 +2335,25 @@ impl App {
         self.spawn_repo_watcher_init();
     }
 
+    fn track_background_task(&mut self, handle: task::JoinHandle<()>) {
+        self.background_tasks.retain(|task| !task.is_finished());
+        self.background_tasks.push(handle);
+    }
+
+    fn abort_background_tasks(&mut self) {
+        for task in self.background_tasks.drain(..) {
+            task.abort();
+        }
+    }
+
     fn quit(&mut self) {
+        self.cancel_inflight_diff_load();
+        self.cancel_inflight_blame_load();
+        self.abort_background_tasks();
+        self.repo_watcher = None;
+        self.repo_watcher_loading = false;
+        self.remote_sync = None;
+        self.events.suspend();
         self.running = false;
     }
 

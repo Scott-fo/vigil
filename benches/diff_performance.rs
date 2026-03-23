@@ -6,6 +6,7 @@ use vigil::{
     git::{
         HighlightRegistry, build_diff_view_from_diff_text,
         build_diff_view_from_diff_text_with_context,
+        clear_exact_highlight_cache,
     },
 };
 
@@ -247,9 +248,23 @@ fn bench_diff_pipeline(c: &mut Criterion) {
         );
     });
 
-    group.bench_function("highlight_exact_full_file", |b| {
+    group.bench_function("highlight_exact_full_file_warm", |b| {
         b.iter_batched(
             || exact_context_view.clone(),
+            |mut view| {
+                view.apply_exact_syntax_highlighting(FILETYPE, &registry);
+                black_box(view.display_line_count(DiffViewMode::Split));
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group.bench_function("highlight_exact_full_file_cold", |b| {
+        b.iter_batched(
+            || {
+                clear_exact_highlight_cache();
+                exact_context_view.clone()
+            },
             |mut view| {
                 view.apply_exact_syntax_highlighting(FILETYPE, &registry);
                 black_box(view.display_line_count(DiffViewMode::Split));
@@ -267,8 +282,23 @@ fn bench_diff_pipeline(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("exact_full_pipeline_split", |b| {
+    group.bench_function("exact_full_pipeline_split_warm", |b| {
         b.iter(|| {
+            let mut view = build_diff_view_from_diff_text_with_context(
+                black_box(diff),
+                FILETYPE,
+                Some(fixture.old_file_lines.clone()),
+                Some(fixture.new_file_lines.clone()),
+            );
+            view.apply_exact_syntax_highlighting(FILETYPE, &registry);
+            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            black_box(lines.len());
+        });
+    });
+
+    group.bench_function("exact_full_pipeline_split_cold", |b| {
+        b.iter(|| {
+            clear_exact_highlight_cache();
             let mut view = build_diff_view_from_diff_text_with_context(
                 black_box(diff),
                 FILETYPE,

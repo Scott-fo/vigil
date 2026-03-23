@@ -4,6 +4,8 @@ use std::{
     collections::BinaryHeap,
     collections::HashMap,
     collections::HashSet,
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -26,6 +28,7 @@ const LOG_FIELD_SEPARATOR: char = '\u{001f}';
 const LOG_RECORD_SEPARATOR: char = '\u{001e}';
 pub const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const VIEWPORT_HIGHLIGHT_PADDING_ROWS: usize = 64;
+const EXACT_HIGHLIGHT_CACHE_CAPACITY: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -85,8 +88,9 @@ pub struct DiffView {
     hunks: Vec<DiffHunkBlock>,
     gaps: Vec<DiffHunkGap>,
     gap_expansions: HashMap<usize, DiffGapExpansion>,
-    old_file_lines: Option<Vec<String>>,
+    old_file_source: Option<Arc<str>>,
     new_file_lines: Option<Vec<String>>,
+    new_file_source: Option<Arc<str>>,
     display_cache: DiffDisplayCache,
 }
 
@@ -98,8 +102,9 @@ impl DiffView {
             hunks: Vec::new(),
             gaps: Vec::new(),
             gap_expansions: HashMap::new(),
-            old_file_lines: None,
+            old_file_source: None,
             new_file_lines: None,
+            new_file_source: None,
             display_cache: DiffDisplayCache::default(),
         }
     }
@@ -496,24 +501,62 @@ impl DiffView {
             return;
         };
 
-        let left = self.old_file_lines.as_ref().and_then(|lines| {
-            prepare_exact_side_highlighting(
-                &self.rows,
-                HighlightSide::Left,
-                lines,
-                filetype,
-                registry,
+        let rows = &self.rows;
+        let left_source = self.old_file_source.clone();
+        let right_source = self.new_file_source.clone();
+        let should_parallelize = left_source.is_some()
+            && right_source.is_some()
+            && std::thread::available_parallelism()
+                .map(|parallelism| parallelism.get() > 1)
+                .unwrap_or(false);
+
+        let (left, right) = if should_parallelize {
+            std::thread::scope(|scope| {
+                let right_task = scope.spawn(move || {
+                    right_source.and_then(|source| {
+                        prepare_exact_side_highlighting(
+                            rows,
+                            HighlightSide::Right,
+                            &source,
+                            filetype,
+                            registry,
+                        )
+                    })
+                });
+                let left = left_source.and_then(|source| {
+                    prepare_exact_side_highlighting(
+                        rows,
+                        HighlightSide::Left,
+                        &source,
+                        filetype,
+                        registry,
+                    )
+                });
+                let right = right_task.join().ok().flatten();
+                (left, right)
+            })
+        } else {
+            (
+                left_source.and_then(|source| {
+                    prepare_exact_side_highlighting(
+                        rows,
+                        HighlightSide::Left,
+                        &source,
+                        filetype,
+                        registry,
+                    )
+                }),
+                right_source.and_then(|source| {
+                    prepare_exact_side_highlighting(
+                        rows,
+                        HighlightSide::Right,
+                        &source,
+                        filetype,
+                        registry,
+                    )
+                }),
             )
-        });
-        let right = self.new_file_lines.as_ref().and_then(|lines| {
-            prepare_exact_side_highlighting(
-                &self.rows,
-                HighlightSide::Right,
-                lines,
-                filetype,
-                registry,
-            )
-        });
+        };
 
         if left.is_none() && right.is_none() {
             self.apply_syntax_highlighting(Some(filetype), registry);
@@ -715,16 +758,15 @@ fn prepare_side_highlighting(
 fn prepare_exact_side_highlighting(
     rows: &[DiffRow],
     side: HighlightSide,
-    file_lines: &[String],
+    source: &Arc<str>,
     filetype: &'static str,
     registry: &HighlightRegistry,
 ) -> Option<CompletedHighlightSide> {
-    if file_lines.is_empty() {
+    if source.is_empty() {
         return None;
     }
 
-    let source = join_source_lines(file_lines);
-    let highlighted_lines = highlight_source_lines(registry, filetype, &source)?;
+    let highlighted_lines = highlight_source_lines_cached_exact(registry, filetype, source)?;
     let mut row_indices = Vec::new();
     let mut exact_row_lines = Vec::new();
 
@@ -738,10 +780,7 @@ fn prepare_exact_side_highlighting(
             HighlightSide::Right => row.new_line,
         }?;
         let line_index = line_number.saturating_sub(1);
-        let tokens = highlighted_lines
-            .get(line_index)
-            .cloned()
-            .unwrap_or_default();
+        let tokens = highlighted_lines.get(line_index).cloned().unwrap_or_default();
         row_indices.push(row_index);
         exact_row_lines.push(tokens);
     }
@@ -800,18 +839,6 @@ fn prepare_side_highlighting_in_row_window(
         row_indices,
         source,
     })
-}
-
-fn join_source_lines(lines: &[String]) -> String {
-    let source_len = lines.iter().map(|line| line.len()).sum::<usize>();
-    let mut source = String::with_capacity(source_len + lines.len().saturating_sub(1));
-    for (index, line) in lines.iter().enumerate() {
-        if index > 0 {
-            source.push('\n');
-        }
-        source.push_str(line);
-    }
-    source
 }
 
 fn apply_completed_highlighting(rows: &mut [DiffRow], completed: CompletedHighlightSide) {
@@ -1540,8 +1567,9 @@ pub fn build_diff_view_from_preview_data(
         hunks,
         gaps,
         gap_expansions: HashMap::new(),
-        old_file_lines: preview.old_file_lines.clone(),
+        old_file_source: preview.old_file_source.clone(),
         new_file_lines: preview.new_file_lines.clone(),
+        new_file_source: preview.new_file_source.clone(),
         display_cache: DiffDisplayCache::default(),
     };
 
@@ -1567,14 +1595,17 @@ pub fn build_diff_view_from_diff_text_with_context(
     }
 
     let (rows, hunks, gaps) = build_diff_rows(diff, filetype);
+    let old_file_source = old_file_lines.as_deref().map(source_from_lines);
+    let new_file_source = new_file_lines.as_deref().map(source_from_lines);
     DiffView {
         rows,
         note: None,
         hunks,
         gaps,
         gap_expansions: HashMap::new(),
-        old_file_lines,
+        old_file_source,
         new_file_lines,
+        new_file_source,
         display_cache: DiffDisplayCache::default(),
     }
 }
@@ -1583,8 +1614,9 @@ pub fn build_diff_view_from_diff_text_with_context(
 pub struct DiffPreviewData {
     diff: String,
     note: Option<String>,
-    old_file_lines: Option<Vec<String>>,
+    old_file_source: Option<Arc<str>>,
     new_file_lines: Option<Vec<String>>,
+    new_file_source: Option<Arc<str>>,
 }
 
 async fn load_file_preview(
@@ -1633,12 +1665,15 @@ async fn load_commit_preview(
     } else {
         None
     };
+    let old_file_source = old_file_lines.as_deref().map(source_from_lines);
+    let new_file_source = new_file_lines.as_deref().map(source_from_lines);
 
     Ok(DiffPreviewData {
         diff: output,
         note: None,
-        old_file_lines,
+        old_file_source,
         new_file_lines,
+        new_file_source,
     })
 }
 
@@ -1676,12 +1711,15 @@ async fn load_branch_preview(
     } else {
         None
     };
+    let old_file_source = old_file_lines.as_deref().map(source_from_lines);
+    let new_file_source = new_file_lines.as_deref().map(source_from_lines);
 
     Ok(DiffPreviewData {
         diff: output,
         note: None,
-        old_file_lines,
+        old_file_source,
         new_file_lines,
+        new_file_source,
     })
 }
 
@@ -1712,11 +1750,14 @@ async fn load_tracked_preview(
     } else {
         None
     };
+    let old_file_source = old_file_lines.as_deref().map(source_from_lines);
+    let new_file_source = new_file_lines.as_deref().map(source_from_lines);
     Ok(DiffPreviewData {
         diff: output,
         note: None,
-        old_file_lines,
+        old_file_source,
         new_file_lines,
+        new_file_source,
     })
 }
 
@@ -1731,8 +1772,9 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Directory or symlinked directory; no preview available.".to_string()),
-                old_file_lines: None,
+                old_file_source: None,
                 new_file_lines: None,
+                new_file_source: None,
             });
         }
         Ok(_) => {}
@@ -1740,8 +1782,9 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Unable to read untracked file content.".to_string()),
-                old_file_lines: None,
+                old_file_source: None,
                 new_file_lines: None,
+                new_file_source: None,
             });
         }
     }
@@ -1752,8 +1795,9 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Unable to read untracked file content.".to_string()),
-                old_file_lines: None,
+                old_file_source: None,
                 new_file_lines: None,
+                new_file_source: None,
             });
         }
     };
@@ -1762,31 +1806,37 @@ async fn load_untracked_preview(
         return Ok(DiffPreviewData {
             diff: String::new(),
             note: Some("Binary or non-text file; no preview available.".to_string()),
-            old_file_lines: None,
+            old_file_source: None,
             new_file_lines: None,
+            new_file_source: None,
         });
     }
 
     let content = String::from_utf8_lossy(&bytes);
     let diff = create_untracked_file_diff(file_path, &content);
-    let new_file_lines = if include_exact_context || diff_needs_context_lines(&diff) {
+    let needs_new_file_context = include_exact_context || diff_needs_context_lines(&diff);
+    let normalized_content = Arc::<str>::from(content.replace("\r\n", "\n"));
+    let new_file_lines = if needs_new_file_context {
         Some(split_lines_for_context(&content))
     } else {
         None
     };
+    let new_file_source = needs_new_file_context.then_some(normalized_content.clone());
     Ok(if diff.trim().is_empty() {
         DiffPreviewData {
             diff,
             note: Some("Untracked empty file; no textual hunk to preview.".to_string()),
-            old_file_lines: None,
+            old_file_source: None,
             new_file_lines: Some(split_lines_for_context(&content)),
+            new_file_source: Some(normalized_content),
         }
     } else {
         DiffPreviewData {
             diff,
             note: None,
-            old_file_lines: None,
+            old_file_source: None,
             new_file_lines,
+            new_file_source,
         }
     })
 }
@@ -1852,6 +1902,18 @@ fn split_lines_for_context(content: &str) -> Vec<String> {
         let _ = lines.pop();
     }
     lines
+}
+
+fn source_from_lines(lines: &[String]) -> Arc<str> {
+    let source_len = lines.iter().map(|line| line.len()).sum::<usize>();
+    let mut source = String::with_capacity(source_len + lines.len().saturating_sub(1));
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 {
+            source.push('\n');
+        }
+        source.push_str(line);
+    }
+    Arc::<str>::from(source)
 }
 
 fn diff_needs_context_lines(diff: &str) -> bool {
@@ -2718,6 +2780,14 @@ struct CachedSyntaxRunner {
     query_cursor: QueryCursor,
 }
 
+struct ExactHighlightCacheEntry {
+    filetype: &'static str,
+    source_hash: u64,
+    source_len: usize,
+    source: Arc<str>,
+    highlighted_lines: Arc<[Vec<SyntaxToken>]>,
+}
+
 impl std::fmt::Debug for HighlightRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HighlightRegistry")
@@ -3010,6 +3080,8 @@ impl HighlightRegistry {
 thread_local! {
     static SYNTAX_RUNNERS: RefCell<HashMap<&'static str, CachedSyntaxRunner>> =
         RefCell::new(HashMap::new());
+    static EXACT_HIGHLIGHT_CACHE: RefCell<Vec<ExactHighlightCacheEntry>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 fn highlight_source_lines(
@@ -3053,6 +3125,64 @@ fn highlight_source_lines(
             source,
         )
     })
+}
+
+fn highlight_source_lines_cached_exact(
+    registry: &HighlightRegistry,
+    filetype: &'static str,
+    source: &Arc<str>,
+) -> Option<Arc<[Vec<SyntaxToken>]>> {
+    if source.is_empty() {
+        return Some(Arc::from([Vec::new()]));
+    }
+
+    let source_hash = hash_source(source.as_ref());
+    let source_len = source.len();
+
+    if let Some(hit) = EXACT_HIGHLIGHT_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let position = cache.iter().position(|entry| {
+            entry.filetype == filetype
+                && entry.source_hash == source_hash
+                && entry.source_len == source_len
+                && entry.source.as_ref() == source.as_ref()
+        })?;
+        let entry = cache.remove(position);
+        let highlighted_lines = entry.highlighted_lines.clone();
+        cache.push(entry);
+        Some(highlighted_lines)
+    }) {
+        return Some(hit);
+    }
+
+    let highlighted_lines = Arc::<[Vec<SyntaxToken>]>::from(
+        highlight_source_lines(registry, filetype, source.as_ref())?.into_boxed_slice(),
+    );
+    EXACT_HIGHLIGHT_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.push(ExactHighlightCacheEntry {
+            filetype,
+            source_hash,
+            source_len,
+            source: source.clone(),
+            highlighted_lines: highlighted_lines.clone(),
+        });
+        if cache.len() > EXACT_HIGHLIGHT_CACHE_CAPACITY {
+            let overflow = cache.len() - EXACT_HIGHLIGHT_CACHE_CAPACITY;
+            cache.drain(..overflow);
+        }
+    });
+    Some(highlighted_lines)
+}
+
+fn hash_source(source: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    hasher.finish()
+}
+
+pub fn clear_exact_highlight_cache() {
+    EXACT_HIGHLIGHT_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
 pub fn prewarm_highlight_registry(registry: &HighlightRegistry) {
