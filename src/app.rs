@@ -295,7 +295,7 @@ impl App {
             sidebar_state: ListState::default(),
             selected_file_index: 0,
             diff_view: DiffView::default(),
-            diff_view_mode: DiffViewMode::Unified,
+            diff_view_mode: DiffViewMode::Split,
             diff_scroll: 0,
             selected_diff_line_index: 0,
             diff_request_id: 0,
@@ -417,7 +417,8 @@ impl App {
                                         self.diff_view_cache
                                             .insert_highlighted(cache_key, diff_view.clone());
                                     } else {
-                                        self.diff_view_cache.insert_plain(cache_key, diff_view.clone());
+                                        self.diff_view_cache
+                                            .insert_plain(cache_key, diff_view.clone());
                                     }
                                 }
                                 let max_index =
@@ -451,7 +452,8 @@ impl App {
                     if generation == self.diff_cache_generation {
                         self.diff_view_cache.insert_plain(key.clone(), plain);
                         if let Some(highlighted_view) = highlighted {
-                            self.diff_view_cache.insert_highlighted(key, highlighted_view);
+                            self.diff_view_cache
+                                .insert_highlighted(key, highlighted_view);
                         }
                     }
                 }
@@ -1043,9 +1045,12 @@ impl App {
                 let file = self.files[file_index].clone();
                 let cache_key = self.diff_cache_key(&file);
                 if self.highlight_registry.is_some() {
-                    if self.diff_view_cache.entries.iter().any(|entry| {
-                        entry.key == cache_key && entry.highlighted.is_some()
-                    }) {
+                    if self
+                        .diff_view_cache
+                        .entries
+                        .iter()
+                        .any(|entry| entry.key == cache_key && entry.highlighted.is_some())
+                    {
                         continue;
                     }
                 } else if self
@@ -1077,10 +1082,12 @@ impl App {
                         git::load_diff_preview_for_working_tree(&repo_root, &file).await
                     }
                     ReviewMode::CommitCompare(selection) => {
-                        git::load_diff_preview_for_commit_compare(&repo_root, &file, selection).await
+                        git::load_diff_preview_for_commit_compare(&repo_root, &file, selection)
+                            .await
                     }
                     ReviewMode::BranchCompare(selection) => {
-                        git::load_diff_preview_for_branch_compare(&repo_root, &file, selection).await
+                        git::load_diff_preview_for_branch_compare(&repo_root, &file, selection)
+                            .await
                     }
                 };
 
@@ -1194,7 +1201,8 @@ impl App {
             let filetype = file.filetype;
             self.diff_load_task = Some(task::spawn(async move {
                 let highlighted_result = task::spawn_blocking(move || {
-                    plain_diff_view.apply_syntax_highlighting(filetype, highlight_registry.as_ref());
+                    plain_diff_view
+                        .apply_syntax_highlighting(filetype, highlight_registry.as_ref());
                     Ok::<_, String>(plain_diff_view)
                 })
                 .await
