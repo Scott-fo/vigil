@@ -5,8 +5,7 @@ use vigil::{
     app::DiffViewMode,
     git::{
         HighlightRegistry, build_diff_view_from_diff_text,
-        build_diff_view_from_diff_text_with_context,
-        clear_exact_highlight_cache,
+        build_diff_view_from_diff_text_with_context, clear_exact_highlight_cache,
     },
 };
 

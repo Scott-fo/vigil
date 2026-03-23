@@ -26,7 +26,10 @@ fn build_fixture() -> GitRsNewFileFixture {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()))
         .replace("\r\n", "\n");
 
-    let mut new_file_lines = content.split('\n').map(ToOwned::to_owned).collect::<Vec<_>>();
+    let mut new_file_lines = content
+        .split('\n')
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
     if content.ends_with('\n') {
         let _ = new_file_lines.pop();
     }
