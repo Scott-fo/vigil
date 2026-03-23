@@ -17,6 +17,7 @@ use ratatui::widgets::ListState;
 use tokio::fs;
 use tokio::task;
 
+use crate::theme::config;
 use crate::{
     event::{Event, EventHandler},
     git::{
@@ -172,7 +173,7 @@ impl App {
             Some(path) => path,
             None => std::env::current_dir().wrap_err("failed to resolve current directory")?,
         };
-        let preference = theme::read_theme_preference();
+        let preference = config::read_theme_preference();
         let theme_name = theme::resolve_theme_name(preference.theme.as_deref()).to_string();
         let theme_mode = preference.mode.unwrap_or(ThemeMode::Dark);
         theme::set_active_theme(&theme_name, theme_mode);
@@ -1114,7 +1115,7 @@ impl App {
     fn confirm_theme_modal(&mut self) -> color_eyre::Result<()> {
         self.theme_modal_open = false;
         self.theme_modal_query.clear();
-        match theme::persist_theme_preference(&self.theme_name, self.theme_mode) {
+        match config::persist_theme_preference(&self.theme_name, self.theme_mode) {
             Ok(()) => {
                 self.status_message = Some(format!(
                     "theme set to {} ({})",
