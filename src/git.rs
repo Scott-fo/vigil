@@ -536,6 +536,22 @@ static HIGHLIGHT_NAMES: &[&str] = &[
     "label",
     "method",
     "method.call",
+    "markup.heading",
+    "markup.heading.1",
+    "markup.heading.2",
+    "markup.heading.3",
+    "markup.heading.4",
+    "markup.heading.5",
+    "markup.heading.6",
+    "markup.link",
+    "markup.link.label",
+    "markup.link.url",
+    "markup.list",
+    "markup.list.checked",
+    "markup.list.unchecked",
+    "markup.quote",
+    "markup.raw",
+    "markup.raw.block",
     "module",
     "module.builtin",
     "namespace",
@@ -2411,6 +2427,9 @@ impl<'a> SyntaxHighlighter<'a> {
         let Some(filetype) = filetype else {
             return vec![Span::styled(line.to_string(), fallback)];
         };
+        if filetype == "markdown" {
+            return highlight_markdown_line(line, fallback);
+        }
         let Some(registry) = self.registry else {
             return vec![Span::styled(line.to_string(), fallback)];
         };
@@ -2459,6 +2478,186 @@ impl<'a> SyntaxHighlighter<'a> {
     }
 }
 
+fn markdown_style(name: &str, fallback: Style) -> Style {
+    match name {
+        "heading" => ui::syntax_style("type", fallback).add_modifier(Modifier::BOLD),
+        "quote" => ui::syntax_style("comment", fallback),
+        "list" => ui::syntax_style("keyword", fallback),
+        "code" => ui::syntax_style("string", fallback),
+        "link_label" => ui::syntax_style("function", fallback),
+        "link_url" => ui::syntax_style("string", fallback),
+        "label" => ui::syntax_style("label", fallback),
+        "rule" => ui::syntax_style("operator", fallback),
+        _ => fallback,
+    }
+}
+
+fn push_markdown_span(spans: &mut Vec<Span<'static>>, text: &str, style: Style) {
+    if !text.is_empty() {
+        spans.push(Span::styled(text.to_string(), style));
+    }
+}
+
+fn highlight_markdown_inline(text: &str, fallback: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut index = 0;
+
+    while index < text.len() {
+        let remainder = &text[index..];
+
+        if let Some(rest) = remainder.strip_prefix('`')
+            && let Some(end) = rest.find('`')
+        {
+            let code_end = index + 1 + end + 1;
+            push_markdown_span(
+                &mut spans,
+                &text[index..code_end],
+                markdown_style("code", fallback),
+            );
+            index = code_end;
+            continue;
+        }
+
+        if let Some(label_end) = remainder.find("](")
+            && remainder.starts_with('[')
+            && let Some(url_end) = remainder[label_end + 2..].find(')')
+        {
+            let label_text_end = index + label_end + 1;
+            let url_start = index + label_end + 2;
+            let url_end = url_start + url_end;
+            push_markdown_span(&mut spans, "[", fallback);
+            push_markdown_span(
+                &mut spans,
+                &text[index + 1..label_text_end],
+                markdown_style("link_label", fallback),
+            );
+            push_markdown_span(&mut spans, "](", fallback);
+            push_markdown_span(
+                &mut spans,
+                &text[url_start..url_end],
+                markdown_style("link_url", fallback),
+            );
+            push_markdown_span(&mut spans, ")", fallback);
+            index = url_end + 1;
+            continue;
+        }
+
+        let mut next_break = remainder.len();
+        for needle in ["`", "["] {
+            if let Some(found) = remainder.find(needle) {
+                next_break = next_break.min(found);
+            }
+        }
+        if next_break == 0 {
+            next_break = remainder.chars().next().map(char::len_utf8).unwrap_or(1);
+        }
+        push_markdown_span(&mut spans, &remainder[..next_break], fallback);
+        index += next_break;
+    }
+
+    if spans.is_empty() {
+        vec![Span::styled(text.to_string(), fallback)]
+    } else {
+        spans
+    }
+}
+
+fn markdown_list_prefix_len(text: &str) -> Option<usize> {
+    for marker in ["- ", "* ", "+ "] {
+        if text.starts_with(marker) {
+            return Some(marker.len());
+        }
+    }
+
+    let digit_count = text.bytes().take_while(u8::is_ascii_digit).count();
+    if digit_count > 0 {
+        let remainder = &text[digit_count..];
+        if remainder.starts_with(". ") || remainder.starts_with(") ") {
+            return Some(digit_count + 2);
+        }
+    }
+
+    None
+}
+
+fn highlight_markdown_line(line: &str, fallback: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let indent_len = line.len() - line.trim_start().len();
+    let (indent, trimmed) = line.split_at(indent_len);
+    push_markdown_span(&mut spans, indent, fallback);
+
+    if trimmed.is_empty() {
+        return if spans.is_empty() {
+            vec![Span::styled(String::new(), fallback)]
+        } else {
+            spans
+        };
+    }
+
+    let bare = trimmed.trim();
+    if bare.len() >= 3 && bare.chars().all(|ch| matches!(ch, '-' | '*' | '_')) {
+        push_markdown_span(&mut spans, trimmed, markdown_style("rule", fallback));
+        return spans;
+    }
+
+    for fence in ["```", "~~~"] {
+        if let Some(rest) = trimmed.strip_prefix(fence) {
+            push_markdown_span(&mut spans, fence, markdown_style("code", fallback));
+            let ws_len = rest.len() - rest.trim_start().len();
+            let (ws, info) = rest.split_at(ws_len);
+            push_markdown_span(&mut spans, ws, fallback);
+            push_markdown_span(&mut spans, info, markdown_style("label", fallback));
+            return spans;
+        }
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("> ") {
+        push_markdown_span(&mut spans, "> ", markdown_style("quote", fallback));
+        spans.extend(highlight_markdown_inline(rest, fallback));
+        return spans;
+    }
+
+    let heading_marker_len = trimmed.bytes().take_while(|byte| *byte == b'#').count();
+    if (1..=6).contains(&heading_marker_len) && trimmed[heading_marker_len..].starts_with(' ') {
+        push_markdown_span(
+            &mut spans,
+            &trimmed[..heading_marker_len],
+            markdown_style("heading", fallback),
+        );
+        push_markdown_span(&mut spans, " ", fallback);
+        push_markdown_span(
+            &mut spans,
+            &trimmed[heading_marker_len + 1..],
+            markdown_style("heading", fallback),
+        );
+        return spans;
+    }
+
+    if let Some(prefix_len) = markdown_list_prefix_len(trimmed) {
+        push_markdown_span(
+            &mut spans,
+            &trimmed[..prefix_len],
+            markdown_style("list", fallback),
+        );
+        let rest = &trimmed[prefix_len..];
+        if let Some(task_rest) = rest.strip_prefix("[ ] ") {
+            push_markdown_span(&mut spans, "[ ] ", markdown_style("list", fallback));
+            spans.extend(highlight_markdown_inline(task_rest, fallback));
+            return spans;
+        }
+        if let Some(task_rest) = rest.strip_prefix("[x] ").or_else(|| rest.strip_prefix("[X] ")) {
+            push_markdown_span(&mut spans, &rest[..4], markdown_style("list", fallback));
+            spans.extend(highlight_markdown_inline(task_rest, fallback));
+            return spans;
+        }
+        spans.extend(highlight_markdown_inline(rest, fallback));
+        return spans;
+    }
+
+    spans.extend(highlight_markdown_inline(trimmed, fallback));
+    spans
+}
+
 fn register_highlight_config(
     configs: &mut HashMap<&'static str, HighlightConfiguration>,
     key: &'static str,
@@ -2486,7 +2685,7 @@ mod tests {
     }
 
     #[test]
-    fn highlights_rust_go_and_typescript_without_falling_back() {
+    fn highlights_rust_go_typescript_and_markdown_without_falling_back() {
         let registry = HighlightRegistry::new().expect("highlight registry should initialize");
         let mut highlighter = SyntaxHighlighter::new(Some(&registry));
         let fallback = ui::diff_context_style();
@@ -2496,6 +2695,7 @@ mod tests {
             ("go", "func buildUser(id int) Foo { return NewUser(id) }"),
             ("typescript", "const value: Foo = await loadUser(id);"),
             ("tsx", "<Card title=\"demo\">{value}</Card>"),
+            ("markdown", "# Heading"),
         ] {
             let spans = highlighter.highlight_line(Some(filetype), line, fallback);
             assert!(
