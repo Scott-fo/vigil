@@ -57,3 +57,7 @@ strip = true
 [[bench]]
 name = "diff_performance"
 harness = false
+
+[[bench]]
+name = "git_rs_new_file_performance"
+harness = false
