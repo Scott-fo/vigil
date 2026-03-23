@@ -85,7 +85,8 @@ pub struct DiffView {
     hunks: Vec<DiffHunkBlock>,
     gaps: Vec<DiffHunkGap>,
     gap_expansions: HashMap<usize, DiffGapExpansion>,
-    file_lines: Option<Vec<String>>,
+    old_file_lines: Option<Vec<String>>,
+    new_file_lines: Option<Vec<String>>,
     display_cache: DiffDisplayCache,
 }
 
@@ -97,7 +98,8 @@ impl DiffView {
             hunks: Vec::new(),
             gaps: Vec::new(),
             gap_expansions: HashMap::new(),
-            file_lines: None,
+            old_file_lines: None,
+            new_file_lines: None,
             display_cache: DiffDisplayCache::default(),
         }
     }
@@ -374,7 +376,7 @@ impl DiffView {
         let remaining_after_previous = gap.new_count.saturating_sub(context_after_count);
         let context_before_count = expansion.from_next.min(remaining_after_previous);
 
-        if let Some(file_lines) = self.file_lines.as_ref() {
+        if let Some(file_lines) = self.new_file_lines.as_ref() {
             let start = gap.new_start.saturating_sub(1);
             for offset in 0..context_after_count {
                 let line_number = gap.new_start + offset;
@@ -419,7 +421,7 @@ impl DiffView {
             row_refs.push(DisplayRowRefs::default());
         }
 
-        if let Some(file_lines) = self.file_lines.as_ref() {
+        if let Some(file_lines) = self.new_file_lines.as_ref() {
             let start = gap
                 .new_start
                 .saturating_sub(1)
@@ -480,6 +482,48 @@ impl DiffView {
             apply_completed_highlighting(&mut self.rows, result);
         }
         if let Some(result) = right_result {
+            apply_completed_highlighting(&mut self.rows, result);
+        }
+        self.invalidate_display_cache();
+    }
+
+    pub fn apply_exact_syntax_highlighting(
+        &mut self,
+        filetype: Option<&'static str>,
+        registry: &HighlightRegistry,
+    ) {
+        let Some(filetype) = filetype else {
+            return;
+        };
+
+        let left = self.old_file_lines.as_ref().and_then(|lines| {
+            prepare_exact_side_highlighting(
+                &self.rows,
+                HighlightSide::Left,
+                lines,
+                filetype,
+                registry,
+            )
+        });
+        let right = self.new_file_lines.as_ref().and_then(|lines| {
+            prepare_exact_side_highlighting(
+                &self.rows,
+                HighlightSide::Right,
+                lines,
+                filetype,
+                registry,
+            )
+        });
+
+        if left.is_none() && right.is_none() {
+            self.apply_syntax_highlighting(Some(filetype), registry);
+            return;
+        }
+
+        if let Some(result) = left {
+            apply_completed_highlighting(&mut self.rows, result);
+        }
+        if let Some(result) = right {
             apply_completed_highlighting(&mut self.rows, result);
         }
         self.invalidate_display_cache();
@@ -668,6 +712,47 @@ fn prepare_side_highlighting(
     prepare_side_highlighting_in_row_window(rows, side, 0, rows.len().saturating_sub(1))
 }
 
+fn prepare_exact_side_highlighting(
+    rows: &[DiffRow],
+    side: HighlightSide,
+    file_lines: &[String],
+    filetype: &'static str,
+    registry: &HighlightRegistry,
+) -> Option<CompletedHighlightSide> {
+    if file_lines.is_empty() {
+        return None;
+    }
+
+    let source = join_source_lines(file_lines);
+    let highlighted_lines = highlight_source_lines(registry, filetype, &source)?;
+    let mut row_indices = Vec::new();
+    let mut exact_row_lines = Vec::new();
+
+    for (row_index, row) in rows.iter().enumerate() {
+        if !side.includes(row.kind) {
+            continue;
+        }
+
+        let line_number = match side {
+            HighlightSide::Left => row.old_line,
+            HighlightSide::Right => row.new_line,
+        }?;
+        let line_index = line_number.saturating_sub(1);
+        let tokens = highlighted_lines
+            .get(line_index)
+            .cloned()
+            .unwrap_or_default();
+        row_indices.push(row_index);
+        exact_row_lines.push(tokens);
+    }
+
+    Some(CompletedHighlightSide {
+        side,
+        row_indices,
+        highlighted_lines: exact_row_lines,
+    })
+}
+
 fn prepare_side_highlighting_in_row_window(
     rows: &[DiffRow],
     side: HighlightSide,
@@ -715,6 +800,18 @@ fn prepare_side_highlighting_in_row_window(
         row_indices,
         source,
     })
+}
+
+fn join_source_lines(lines: &[String]) -> String {
+    let source_len = lines.iter().map(|line| line.len()).sum::<usize>();
+    let mut source = String::with_capacity(source_len + lines.len().saturating_sub(1));
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 {
+            source.push('\n');
+        }
+        source.push_str(line);
+    }
+    source
 }
 
 fn apply_completed_highlighting(rows: &mut [DiffRow], completed: CompletedHighlightSide) {
@@ -1373,7 +1470,7 @@ pub async fn load_diff_view_for_working_tree(
     file: &FileEntry,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_diff_preview_for_working_tree(repo_root, file).await?;
+    let preview = load_diff_preview_for_working_tree(repo_root, file, true).await?;
     build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
@@ -1383,7 +1480,7 @@ pub async fn load_diff_view_for_commit_compare(
     selection: &CommitCompareSelection,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_diff_preview_for_commit_compare(repo_root, file, selection).await?;
+    let preview = load_diff_preview_for_commit_compare(repo_root, file, selection, true).await?;
     build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
@@ -1393,31 +1490,34 @@ pub async fn load_diff_view_for_branch_compare(
     selection: &BranchCompareSelection,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_diff_preview_for_branch_compare(repo_root, file, selection).await?;
+    let preview = load_diff_preview_for_branch_compare(repo_root, file, selection, true).await?;
     build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
 pub async fn load_diff_preview_for_working_tree(
     repo_root: &Path,
     file: &FileEntry,
+    include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
-    load_file_preview(repo_root, file).await
+    load_file_preview(repo_root, file, include_exact_context).await
 }
 
 pub async fn load_diff_preview_for_commit_compare(
     repo_root: &Path,
     file: &FileEntry,
     selection: &CommitCompareSelection,
+    include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
-    load_commit_preview(repo_root, file, selection).await
+    load_commit_preview(repo_root, file, selection, include_exact_context).await
 }
 
 pub async fn load_diff_preview_for_branch_compare(
     repo_root: &Path,
     file: &FileEntry,
     selection: &BranchCompareSelection,
+    include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
-    load_branch_preview(repo_root, file, selection).await
+    load_branch_preview(repo_root, file, selection, include_exact_context).await
 }
 
 pub fn build_diff_view_from_preview_data(
@@ -1440,7 +1540,8 @@ pub fn build_diff_view_from_preview_data(
         hunks,
         gaps,
         gap_expansions: HashMap::new(),
-        file_lines: preview.context_lines.clone(),
+        old_file_lines: preview.old_file_lines.clone(),
+        new_file_lines: preview.new_file_lines.clone(),
         display_cache: DiffDisplayCache::default(),
     };
 
@@ -1452,6 +1553,15 @@ pub fn build_diff_view_from_preview_data(
 }
 
 pub fn build_diff_view_from_diff_text(diff: &str, filetype: Option<&'static str>) -> DiffView {
+    build_diff_view_from_diff_text_with_context(diff, filetype, None, None)
+}
+
+pub fn build_diff_view_from_diff_text_with_context(
+    diff: &str,
+    filetype: Option<&'static str>,
+    old_file_lines: Option<Vec<String>>,
+    new_file_lines: Option<Vec<String>>,
+) -> DiffView {
     if diff.trim().is_empty() {
         return DiffView::empty("No textual diff available.");
     }
@@ -1463,7 +1573,8 @@ pub fn build_diff_view_from_diff_text(diff: &str, filetype: Option<&'static str>
         hunks,
         gaps,
         gap_expansions: HashMap::new(),
-        file_lines: None,
+        old_file_lines,
+        new_file_lines,
         display_cache: DiffDisplayCache::default(),
     }
 }
@@ -1472,17 +1583,19 @@ pub fn build_diff_view_from_diff_text(diff: &str, filetype: Option<&'static str>
 pub struct DiffPreviewData {
     diff: String,
     note: Option<String>,
-    context_lines: Option<Vec<String>>,
+    old_file_lines: Option<Vec<String>>,
+    new_file_lines: Option<Vec<String>>,
 }
 
 async fn load_file_preview(
     repo_root: &Path,
     file: &FileEntry,
+    include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
     if file.status == "??" {
-        load_untracked_preview(repo_root, &file.path).await
+        load_untracked_preview(repo_root, &file.path, include_exact_context).await
     } else {
-        load_tracked_preview(repo_root, &file.path).await
+        load_tracked_preview(repo_root, &file.path, include_exact_context).await
     }
 }
 
@@ -1490,6 +1603,7 @@ async fn load_commit_preview(
     repo_root: &Path,
     file: &FileEntry,
     selection: &CommitCompareSelection,
+    include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
     let output = git_output(
         repo_root,
@@ -1504,7 +1618,12 @@ async fn load_commit_preview(
         ],
     )
     .await?;
-    let context_lines = if diff_needs_context_lines(&output) {
+    let old_file_lines = if include_exact_context {
+        load_revision_file_lines(repo_root, selection.base_ref.as_str(), file.path.as_str()).await?
+    } else {
+        None
+    };
+    let new_file_lines = if include_exact_context || diff_needs_context_lines(&output) {
         load_revision_file_lines(
             repo_root,
             selection.commit_hash.as_str(),
@@ -1518,7 +1637,8 @@ async fn load_commit_preview(
     Ok(DiffPreviewData {
         diff: output,
         note: None,
-        context_lines,
+        old_file_lines,
+        new_file_lines,
     })
 }
 
@@ -1526,6 +1646,7 @@ async fn load_branch_preview(
     repo_root: &Path,
     file: &FileEntry,
     selection: &BranchCompareSelection,
+    include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
     let output = git_output(
         repo_root,
@@ -1539,9 +1660,19 @@ async fn load_branch_preview(
         ],
     )
     .await?;
-    let context_lines = if diff_needs_context_lines(&output) {
+    let old_file_lines = if include_exact_context {
         load_revision_file_lines(repo_root, selection.source_ref.as_str(), file.path.as_str())
             .await?
+    } else {
+        None
+    };
+    let new_file_lines = if include_exact_context || diff_needs_context_lines(&output) {
+        load_revision_file_lines(
+            repo_root,
+            selection.destination_ref.as_str(),
+            file.path.as_str(),
+        )
+        .await?
     } else {
         None
     };
@@ -1549,13 +1680,15 @@ async fn load_branch_preview(
     Ok(DiffPreviewData {
         diff: output,
         note: None,
-        context_lines,
+        old_file_lines,
+        new_file_lines,
     })
 }
 
 async fn load_tracked_preview(
     repo_root: &Path,
     file_path: &str,
+    include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
     let output = git_output(
         repo_root,
@@ -1569,7 +1702,12 @@ async fn load_tracked_preview(
         ],
     )
     .await?;
-    let context_lines = if diff_needs_context_lines(&output) {
+    let old_file_lines = if include_exact_context {
+        load_revision_file_lines(repo_root, "HEAD", file_path).await?
+    } else {
+        None
+    };
+    let new_file_lines = if include_exact_context || diff_needs_context_lines(&output) {
         load_working_tree_file_lines(repo_root, file_path).await?
     } else {
         None
@@ -1577,13 +1715,15 @@ async fn load_tracked_preview(
     Ok(DiffPreviewData {
         diff: output,
         note: None,
-        context_lines,
+        old_file_lines,
+        new_file_lines,
     })
 }
 
 async fn load_untracked_preview(
     repo_root: &Path,
     file_path: &str,
+    include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
     let full_path = repo_root.join(file_path);
     match fs::metadata(&full_path).await {
@@ -1591,7 +1731,8 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Directory or symlinked directory; no preview available.".to_string()),
-                context_lines: None,
+                old_file_lines: None,
+                new_file_lines: None,
             });
         }
         Ok(_) => {}
@@ -1599,7 +1740,8 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Unable to read untracked file content.".to_string()),
-                context_lines: None,
+                old_file_lines: None,
+                new_file_lines: None,
             });
         }
     }
@@ -1610,7 +1752,8 @@ async fn load_untracked_preview(
             return Ok(DiffPreviewData {
                 diff: String::new(),
                 note: Some("Unable to read untracked file content.".to_string()),
-                context_lines: None,
+                old_file_lines: None,
+                new_file_lines: None,
             });
         }
     };
@@ -1619,13 +1762,14 @@ async fn load_untracked_preview(
         return Ok(DiffPreviewData {
             diff: String::new(),
             note: Some("Binary or non-text file; no preview available.".to_string()),
-            context_lines: None,
+            old_file_lines: None,
+            new_file_lines: None,
         });
     }
 
     let content = String::from_utf8_lossy(&bytes);
     let diff = create_untracked_file_diff(file_path, &content);
-    let context_lines = if diff_needs_context_lines(&diff) {
+    let new_file_lines = if include_exact_context || diff_needs_context_lines(&diff) {
         Some(split_lines_for_context(&content))
     } else {
         None
@@ -1634,13 +1778,15 @@ async fn load_untracked_preview(
         DiffPreviewData {
             diff,
             note: Some("Untracked empty file; no textual hunk to preview.".to_string()),
-            context_lines: Some(split_lines_for_context(&content)),
+            old_file_lines: None,
+            new_file_lines: Some(split_lines_for_context(&content)),
         }
     } else {
         DiffPreviewData {
             diff,
             note: None,
-            context_lines,
+            old_file_lines: None,
+            new_file_lines,
         }
     })
 }

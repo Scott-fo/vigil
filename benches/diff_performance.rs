@@ -3,16 +3,25 @@ use std::{hint::black_box, sync::LazyLock};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use vigil::{
     app::DiffViewMode,
-    git::{HighlightRegistry, build_diff_view_from_diff_text},
+    git::{
+        HighlightRegistry, build_diff_view_from_diff_text,
+        build_diff_view_from_diff_text_with_context,
+    },
 };
 
 const FILETYPE: Option<&'static str> = Some("tsx");
 const SPLIT_RENDER_WIDTH: usize = 160;
 const VIEWPORT_HEIGHT: usize = 40;
 
-static LARGE_TSX_DIFF: LazyLock<String> = LazyLock::new(build_large_tsx_diff);
+struct LargeTsxFixture {
+    diff: String,
+    old_file_lines: Vec<String>,
+    new_file_lines: Vec<String>,
+}
 
-fn build_large_tsx_diff() -> String {
+static LARGE_TSX_FIXTURE: LazyLock<LargeTsxFixture> = LazyLock::new(build_large_tsx_fixture);
+
+fn build_large_tsx_fixture() -> LargeTsxFixture {
     const HUNK_COUNT: usize = 12;
     const SECTIONS_PER_HUNK: usize = 24;
     const GAP_SIZE: usize = 32;
@@ -26,8 +35,23 @@ index 1111111..2222222 100644\n\
 
     let mut old_start = 1usize;
     let mut new_start = 1usize;
+    let mut old_file_lines = Vec::new();
+    let mut new_file_lines = Vec::new();
 
     for hunk_index in 0..HUNK_COUNT {
+        while old_file_lines.len() + 1 < old_start {
+            let line_number = old_file_lines.len() + 1;
+            old_file_lines.push(format!(
+                "const preservedOldLine{line_number} = `stable-old-{line_number}`;"
+            ));
+        }
+        while new_file_lines.len() + 1 < new_start {
+            let line_number = new_file_lines.len() + 1;
+            new_file_lines.push(format!(
+                "const preservedNewLine{line_number} = `stable-new-{line_number}`;"
+            ));
+        }
+
         let mut hunk_lines = Vec::new();
         let mut old_count = 0usize;
         let mut new_count = 0usize;
@@ -47,6 +71,8 @@ index 1111111..2222222 100644\n\
                 ),
             ] {
                 hunk_lines.push(format!(" {line}"));
+                old_file_lines.push(line.clone());
+                new_file_lines.push(line);
                 old_count += 1;
                 new_count += 1;
             }
@@ -63,6 +89,7 @@ index 1111111..2222222 100644\n\
                 ),
             ] {
                 hunk_lines.push(format!("-{line}"));
+                old_file_lines.push(line);
                 old_count += 1;
             }
 
@@ -81,6 +108,7 @@ index 1111111..2222222 100644\n\
                 ),
             ] {
                 hunk_lines.push(format!("+{line}"));
+                new_file_lines.push(line);
                 new_count += 1;
             }
 
@@ -96,6 +124,8 @@ index 1111111..2222222 100644\n\
                 ),
             ] {
                 hunk_lines.push(format!(" {line}"));
+                old_file_lines.push(line.clone());
+                new_file_lines.push(line);
                 old_count += 1;
                 new_count += 1;
             }
@@ -113,13 +143,24 @@ index 1111111..2222222 100644\n\
         new_start += new_count + GAP_SIZE;
     }
 
-    diff
+    LargeTsxFixture {
+        diff,
+        old_file_lines,
+        new_file_lines,
+    }
 }
 
 fn bench_diff_pipeline(c: &mut Criterion) {
-    let diff = &*LARGE_TSX_DIFF;
+    let fixture = &*LARGE_TSX_FIXTURE;
+    let diff = &fixture.diff;
     let registry = HighlightRegistry::new().expect("highlight registry should initialize");
     let plain_view = build_diff_view_from_diff_text(diff, FILETYPE);
+    let exact_context_view = build_diff_view_from_diff_text_with_context(
+        diff,
+        FILETYPE,
+        Some(fixture.old_file_lines.clone()),
+        Some(fixture.new_file_lines.clone()),
+    );
     let mut highlighted_view = plain_view.clone();
     highlighted_view.apply_syntax_highlighting(FILETYPE, &registry);
     let display_line_count = plain_view.clone().display_line_count(DiffViewMode::Split);
@@ -206,10 +247,35 @@ fn bench_diff_pipeline(c: &mut Criterion) {
         );
     });
 
+    group.bench_function("highlight_exact_full_file", |b| {
+        b.iter_batched(
+            || exact_context_view.clone(),
+            |mut view| {
+                view.apply_exact_syntax_highlighting(FILETYPE, &registry);
+                black_box(view.display_line_count(DiffViewMode::Split));
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
     group.bench_function("full_pipeline_split", |b| {
         b.iter(|| {
             let mut view = build_diff_view_from_diff_text(black_box(diff), FILETYPE);
             view.apply_syntax_highlighting(FILETYPE, &registry);
+            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            black_box(lines.len());
+        });
+    });
+
+    group.bench_function("exact_full_pipeline_split", |b| {
+        b.iter(|| {
+            let mut view = build_diff_view_from_diff_text_with_context(
+                black_box(diff),
+                FILETYPE,
+                Some(fixture.old_file_lines.clone()),
+                Some(fixture.new_file_lines.clone()),
+            );
+            view.apply_exact_syntax_highlighting(FILETYPE, &registry);
             let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
             black_box(lines.len());
         });

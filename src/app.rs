@@ -1155,15 +1155,19 @@ impl App {
             for (cache_key, file) in prefetch_files {
                 let preview_result = match &review_mode {
                     ReviewMode::WorkingTree => {
-                        git::load_diff_preview_for_working_tree(&repo_root, &file).await
+                        git::load_diff_preview_for_working_tree(&repo_root, &file, false).await
                     }
                     ReviewMode::CommitCompare(selection) => {
-                        git::load_diff_preview_for_commit_compare(&repo_root, &file, selection)
-                            .await
+                        git::load_diff_preview_for_commit_compare(
+                            &repo_root, &file, selection, false,
+                        )
+                        .await
                     }
                     ReviewMode::BranchCompare(selection) => {
-                        git::load_diff_preview_for_branch_compare(&repo_root, &file, selection)
-                            .await
+                        git::load_diff_preview_for_branch_compare(
+                            &repo_root, &file, selection, false,
+                        )
+                        .await
                     }
                 };
 
@@ -1271,13 +1275,15 @@ impl App {
         self.diff_load_task = Some(task::spawn(async move {
             let preview_result = match &review_mode {
                 ReviewMode::WorkingTree => {
-                    git::load_diff_preview_for_working_tree(&repo_root, &file).await
+                    git::load_diff_preview_for_working_tree(&repo_root, &file, true).await
                 }
                 ReviewMode::CommitCompare(selection) => {
-                    git::load_diff_preview_for_commit_compare(&repo_root, &file, selection).await
+                    git::load_diff_preview_for_commit_compare(&repo_root, &file, selection, true)
+                        .await
                 }
                 ReviewMode::BranchCompare(selection) => {
-                    git::load_diff_preview_for_branch_compare(&repo_root, &file, selection).await
+                    git::load_diff_preview_for_branch_compare(&repo_root, &file, selection, true)
+                        .await
                 }
             };
 
@@ -1436,8 +1442,10 @@ impl App {
                         );
                     }
                     DiffHighlightJobKind::Full => {
-                        diff_view
-                            .apply_syntax_highlighting(Some(filetype), highlight_registry.as_ref());
+                        diff_view.apply_exact_syntax_highlighting(
+                            Some(filetype),
+                            highlight_registry.as_ref(),
+                        );
                     }
                 }
                 Ok::<_, String>(diff_view)
