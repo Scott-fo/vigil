@@ -61,3 +61,7 @@ harness = false
 [[bench]]
 name = "git_rs_new_file_performance"
 harness = false
+
+[[bench]]
+name = "app_highlight_path"
+harness = false
