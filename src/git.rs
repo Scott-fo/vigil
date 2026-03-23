@@ -1,4 +1,7 @@
 use std::{
+    cell::RefCell,
+    cmp::Reverse,
+    collections::BinaryHeap,
     collections::HashMap,
     collections::HashSet,
     path::{Path, PathBuf},
@@ -11,8 +14,9 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
+use streaming_iterator::StreamingIterator;
 use tokio::{fs, process::Command};
-use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+use tree_sitter::{Parser, Query, QueryCursor};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{app::DiffViewMode, ui};
@@ -484,8 +488,7 @@ impl PreparedHighlightSide {
         filetype: &'static str,
         registry: &HighlightRegistry,
     ) -> Option<CompletedHighlightSide> {
-        let mut highlighter = SyntaxHighlighter::new(Some(registry));
-        let highlighted_lines = highlighter.highlight_buffer_lines(filetype, &self.source)?;
+        let highlighted_lines = highlight_source_lines(registry, filetype, &self.source)?;
         if highlighted_lines.len() != self.row_indices.len() {
             return None;
         }
@@ -622,7 +625,8 @@ struct DiffRowSyntax {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SyntaxToken {
-    text: String,
+    start: usize,
+    end: usize,
     highlight_name: Option<&'static str>,
 }
 
@@ -686,6 +690,7 @@ static HIGHLIGHT_NAMES: &[&str] = &[
     "delimiter",
     "embedded",
     "exception",
+    "field",
     "function",
     "function.builtin",
     "function.call",
@@ -2252,7 +2257,11 @@ fn render_row_content(
                 .highlight_name
                 .map(|name| ui::syntax_style(name, fallback))
                 .unwrap_or(fallback);
-            Span::styled(token.text.clone(), style)
+            let content = text
+                .get(token.start..token.end)
+                .map(str::to_string)
+                .unwrap_or_default();
+            Span::styled(content, style)
         })
         .collect()
 }
@@ -2327,7 +2336,18 @@ fn base_style(kind: DiffLineKind) -> Style {
 }
 
 pub struct HighlightRegistry {
-    configs: HashMap<&'static str, HighlightConfiguration>,
+    configs: HashMap<&'static str, QueryHighlightConfig>,
+}
+
+struct QueryHighlightConfig {
+    language: tree_sitter::Language,
+    query: Query,
+    capture_highlight_names: Box<[Option<&'static str>]>,
+}
+
+struct CachedSyntaxRunner {
+    parser: Parser,
+    query_cursor: QueryCursor,
 }
 
 impl std::fmt::Debug for HighlightRegistry {
@@ -2614,54 +2634,60 @@ impl HighlightRegistry {
         Ok(Self { configs })
     }
 
-    fn config(&self, filetype: &'static str) -> Option<&HighlightConfiguration> {
+    fn config(&self, filetype: &'static str) -> Option<&QueryHighlightConfig> {
         self.configs.get(filetype)
     }
 }
 
-struct SyntaxHighlighter<'a> {
-    registry: Option<&'a HighlightRegistry>,
-    highlighter: Highlighter,
+thread_local! {
+    static SYNTAX_RUNNERS: RefCell<HashMap<&'static str, CachedSyntaxRunner>> =
+        RefCell::new(HashMap::new());
 }
 
-impl<'a> SyntaxHighlighter<'a> {
-    fn new(registry: Option<&'a HighlightRegistry>) -> Self {
-        Self {
-            registry,
-            highlighter: Highlighter::new(),
-        }
+fn highlight_source_lines(
+    registry: &HighlightRegistry,
+    filetype: &'static str,
+    source: &str,
+) -> Option<Vec<Vec<SyntaxToken>>> {
+    if source.is_empty() {
+        return Some(vec![Vec::new()]);
     }
 
-    fn highlight_buffer_lines(
-        &mut self,
-        filetype: &'static str,
-        source: &str,
-    ) -> Option<Vec<Vec<SyntaxToken>>> {
-        if source.is_empty() {
-            return Some(vec![Vec::new()]);
-        }
-
-        if filetype == "markdown" {
-            return Some(
-                source
-                    .split('\n')
-                    .map(highlight_markdown_line_tokens)
-                    .collect(),
-            );
-        }
-
-        let registry = self.registry?;
-        let config = registry.config(filetype)?;
-        let events = self
-            .highlighter
-            .highlight(config, source.as_bytes(), None, |_| None)
-            .ok()?;
-        highlight_events_to_lines(source, events)
+    if filetype == "markdown" {
+        return Some(
+            source
+                .split('\n')
+                .map(highlight_markdown_line_tokens)
+                .collect(),
+        );
     }
+
+    let config = registry.config(filetype)?;
+    SYNTAX_RUNNERS.with(|runners| {
+        let mut runners = runners.borrow_mut();
+        let runner = match runners.entry(filetype) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let mut parser = Parser::new();
+                parser.set_language(&config.language).ok()?;
+                entry.insert(CachedSyntaxRunner {
+                    parser,
+                    query_cursor: QueryCursor::new(),
+                })
+            }
+        };
+        let tree = runner.parser.parse(source, None)?;
+        query_captures_to_lines(
+            &mut runner.query_cursor,
+            &config.query,
+            &config.capture_highlight_names,
+            tree.root_node(),
+            source,
+        )
+    })
 }
 
 pub fn prewarm_highlight_registry(registry: &HighlightRegistry) {
-    let mut highlighter = SyntaxHighlighter::new(Some(registry));
     for (filetype, sample) in [
         ("rust", "fn build_user(id: usize) -> User { User::new(id) }"),
         ("go", "func BuildUser(id int) User { return NewUser(id) }"),
@@ -2669,82 +2695,218 @@ pub fn prewarm_highlight_registry(registry: &HighlightRegistry) {
         ("tsx", "<Card title=\"demo\">{value}</Card>"),
         ("markdown", "# Prefetch"),
     ] {
-        let _ = highlighter.highlight_buffer_lines(filetype, sample);
+        let _ = highlight_source_lines(registry, filetype, sample);
     }
 }
 
 fn push_syntax_token(
     tokens: &mut Vec<SyntaxToken>,
-    text: &str,
+    start: usize,
+    end: usize,
     highlight_name: Option<&'static str>,
 ) {
-    if text.is_empty() {
+    if start >= end {
         return;
     }
 
     if let Some(last) = tokens.last_mut()
         && last.highlight_name == highlight_name
+        && last.end == start
     {
-        last.text.push_str(text);
+        last.end = end;
         return;
     }
 
     tokens.push(SyntaxToken {
-        text: text.to_string(),
+        start,
+        end,
         highlight_name,
     });
 }
 
-fn highlight_events_to_lines(
+#[derive(Clone, Copy)]
+struct QueryHighlightRange {
+    start: usize,
+    end: usize,
+    highlight_name: Option<&'static str>,
+    specificity: u8,
+}
+
+fn query_captures_to_lines(
+    query_cursor: &mut QueryCursor,
+    query: &Query,
+    capture_highlight_names: &[Option<&'static str>],
+    root_node: tree_sitter::Node<'_>,
     source: &str,
-    events: impl Iterator<Item = Result<HighlightEvent, tree_sitter_highlight::Error>>,
 ) -> Option<Vec<Vec<SyntaxToken>>> {
+    let mut ranges = Vec::new();
+    let mut captures = query_cursor.captures(query, root_node, source.as_bytes());
+    while {
+        captures.advance();
+        captures.get().is_some()
+    } {
+        let Some((query_match, capture_index)) = captures.get() else {
+            continue;
+        };
+        let Some(query_capture) = query_match.captures.get(*capture_index) else {
+            continue;
+        };
+        let start = query_capture.node.start_byte();
+        let end = query_capture.node.end_byte();
+        if start >= end || end > source.len() {
+            continue;
+        }
+        let highlight_name = capture_highlight_names
+            .get(query_capture.index as usize)
+            .copied()
+            .flatten();
+        let specificity = highlight_name
+            .map(|name| name.split('.').count() as u8)
+            .unwrap_or(0);
+        ranges.push(QueryHighlightRange {
+            start,
+            end,
+            highlight_name,
+            specificity,
+        });
+    }
+
+    if ranges.is_empty() {
+        return Some(
+            source
+                .split('\n')
+                .map(|line| {
+                    vec![SyntaxToken {
+                        start: 0,
+                        end: line.len(),
+                        highlight_name: None,
+                    }]
+                })
+                .collect(),
+        );
+    }
+
     let mut lines = Vec::new();
     let mut current_line = Vec::new();
-    let mut highlight_stack = vec![None];
+    let mut active_ranges = Vec::new();
+    let mut active_endings = BinaryHeap::new();
+    let mut current_offset = 0usize;
+    let mut current_line_start = 0usize;
+    let mut next_range_index = 0usize;
 
-    for event in events {
-        match event {
-            Ok(HighlightEvent::HighlightStart(highlight)) => {
-                highlight_stack.push(HIGHLIGHT_NAMES.get(highlight.0).copied());
-            }
-            Ok(HighlightEvent::HighlightEnd) => {
-                if highlight_stack.len() > 1 {
-                    let _ = highlight_stack.pop();
-                }
-            }
-            Ok(HighlightEvent::Source { start, end }) => {
-                if start >= end || end > source.len() {
-                    continue;
-                }
+    while next_range_index < ranges.len() || !active_endings.is_empty() {
+        let next_start = ranges
+            .get(next_range_index)
+            .map(|range| range.start)
+            .unwrap_or(usize::MAX);
+        let next_end = active_endings
+            .peek()
+            .map(|ending: &Reverse<(usize, usize)>| ending.0.0)
+            .unwrap_or(usize::MAX);
+        let next_offset = next_start.min(next_end);
 
-                push_highlighted_source(
-                    &mut lines,
-                    &mut current_line,
-                    &source[start..end],
-                    *highlight_stack.last().unwrap_or(&None),
-                );
-            }
-            Err(_) => return None,
+        if current_offset < next_offset {
+            let highlight_name = select_active_highlight_name(&active_ranges, &ranges);
+            push_highlighted_source_segment(
+                &mut lines,
+                &mut current_line,
+                source,
+                current_offset,
+                next_offset,
+                &mut current_line_start,
+                highlight_name,
+            );
         }
+
+        if next_end <= next_start {
+            while let Some(Reverse((end, range_index))) = active_endings.peek().copied() {
+                if end != next_end {
+                    break;
+                }
+                let _ = active_endings.pop();
+                if let Some(position) = active_ranges
+                    .iter()
+                    .position(|active_range_index| *active_range_index == range_index)
+                {
+                    active_ranges.swap_remove(position);
+                }
+            }
+            current_offset = next_end;
+            continue;
+        }
+
+        while let Some(range) = ranges.get(next_range_index) {
+            if range.start != next_start {
+                break;
+            }
+            active_ranges.push(next_range_index);
+            active_endings.push(Reverse((range.end, next_range_index)));
+            next_range_index += 1;
+        }
+        current_offset = next_start;
+    }
+
+    if current_offset < source.len() {
+        let highlight_name = select_active_highlight_name(&active_ranges, &ranges);
+        push_highlighted_source_segment(
+            &mut lines,
+            &mut current_line,
+            source,
+            current_offset,
+            source.len(),
+            &mut current_line_start,
+            highlight_name,
+        );
     }
 
     lines.push(current_line);
     Some(lines)
 }
 
-fn push_highlighted_source(
+fn select_active_highlight_name(
+    active_ranges: &[usize],
+    ranges: &[QueryHighlightRange],
+) -> Option<&'static str> {
+    active_ranges
+        .iter()
+        .copied()
+        .max_by_key(|range_index| {
+            let range = ranges[*range_index];
+            (range.specificity, *range_index)
+        })
+        .and_then(|range_index| ranges[range_index].highlight_name)
+}
+
+fn push_highlighted_source_segment(
     lines: &mut Vec<Vec<SyntaxToken>>,
     current_line: &mut Vec<SyntaxToken>,
-    text: &str,
+    source: &str,
+    mut start: usize,
+    end: usize,
+    current_line_start: &mut usize,
     highlight_name: Option<&'static str>,
 ) {
-    for segment in text.split_inclusive('\n') {
-        let segment_text = segment.strip_suffix('\n').unwrap_or(segment);
-        push_syntax_token(current_line, segment_text, highlight_name);
-
-        if segment.ends_with('\n') {
+    while start < end {
+        let segment = &source[start..end];
+        if let Some(newline_offset) = segment.find('\n') {
+            let line_end = start + newline_offset;
+            push_syntax_token(
+                current_line,
+                start.saturating_sub(*current_line_start),
+                line_end.saturating_sub(*current_line_start),
+                highlight_name,
+            );
             lines.push(std::mem::take(current_line));
+            start = line_end + 1;
+            *current_line_start = start;
+        } else {
+            push_syntax_token(
+                current_line,
+                start.saturating_sub(*current_line_start),
+                end.saturating_sub(*current_line_start),
+                highlight_name,
+            );
+            break;
         }
     }
 }
@@ -2760,7 +2922,7 @@ fn highlight_markdown_inline_tokens(text: &str) -> Vec<SyntaxToken> {
             && let Some(end) = rest.find('`')
         {
             let code_end = index + 1 + end + 1;
-            push_syntax_token(&mut tokens, &text[index..code_end], Some("markup.raw"));
+            push_syntax_token(&mut tokens, index, code_end, Some("markup.raw"));
             index = code_end;
             continue;
         }
@@ -2772,19 +2934,16 @@ fn highlight_markdown_inline_tokens(text: &str) -> Vec<SyntaxToken> {
             let label_text_end = index + label_end + 1;
             let url_start = index + label_end + 2;
             let url_end = url_start + url_end;
-            push_syntax_token(&mut tokens, "[", None);
+            push_syntax_token(&mut tokens, index, index + 1, None);
             push_syntax_token(
                 &mut tokens,
-                &text[index + 1..label_text_end],
+                index + 1,
+                label_text_end,
                 Some("markup.link.label"),
             );
-            push_syntax_token(&mut tokens, "](", None);
-            push_syntax_token(
-                &mut tokens,
-                &text[url_start..url_end],
-                Some("markup.link.url"),
-            );
-            push_syntax_token(&mut tokens, ")", None);
+            push_syntax_token(&mut tokens, label_text_end, label_text_end + 2, None);
+            push_syntax_token(&mut tokens, url_start, url_end, Some("markup.link.url"));
+            push_syntax_token(&mut tokens, url_end, url_end + 1, None);
             index = url_end + 1;
             continue;
         }
@@ -2798,7 +2957,7 @@ fn highlight_markdown_inline_tokens(text: &str) -> Vec<SyntaxToken> {
         if next_break == 0 {
             next_break = remainder.chars().next().map(char::len_utf8).unwrap_or(1);
         }
-        push_syntax_token(&mut tokens, &remainder[..next_break], None);
+        push_syntax_token(&mut tokens, index, index + next_break, None);
         index += next_break;
     }
 
@@ -2826,8 +2985,8 @@ fn markdown_list_prefix_len(text: &str) -> Option<usize> {
 fn highlight_markdown_line_tokens(line: &str) -> Vec<SyntaxToken> {
     let mut tokens = Vec::new();
     let indent_len = line.len() - line.trim_start().len();
-    let (indent, trimmed) = line.split_at(indent_len);
-    push_syntax_token(&mut tokens, indent, None);
+    let (_, trimmed) = line.split_at(indent_len);
+    push_syntax_token(&mut tokens, 0, indent_len, None);
 
     if trimmed.is_empty() {
         return tokens;
@@ -2835,24 +2994,42 @@ fn highlight_markdown_line_tokens(line: &str) -> Vec<SyntaxToken> {
 
     let bare = trimmed.trim();
     if bare.len() >= 3 && bare.chars().all(|ch| matches!(ch, '-' | '*' | '_')) {
-        push_syntax_token(&mut tokens, trimmed, Some("operator"));
+        push_syntax_token(&mut tokens, indent_len, line.len(), Some("operator"));
         return tokens;
     }
 
     for fence in ["```", "~~~"] {
         if let Some(rest) = trimmed.strip_prefix(fence) {
-            push_syntax_token(&mut tokens, fence, Some("markup.raw"));
+            push_syntax_token(
+                &mut tokens,
+                indent_len,
+                indent_len + fence.len(),
+                Some("markup.raw"),
+            );
             let ws_len = rest.len() - rest.trim_start().len();
-            let (ws, info) = rest.split_at(ws_len);
-            push_syntax_token(&mut tokens, ws, None);
-            push_syntax_token(&mut tokens, info, Some("label"));
+            let info_start = indent_len + fence.len() + ws_len;
+            push_syntax_token(&mut tokens, indent_len + fence.len(), info_start, None);
+            push_syntax_token(&mut tokens, info_start, line.len(), Some("label"));
             return tokens;
         }
     }
 
     if let Some(rest) = trimmed.strip_prefix("> ") {
-        push_syntax_token(&mut tokens, "> ", Some("markup.quote"));
-        tokens.extend(highlight_markdown_inline_tokens(rest));
+        push_syntax_token(
+            &mut tokens,
+            indent_len,
+            indent_len + 2,
+            Some("markup.quote"),
+        );
+        tokens.extend(
+            highlight_markdown_inline_tokens(rest)
+                .into_iter()
+                .map(|token| SyntaxToken {
+                    start: token.start + indent_len + 2,
+                    end: token.end + indent_len + 2,
+                    highlight_name: token.highlight_name,
+                }),
+        );
         return tokens;
     }
 
@@ -2860,57 +3037,129 @@ fn highlight_markdown_line_tokens(line: &str) -> Vec<SyntaxToken> {
     if (1..=6).contains(&heading_marker_len) && trimmed[heading_marker_len..].starts_with(' ') {
         push_syntax_token(
             &mut tokens,
-            &trimmed[..heading_marker_len],
+            indent_len,
+            indent_len + heading_marker_len,
             Some("markup.heading"),
         );
-        push_syntax_token(&mut tokens, " ", None);
         push_syntax_token(
             &mut tokens,
-            &trimmed[heading_marker_len + 1..],
+            indent_len + heading_marker_len,
+            indent_len + heading_marker_len + 1,
+            None,
+        );
+        push_syntax_token(
+            &mut tokens,
+            indent_len + heading_marker_len + 1,
+            line.len(),
             Some("markup.heading"),
         );
         return tokens;
     }
 
     if let Some(prefix_len) = markdown_list_prefix_len(trimmed) {
-        push_syntax_token(&mut tokens, &trimmed[..prefix_len], Some("markup.list"));
+        push_syntax_token(
+            &mut tokens,
+            indent_len,
+            indent_len + prefix_len,
+            Some("markup.list"),
+        );
         let rest = &trimmed[prefix_len..];
+        let rest_start = indent_len + prefix_len;
         if let Some(task_rest) = rest.strip_prefix("[ ] ") {
-            push_syntax_token(&mut tokens, "[ ] ", Some("markup.list.unchecked"));
-            tokens.extend(highlight_markdown_inline_tokens(task_rest));
+            push_syntax_token(
+                &mut tokens,
+                rest_start,
+                rest_start + 4,
+                Some("markup.list.unchecked"),
+            );
+            tokens.extend(
+                highlight_markdown_inline_tokens(task_rest)
+                    .into_iter()
+                    .map(|token| SyntaxToken {
+                        start: token.start + rest_start + 4,
+                        end: token.end + rest_start + 4,
+                        highlight_name: token.highlight_name,
+                    }),
+            );
             return tokens;
         }
         if let Some(task_rest) = rest
             .strip_prefix("[x] ")
             .or_else(|| rest.strip_prefix("[X] "))
         {
-            push_syntax_token(&mut tokens, &rest[..4], Some("markup.list.checked"));
-            tokens.extend(highlight_markdown_inline_tokens(task_rest));
+            push_syntax_token(
+                &mut tokens,
+                rest_start,
+                rest_start + 4,
+                Some("markup.list.checked"),
+            );
+            tokens.extend(
+                highlight_markdown_inline_tokens(task_rest)
+                    .into_iter()
+                    .map(|token| SyntaxToken {
+                        start: token.start + rest_start + 4,
+                        end: token.end + rest_start + 4,
+                        highlight_name: token.highlight_name,
+                    }),
+            );
             return tokens;
         }
-        tokens.extend(highlight_markdown_inline_tokens(rest));
+        tokens.extend(
+            highlight_markdown_inline_tokens(rest)
+                .into_iter()
+                .map(|token| SyntaxToken {
+                    start: token.start + rest_start,
+                    end: token.end + rest_start,
+                    highlight_name: token.highlight_name,
+                }),
+        );
         return tokens;
     }
 
-    tokens.extend(highlight_markdown_inline_tokens(trimmed));
+    tokens.extend(
+        highlight_markdown_inline_tokens(trimmed)
+            .into_iter()
+            .map(|token| SyntaxToken {
+                start: token.start + indent_len,
+                end: token.end + indent_len,
+                highlight_name: token.highlight_name,
+            }),
+    );
     tokens
 }
 
 fn register_highlight_config(
-    configs: &mut HashMap<&'static str, HighlightConfiguration>,
+    configs: &mut HashMap<&'static str, QueryHighlightConfig>,
     key: &'static str,
     language: tree_sitter::Language,
-    language_name: &'static str,
+    _language_name: &'static str,
     highlights: &str,
-    injections: &str,
-    locals: &str,
+    _injections: &str,
+    _locals: &str,
 ) -> color_eyre::Result<()> {
-    let mut config =
-        HighlightConfiguration::new(language, language_name, highlights, injections, locals)
-            .wrap_err_with(|| format!("failed to build {key} highlight config"))?;
-    config.configure(HIGHLIGHT_NAMES);
-    configs.insert(key, config);
+    let query = Query::new(&language, highlights)
+        .wrap_err_with(|| format!("failed to build {key} query config"))?;
+    let capture_highlight_names = query
+        .capture_names()
+        .iter()
+        .map(|name| resolve_highlight_name(name))
+        .collect();
+    configs.insert(
+        key,
+        QueryHighlightConfig {
+            language,
+            query,
+            capture_highlight_names,
+        },
+    );
     Ok(())
+}
+
+fn resolve_highlight_name(name: &str) -> Option<&'static str> {
+    HIGHLIGHT_NAMES
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == name)
 }
 
 #[cfg(test)]
@@ -2925,7 +3174,6 @@ mod tests {
     #[test]
     fn highlights_rust_go_typescript_and_markdown_without_falling_back() {
         let registry = HighlightRegistry::new().expect("highlight registry should initialize");
-        let mut highlighter = SyntaxHighlighter::new(Some(&registry));
 
         for (filetype, line) in [
             ("rust", "let value = Foo::new(bar);"),
@@ -2934,8 +3182,7 @@ mod tests {
             ("tsx", "<Card title=\"demo\">{value}</Card>"),
             ("markdown", "# Heading"),
         ] {
-            let spans = highlighter
-                .highlight_buffer_lines(filetype, line)
+            let spans = highlight_source_lines(&registry, filetype, line)
                 .expect("highlighting should succeed")
                 .pop()
                 .unwrap_or_default();

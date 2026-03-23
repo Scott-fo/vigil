@@ -1072,7 +1072,6 @@ impl App {
         let generation = self.diff_cache_generation;
         let review_mode = self.review_mode.clone();
         let repo_root = self.repo_root.clone();
-        let highlight_registry = self.highlight_registry.clone();
         let sender = self.events.sender();
 
         task::spawn(async move {
@@ -1105,25 +1104,11 @@ impl App {
                     continue;
                 };
 
-                let highlighted_view = if let Some(registry) = highlight_registry.clone() {
-                    let filetype = file.filetype;
-                    let plain_for_highlight = plain_view.clone();
-                    task::spawn_blocking(move || {
-                        let mut view = plain_for_highlight;
-                        view.apply_syntax_highlighting(filetype, registry.as_ref());
-                        view
-                    })
-                    .await
-                    .ok()
-                } else {
-                    None
-                };
-
                 let _ = sender.send(Event::DiffPrefetched {
                     generation,
                     key: cache_key,
                     plain: plain_view,
-                    highlighted: highlighted_view,
+                    highlighted: None,
                 });
             }
         });
