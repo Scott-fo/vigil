@@ -42,9 +42,17 @@ strum_macros = "0.28"
 serde = { version = "1.0.228", features = [ "derive" ] }
 serde_json = "1.0.149"
 
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
 # Read the optimization guideline for more details: https://ratatui.rs/recipes/apps/release-your-app/#optimizations
 [profile.release]
 codegen-units = 1
 lto = true
-opt-level = "s"
+# Favor runtime speed over binary size for diff parsing and syntax highlighting.
+opt-level = 3
 strip = true
+
+[[bench]]
+name = "diff_performance"
+harness = false

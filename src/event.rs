@@ -6,11 +6,11 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::watcher::RepoWatcher;
 use crate::{
     app::DiffCacheKey,
     git::{BlameCommitDetails, CommitSearchEntry, DiffView, SharedHighlightRegistry},
 };
-use crate::watcher::RepoWatcher;
 
 #[derive(Debug)]
 pub enum Event {

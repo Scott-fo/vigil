@@ -401,7 +401,7 @@ impl DiffView {
         self.display_cache = DiffDisplayCache::default();
     }
 
-    pub(crate) fn apply_syntax_highlighting(
+    pub fn apply_syntax_highlighting(
         &mut self,
         filetype: Option<&'static str>,
         registry: &HighlightRegistry,
@@ -410,14 +410,35 @@ impl DiffView {
             return;
         };
 
-        let mut highlighter = SyntaxHighlighter::new(Some(registry));
-        apply_side_syntax_highlighting(&mut self.rows, &mut highlighter, filetype, HighlightSide::Left);
-        apply_side_syntax_highlighting(
-            &mut self.rows,
-            &mut highlighter,
-            filetype,
-            HighlightSide::Right,
-        );
+        let left = prepare_side_highlighting(&self.rows, HighlightSide::Left);
+        let right = prepare_side_highlighting(&self.rows, HighlightSide::Right);
+        let should_parallelize = left.is_some()
+            && right.is_some()
+            && std::thread::available_parallelism()
+                .map(|parallelism| parallelism.get() > 1)
+                .unwrap_or(false);
+
+        let (left_result, right_result) = if should_parallelize {
+            std::thread::scope(|scope| {
+                let right_task = scope
+                    .spawn(move || right.and_then(|request| request.highlight(filetype, registry)));
+                let left_result = left.and_then(|request| request.highlight(filetype, registry));
+                let right_result = right_task.join().ok().flatten();
+                (left_result, right_result)
+            })
+        } else {
+            (
+                left.and_then(|request| request.highlight(filetype, registry)),
+                right.and_then(|request| request.highlight(filetype, registry)),
+            )
+        };
+
+        if let Some(result) = left_result {
+            apply_completed_highlighting(&mut self.rows, result);
+        }
+        if let Some(result) = right_result {
+            apply_completed_highlighting(&mut self.rows, result);
+        }
         self.invalidate_display_cache();
     }
 }
@@ -426,6 +447,18 @@ impl DiffView {
 enum HighlightSide {
     Left,
     Right,
+}
+
+struct PreparedHighlightSide {
+    side: HighlightSide,
+    row_indices: Vec<usize>,
+    source: String,
+}
+
+struct CompletedHighlightSide {
+    side: HighlightSide,
+    row_indices: Vec<usize>,
+    highlighted_lines: Vec<Vec<SyntaxToken>>,
 }
 
 impl HighlightSide {
@@ -445,14 +478,47 @@ impl HighlightSide {
     }
 }
 
-fn apply_side_syntax_highlighting(
-    rows: &mut [DiffRow],
-    highlighter: &mut SyntaxHighlighter<'_>,
-    filetype: &'static str,
+impl PreparedHighlightSide {
+    fn highlight(
+        self,
+        filetype: &'static str,
+        registry: &HighlightRegistry,
+    ) -> Option<CompletedHighlightSide> {
+        let mut highlighter = SyntaxHighlighter::new(Some(registry));
+        let highlighted_lines = highlighter.highlight_buffer_lines(filetype, &self.source)?;
+        if highlighted_lines.len() != self.row_indices.len() {
+            return None;
+        }
+
+        Some(CompletedHighlightSide {
+            side: self.side,
+            row_indices: self.row_indices,
+            highlighted_lines,
+        })
+    }
+}
+
+fn prepare_side_highlighting(
+    rows: &[DiffRow],
     side: HighlightSide,
-) {
+) -> Option<PreparedHighlightSide> {
+    let mut source_len = 0usize;
+    let mut row_count = 0usize;
+
+    for row in rows {
+        if side.includes(row.kind) {
+            source_len += row.text.len();
+            row_count += 1;
+        }
+    }
+
+    if row_count == 0 {
+        return None;
+    }
+
     let mut source = String::new();
-    let mut row_indices = Vec::new();
+    source.reserve(source_len + row_count.saturating_sub(1));
+    let mut row_indices = Vec::with_capacity(row_count);
 
     for (row_index, row) in rows.iter().enumerate() {
         if !side.includes(row.kind) {
@@ -466,13 +532,19 @@ fn apply_side_syntax_highlighting(
         row_indices.push(row_index);
     }
 
-    if row_indices.is_empty() {
-        return;
-    }
+    Some(PreparedHighlightSide {
+        side,
+        row_indices,
+        source,
+    })
+}
 
-    let Some(highlighted_lines) = highlighter.highlight_buffer_lines(filetype, &source) else {
-        return;
-    };
+fn apply_completed_highlighting(rows: &mut [DiffRow], completed: CompletedHighlightSide) {
+    let CompletedHighlightSide {
+        side,
+        row_indices,
+        highlighted_lines,
+    } = completed;
 
     if highlighted_lines.len() != row_indices.len() {
         return;
@@ -1166,6 +1238,23 @@ pub fn build_diff_view_from_preview_data(
     Ok(diff_view)
 }
 
+pub fn build_diff_view_from_diff_text(diff: &str, filetype: Option<&'static str>) -> DiffView {
+    if diff.trim().is_empty() {
+        return DiffView::empty("No textual diff available.");
+    }
+
+    let (rows, hunks, gaps) = build_diff_rows(diff, filetype);
+    DiffView {
+        rows,
+        note: None,
+        hunks,
+        gaps,
+        gap_expansions: HashMap::new(),
+        file_lines: None,
+        display_cache: DiffDisplayCache::default(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DiffPreviewData {
     diff: String,
@@ -1827,11 +1916,10 @@ struct ParsedHunkHeader {
     new_count: usize,
 }
 
-fn build_diff_rows(diff: &str, _filetype: Option<&'static str>) -> (
-    Vec<DiffRow>,
-    Vec<DiffHunkBlock>,
-    Vec<DiffHunkGap>,
-) {
+fn build_diff_rows(
+    diff: &str,
+    _filetype: Option<&'static str>,
+) -> (Vec<DiffRow>, Vec<DiffHunkBlock>, Vec<DiffHunkGap>) {
     let normalized = diff.replace("\r\n", "\n");
     let mut rows = Vec::new();
     let mut hunks = Vec::new();
@@ -2005,7 +2093,11 @@ fn render_unified_code_line(row: &DiffRow, width: usize) -> Line<'static> {
         ),
         Span::styled(format!("{marker} "), sign_style),
     ];
-    spans.extend(render_row_content(row.unified_content(), &row.text, base_style));
+    spans.extend(render_row_content(
+        row.unified_content(),
+        &row.text,
+        base_style,
+    ));
     let padded = fit_spans_to_width(spans, width.saturating_sub(1), base_style);
     Line::from(padded).style(base_style)
 }
@@ -2132,7 +2224,11 @@ fn render_split_side(row: Option<&DiffRow>, left_side: bool, width: usize) -> Ve
         format_line_number(line_number),
         base_style.patch(ui::line_number_style()),
     )];
-    spans.extend(render_row_content(row.side_content(left_side), &row.text, base_style));
+    spans.extend(render_row_content(
+        row.side_content(left_side),
+        &row.text,
+        base_style,
+    ));
     fit_spans_to_width(spans, width, base_style)
 }
 
@@ -2319,8 +2415,7 @@ impl HighlightRegistry {
             tree_sitter_javascript::LOCALS_QUERY,
         )?;
 
-        let typescript_highlights =
-            format!("{ecma_highlights}\n{typescript_highlights_query}");
+        let typescript_highlights = format!("{ecma_highlights}\n{typescript_highlights_query}");
         let typescript_locals = format!("{ecma_locals}\n{typescript_locals_query}");
         let typescript_injections = format!("{ecma_injections}\n{typescript_injections_query}");
         register_highlight_config(
@@ -2333,9 +2428,8 @@ impl HighlightRegistry {
             &typescript_locals,
         )?;
 
-        let tsx_highlights = format!(
-            "{ecma_highlights}\n{typescript_highlights_query}\n{jsx_nvim_highlights}"
-        );
+        let tsx_highlights =
+            format!("{ecma_highlights}\n{typescript_highlights_query}\n{jsx_nvim_highlights}");
         let tsx_injections =
             format!("{ecma_injections}\n{typescript_injections_query}\n{jsx_nvim_injections}");
         register_highlight_config(
@@ -2399,12 +2493,10 @@ impl HighlightRegistry {
             "csharp",
             tree_sitter_c_sharp::LANGUAGE.into(),
             "c_sharp",
-            include_str!(
-                concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/vendor/tree-sitter-c-sharp/highlights.scm"
-                )
-            ),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/tree-sitter-c-sharp/highlights.scm"
+            )),
             "",
             "",
         )?;
@@ -2550,7 +2642,12 @@ impl<'a> SyntaxHighlighter<'a> {
         }
 
         if filetype == "markdown" {
-            return Some(source.split('\n').map(highlight_markdown_line_tokens).collect());
+            return Some(
+                source
+                    .split('\n')
+                    .map(highlight_markdown_line_tokens)
+                    .collect(),
+            );
         }
 
         let registry = self.registry?;
@@ -2561,7 +2658,6 @@ impl<'a> SyntaxHighlighter<'a> {
             .ok()?;
         highlight_events_to_lines(source, events)
     }
-
 }
 
 pub fn prewarm_highlight_registry(registry: &HighlightRegistry) {
@@ -2762,7 +2858,11 @@ fn highlight_markdown_line_tokens(line: &str) -> Vec<SyntaxToken> {
 
     let heading_marker_len = trimmed.bytes().take_while(|byte| *byte == b'#').count();
     if (1..=6).contains(&heading_marker_len) && trimmed[heading_marker_len..].starts_with(' ') {
-        push_syntax_token(&mut tokens, &trimmed[..heading_marker_len], Some("markup.heading"));
+        push_syntax_token(
+            &mut tokens,
+            &trimmed[..heading_marker_len],
+            Some("markup.heading"),
+        );
         push_syntax_token(&mut tokens, " ", None);
         push_syntax_token(
             &mut tokens,
@@ -2780,7 +2880,10 @@ fn highlight_markdown_line_tokens(line: &str) -> Vec<SyntaxToken> {
             tokens.extend(highlight_markdown_inline_tokens(task_rest));
             return tokens;
         }
-        if let Some(task_rest) = rest.strip_prefix("[x] ").or_else(|| rest.strip_prefix("[X] ")) {
+        if let Some(task_rest) = rest
+            .strip_prefix("[x] ")
+            .or_else(|| rest.strip_prefix("[X] "))
+        {
             push_syntax_token(&mut tokens, &rest[..4], Some("markup.list.checked"));
             tokens.extend(highlight_markdown_inline_tokens(task_rest));
             return tokens;
