@@ -704,20 +704,24 @@ impl App {
                     return Ok(None);
                 }
 
-                if let Some(file_path) = self.selected_file().map(|file| file.path.clone())
-                    && self.active_pane == ActivePane::Diff
-                {
-                    if let Some(line_number) = self
-                        .diff_view
-                        .selected_line_number(self.diff_view_mode, self.selected_diff_line_index)
-                    {
-                        return Ok(Some(AppCommand::OpenFileInEditorAtLine(
-                            file_path,
-                            line_number,
-                        )));
+                if let Some(file_path) = self.selected_file().map(|file| file.path.clone()) {
+                    if self.active_pane == ActivePane::Diff {
+                        if let Some(line_number) = self
+                            .diff_view
+                            .selected_line_number(self.diff_view_mode, self.selected_diff_line_index)
+                        {
+                            return Ok(Some(AppCommand::OpenFileInEditorAtLine(
+                                file_path,
+                                line_number,
+                            )));
+                        }
+
+                        return Ok(Some(AppCommand::OpenFileInEditor(file_path)));
                     }
 
-                    return Ok(Some(AppCommand::OpenFileInEditor(file_path)));
+                    if self.active_pane == ActivePane::Sidebar {
+                        return Ok(Some(AppCommand::OpenFileInEditor(file_path)));
+                    }
                 }
             }
             KeyCode::Char('d') => {
