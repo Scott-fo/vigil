@@ -500,10 +500,14 @@ static HIGHLIGHT_NAMES: &[&str] = &[
     "boolean",
     "comment",
     "comment.documentation",
+    "constant",
+    "constant.builtin",
     "constructor",
     "constructor.builtin",
+    "embedded",
     "function",
     "function.builtin",
+    "function.method",
     "keyword",
     "number",
     "operator",
@@ -512,6 +516,7 @@ static HIGHLIGHT_NAMES: &[&str] = &[
     "punctuation",
     "punctuation.bracket",
     "punctuation.delimiter",
+    "punctuation.special",
     "string",
     "string.escape",
     "string.special",
@@ -2091,24 +2096,40 @@ impl HighlightRegistry {
             tree_sitter_javascript::LOCALS_QUERY,
         )?;
 
+        let typescript_highlights = format!(
+            "{}\n{}",
+            tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_typescript::HIGHLIGHTS_QUERY
+        );
+        let typescript_locals = format!(
+            "{}\n{}",
+            tree_sitter_javascript::LOCALS_QUERY,
+            tree_sitter_typescript::LOCALS_QUERY
+        );
         register_highlight_config(
             &mut configs,
             "typescript",
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             "typescript",
-            tree_sitter_typescript::HIGHLIGHTS_QUERY,
-            "",
-            tree_sitter_typescript::LOCALS_QUERY,
+            &typescript_highlights,
+            tree_sitter_javascript::INJECTIONS_QUERY,
+            &typescript_locals,
         )?;
 
+        let tsx_highlights = format!(
+            "{}\n{}\n{}",
+            tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
+            tree_sitter_typescript::HIGHLIGHTS_QUERY
+        );
         register_highlight_config(
             &mut configs,
             "tsx",
             tree_sitter_typescript::LANGUAGE_TSX.into(),
             "tsx",
-            tree_sitter_typescript::HIGHLIGHTS_QUERY,
-            "",
-            tree_sitter_typescript::LOCALS_QUERY,
+            &tsx_highlights,
+            tree_sitter_javascript::INJECTIONS_QUERY,
+            &typescript_locals,
         )?;
 
         register_highlight_config(

@@ -301,17 +301,31 @@ pub fn syntax_style(name: &str, fallback: Style) -> Style {
         "keyword" => Style::new()
             .fg(palette.syntax_keyword)
             .add_modifier(Modifier::BOLD),
-        "function" | "function.builtin" | "constructor" | "constructor.builtin" => {
+        "function"
+        | "function.builtin"
+        | "function.method"
+        | "constructor"
+        | "constructor.builtin" => {
             Style::new().fg(palette.syntax_function)
         }
-        "variable" | "variable.builtin" | "variable.parameter" | "variable.member" | "property" => {
+        "variable"
+        | "variable.builtin"
+        | "variable.parameter"
+        | "variable.member"
+        | "property"
+        | "constant"
+        | "constant.builtin" => {
             Style::new().fg(palette.syntax_variable)
         }
         "string" | "string.escape" | "string.special" => Style::new().fg(palette.syntax_string),
         "number" | "boolean" => Style::new().fg(palette.syntax_number),
         "type" | "type.builtin" | "attribute" => Style::new().fg(palette.syntax_type),
         "operator" => Style::new().fg(palette.syntax_operator),
-        "punctuation" | "punctuation.delimiter" | "punctuation.bracket" => {
+        "punctuation"
+        | "punctuation.delimiter"
+        | "punctuation.bracket"
+        | "punctuation.special"
+        | "embedded" => {
             Style::new().fg(text_color())
         }
         "property.builtin" | "tag" => Style::new().fg(palette.syntax_function),
