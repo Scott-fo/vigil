@@ -9,8 +9,8 @@ use color_eyre::Result;
 use vigil::{
     app::DiffViewMode,
     git::{
-        self, BlameTarget, BranchCompareSelection, CommitCompareSelection, DiffView, EMPTY_TREE_HASH,
-        FileEntry,
+        self, BlameTarget, BranchCompareSelection, CommitCompareSelection, DiffView,
+        EMPTY_TREE_HASH, FileEntry,
     },
 };
 
@@ -23,8 +23,10 @@ struct TestRepo {
 impl TestRepo {
     async fn init() -> Result<Self> {
         let repo_id = NEXT_REPO_ID.fetch_add(1, Ordering::Relaxed);
-        let root =
-            std::env::temp_dir().join(format!("vigil-git-integration-{}-{repo_id}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "vigil-git-integration-{}-{repo_id}",
+            std::process::id()
+        ));
         if root.exists() {
             let _ = fs::remove_dir_all(&root);
         }
@@ -44,9 +46,8 @@ impl TestRepo {
     fn write(&self, relative: &str, content: &str) {
         let path = self.path(relative);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).unwrap_or_else(|error| {
-                panic!("failed to create {}: {error}", parent.display())
-            });
+            fs::create_dir_all(parent)
+                .unwrap_or_else(|error| panic!("failed to create {}: {error}", parent.display()));
         }
         fs::write(&path, content)
             .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
@@ -127,7 +128,8 @@ impl Drop for TestRepo {
 }
 
 fn find_file(files: &[FileEntry], path: &str) -> FileEntry {
-    files.iter()
+    files
+        .iter()
         .find(|file| file.path == path)
         .unwrap_or_else(|| panic!("missing file entry for {path}; got {files:?}"))
         .clone()
@@ -186,7 +188,8 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
         "ignored files should not surface in status: {files:?}"
     );
 
-    let mut new_file_view = git::load_diff_view_for_working_tree(&repo.root, &untracked, None).await?;
+    let mut new_file_view =
+        git::load_diff_view_for_working_tree(&repo.root, &untracked, None).await?;
     let rendered = rendered_lines(&mut new_file_view, DiffViewMode::Unified, 160).join("\n");
     assert!(rendered.contains("fn added() {}"));
 
@@ -254,7 +257,11 @@ async fn commit_search_blame_and_commit_compare_report_expected_metadata() -> Re
     assert_eq!(blame.author, "Vigil Tests");
     assert_eq!(blame.date, "2024-01-03");
     assert_eq!(blame.subject, "update main");
-    assert!(blame.description.contains("Expanded details for the updated file."));
+    assert!(
+        blame
+            .description
+            .contains("Expanded details for the updated file.")
+    );
 
     let selection = selection_from_commit(latest);
     let diff_files = git::load_files_with_commit_diff(&repo.root, &selection).await?;
@@ -262,7 +269,8 @@ async fn commit_search_blame_and_commit_compare_report_expected_metadata() -> Re
     assert_eq!(compared_file.status, "M");
 
     let mut diff_view =
-        git::load_diff_view_for_commit_compare(&repo.root, &compared_file, &selection, None).await?;
+        git::load_diff_view_for_commit_compare(&repo.root, &compared_file, &selection, None)
+            .await?;
     let rendered = rendered_lines(&mut diff_view, DiffViewMode::Unified, 200).join("\n");
     assert!(rendered.contains("println!(\"two\")"));
     assert!(rendered.contains("println!(\"three\")"));
@@ -303,7 +311,10 @@ async fn branch_compare_and_ref_listing_cover_diverged_history() -> Result<()> {
 
     let refs = git::list_comparable_refs(&repo.root).await?;
     assert!(refs.iter().any(|name| name == "main"), "refs were {refs:?}");
-    assert!(refs.iter().any(|name| name == "feature"), "refs were {refs:?}");
+    assert!(
+        refs.iter().any(|name| name == "feature"),
+        "refs were {refs:?}"
+    );
 
     let selection = BranchCompareSelection {
         source_ref: "feature".to_string(),
@@ -323,7 +334,8 @@ async fn branch_compare_and_ref_listing_cover_diverged_history() -> Result<()> {
 }
 
 #[tokio::test]
-async fn init_repo_root_resolution_commit_messages_and_empty_untracked_previews_work() -> Result<()> {
+async fn init_repo_root_resolution_commit_messages_and_empty_untracked_previews_work() -> Result<()>
+{
     let repo = TestRepo::init().await?;
     fs::create_dir_all(repo.path("nested/deeper"))?;
     let resolved = git::resolve_repo_root_from(Path::new(&repo.path("nested/deeper"))).await?;
@@ -334,7 +346,9 @@ async fn init_repo_root_resolution_commit_messages_and_empty_untracked_previews_
     repo.append("tracked.txt", "next\n");
     repo.git(&["add", "tracked.txt"]);
 
-    let error = git::commit_staged_changes(&repo.root, "   ").await.unwrap_err();
+    let error = git::commit_staged_changes(&repo.root, "   ")
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("Commit message is required."));
 
     git::commit_staged_changes(&repo.root, "  trimmed message  ").await?;
@@ -344,8 +358,7 @@ async fn init_repo_root_resolution_commit_messages_and_empty_untracked_previews_
     repo.write("empty.md", "");
     let statuses = git::load_files_with_status(&repo.root).await?;
     let empty_file = find_file(&statuses, "empty.md");
-    let mut diff_view =
-        git::load_diff_view_for_working_tree(&repo.root, &empty_file, None).await?;
+    let mut diff_view = git::load_diff_view_for_working_tree(&repo.root, &empty_file, None).await?;
     let rendered = rendered_lines(&mut diff_view, DiffViewMode::Unified, 120).join("\n");
     assert!(rendered.contains("Untracked empty file; no textual hunk to preview."));
 
