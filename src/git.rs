@@ -2186,16 +2186,12 @@ fn parse_status_entries(raw: &str) -> Vec<StatusEntry> {
         }
 
         if matches!(x, 'R' | 'C') {
-            let renamed_to = fields.get(index).copied().unwrap_or_default().to_string();
+            let original_path = fields.get(index).copied().unwrap_or_default().to_string();
             index += 1;
             entries.push(StatusEntry {
                 status,
-                path: if renamed_to.is_empty() {
-                    first_path.clone()
-                } else {
-                    renamed_to
-                },
-                original_path: Some(first_path),
+                path: first_path.clone(),
+                original_path: (!original_path.is_empty()).then_some(original_path),
             });
             continue;
         }
