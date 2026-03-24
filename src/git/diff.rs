@@ -1737,6 +1737,8 @@ fn render_row_content(
     text: &str,
     fallback: Style,
 ) -> Vec<Span<'static>> {
+    let has_tabs = text.as_bytes().contains(&b'\t');
+
     let raw_spans = match syntax_tokens {
         Some(tokens) if !tokens.is_empty() => tokens
             .iter()
@@ -1755,7 +1757,11 @@ fn render_row_content(
         _ => vec![Span::styled(text.to_string(), fallback)],
     };
 
-    expand_tabs_in_spans(raw_spans)
+    if has_tabs {
+        expand_tabs_in_spans(raw_spans)
+    } else {
+        raw_spans
+    }
 }
 
 fn expand_tabs_in_spans(spans: Vec<Span<'static>>) -> Vec<Span<'static>> {
