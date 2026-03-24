@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use tokio::{fs, process::Command};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{app::DiffViewMode, ui};
 
@@ -20,6 +20,7 @@ use super::{
 };
 
 const VIEWPORT_HIGHLIGHT_PADDING_ROWS: usize = 64;
+const DIFF_TAB_WIDTH: usize = 4;
 
 #[derive(Debug, Default, Clone)]
 pub struct DiffView {
@@ -1736,28 +1737,75 @@ fn render_row_content(
     text: &str,
     fallback: Style,
 ) -> Vec<Span<'static>> {
-    let Some(tokens) = syntax_tokens else {
-        return vec![Span::styled(text.to_string(), fallback)];
+    let raw_spans = match syntax_tokens {
+        Some(tokens) if !tokens.is_empty() => tokens
+            .iter()
+            .map(|token| {
+                let style = token
+                    .highlight_name
+                    .map(|name| ui::syntax_style(name, fallback))
+                    .unwrap_or(fallback);
+                let content = text
+                    .get(token.start..token.end)
+                    .map(str::to_string)
+                    .unwrap_or_default();
+                Span::styled(content, style)
+            })
+            .collect(),
+        _ => vec![Span::styled(text.to_string(), fallback)],
     };
 
-    if tokens.is_empty() {
-        return vec![Span::styled(text.to_string(), fallback)];
+    expand_tabs_in_spans(raw_spans)
+}
+
+fn expand_tabs_in_spans(spans: Vec<Span<'static>>) -> Vec<Span<'static>> {
+    let mut expanded = Vec::with_capacity(spans.len());
+    let mut visual_column = 0usize;
+
+    for span in spans {
+        let style = span.style;
+        let mut chunk = String::new();
+
+        for ch in span.content.chars() {
+            if ch == '\t' {
+                if !chunk.is_empty() {
+                    expanded.push(Span::styled(std::mem::take(&mut chunk), style));
+                }
+
+                let tab_width = tab_display_width(visual_column);
+                if tab_width > 0 {
+                    expanded.push(Span::styled(" ".repeat(tab_width), style));
+                    visual_column += tab_width;
+                }
+                continue;
+            }
+
+            let Some(ch_width) = UnicodeWidthChar::width(ch) else {
+                continue;
+            };
+            if ch_width == 0 {
+                continue;
+            }
+
+            chunk.push(ch);
+            visual_column += ch_width;
+        }
+
+        if !chunk.is_empty() {
+            expanded.push(Span::styled(chunk, style));
+        }
     }
 
-    tokens
-        .iter()
-        .map(|token| {
-            let style = token
-                .highlight_name
-                .map(|name| ui::syntax_style(name, fallback))
-                .unwrap_or(fallback);
-            let content = text
-                .get(token.start..token.end)
-                .map(str::to_string)
-                .unwrap_or_default();
-            Span::styled(content, style)
-        })
-        .collect()
+    expanded
+}
+
+fn tab_display_width(visual_column: usize) -> usize {
+    let offset = visual_column % DIFF_TAB_WIDTH;
+    if offset == 0 {
+        DIFF_TAB_WIDTH
+    } else {
+        DIFF_TAB_WIDTH - offset
+    }
 }
 
 fn fit_spans_to_width(
@@ -1866,4 +1914,66 @@ fn expand_row_window(window: Option<(usize, usize)>, row_count: usize) -> Option
         end.saturating_add(VIEWPORT_HIGHLIGHT_PADDING_ROWS)
             .min(row_count.saturating_sub(1)),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{
+        buffer::Buffer,
+        layout::Rect,
+        text::Text,
+        widgets::{Paragraph, Widget},
+    };
+
+    use super::*;
+
+    fn render_lines_to_strings(lines: Vec<Line<'static>>, width: u16) -> Vec<String> {
+        let area = Rect::new(0, 0, width, lines.len() as u16);
+        let mut buffer = Buffer::empty(area);
+        Paragraph::new(Text::from(lines)).render(area, &mut buffer);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unified_render_expands_tabs_before_rendering() {
+        let diff = "@@ -1 +1 @@\n-\told\n+\tnew";
+        let mut view = build_diff_view_from_diff_text(diff, Some("go"));
+        let rendered = view.rendered_lines(DiffViewMode::Unified, 24).to_vec();
+        let rows = render_lines_to_strings(rendered, 24);
+
+        assert_eq!(rows[0], "   1 -     old          ");
+        assert_eq!(rows[1], "   1 +     new          ");
+    }
+
+    #[test]
+    fn split_render_expands_tabs_on_both_sides() {
+        let diff = "@@ -1 +1 @@\n-\told\n+\tnew";
+        let mut view = build_diff_view_from_diff_text(diff, Some("go"));
+        let rendered = view.rendered_lines(DiffViewMode::Split, 29).to_vec();
+        let rows = render_lines_to_strings(rendered, 29);
+
+        assert_eq!(rows, vec!["   1     old      1     new  "]);
+    }
+
+    #[test]
+    fn tab_expansion_tracks_columns_across_spans() {
+        let spans = expand_tabs_in_spans(vec![
+            Span::raw("ab"),
+            Span::raw("\t"),
+            Span::raw("cd"),
+        ]);
+
+        let contents = spans
+            .into_iter()
+            .map(|span| span.content.into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(contents, vec!["ab", "  ", "cd"]);
+    }
 }
