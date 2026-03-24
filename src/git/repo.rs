@@ -46,32 +46,34 @@ pub fn status_color(status: &str) -> ratatui::style::Color {
 }
 
 pub async fn toggle_file_stage(repo_root: &Path, file: &FileEntry) -> color_eyre::Result<()> {
-    let args: Vec<&str> = if is_file_staged(&file.status) {
-        vec!["restore", "--staged", "--", file.path.as_str()]
+    if is_file_staged(&file.status) {
+        run_git_action(
+            repo_root,
+            &["restore", "--staged", "--", file.path.as_str()],
+        )
+        .await
     } else {
-        vec!["add", "--", file.path.as_str()]
-    };
-
-    let _ = git_output(repo_root, &args).await?;
-    Ok(())
+        run_git_action(repo_root, &["add", "--", file.path.as_str()]).await
+    }
 }
 
 pub async fn discard_file_changes(repo_root: &Path, file: &FileEntry) -> color_eyre::Result<()> {
-    let args: Vec<&str> = if file.status == "??" {
-        vec!["clean", "-f", "--", file.path.as_str()]
+    if file.status == "??" {
+        run_git_action(repo_root, &["clean", "-f", "--", file.path.as_str()]).await
     } else {
-        vec![
-            "restore",
-            "--source=HEAD",
-            "--staged",
-            "--worktree",
-            "--",
-            file.path.as_str(),
-        ]
-    };
-
-    let _ = git_output(repo_root, &args).await?;
-    Ok(())
+        run_git_action(
+            repo_root,
+            &[
+                "restore",
+                "--source=HEAD",
+                "--staged",
+                "--worktree",
+                "--",
+                file.path.as_str(),
+            ],
+        )
+        .await
+    }
 }
 
 pub async fn commit_staged_changes(repo_root: &Path, message: &str) -> color_eyre::Result<()> {
@@ -80,23 +82,19 @@ pub async fn commit_staged_changes(repo_root: &Path, message: &str) -> color_eyr
         return Err(eyre!("Commit message is required."));
     }
 
-    let _ = git_output(repo_root, &["commit", "-m", trimmed]).await?;
-    Ok(())
+    run_git_action(repo_root, &["commit", "-m", trimmed]).await
 }
 
 pub async fn push_to_remote(repo_root: &Path) -> color_eyre::Result<()> {
-    let _ = git_output(repo_root, &["push"]).await?;
-    Ok(())
+    run_git_action(repo_root, &["push"]).await
 }
 
 pub async fn pull_from_remote(repo_root: &Path) -> color_eyre::Result<()> {
-    let _ = git_output(repo_root, &["pull"]).await?;
-    Ok(())
+    run_git_action(repo_root, &["pull"]).await
 }
 
 pub async fn init_repo(repo_root: &Path) -> color_eyre::Result<()> {
-    let _ = git_output(repo_root, &["init"]).await?;
-    Ok(())
+    run_git_action(repo_root, &["init"]).await
 }
 
 pub async fn list_searchable_commits(
@@ -235,7 +233,7 @@ pub async fn load_files_with_commit_diff(
     repo_root: &Path,
     selection: &CommitCompareSelection,
 ) -> color_eyre::Result<Vec<FileEntry>> {
-    let output = git_output(
+    load_diff_name_status_files(
         repo_root,
         &[
             "diff",
@@ -246,12 +244,7 @@ pub async fn load_files_with_commit_diff(
             selection.commit_hash.as_str(),
         ],
     )
-    .await?;
-
-    Ok(parse_diff_name_status_entries(&output)
-        .into_iter()
-        .map(to_file_entry)
-        .collect())
+    .await
 }
 
 pub async fn list_comparable_refs(repo_root: &Path) -> color_eyre::Result<Vec<String>> {
@@ -294,7 +287,7 @@ pub async fn load_files_with_branch_diff(
     repo_root: &Path,
     selection: &BranchCompareSelection,
 ) -> color_eyre::Result<Vec<FileEntry>> {
-    let output = git_output(
+    load_diff_name_status_files(
         repo_root,
         &[
             "diff",
@@ -304,12 +297,7 @@ pub async fn load_files_with_branch_diff(
             build_branch_diff_range(selection).as_str(),
         ],
     )
-    .await?;
-
-    Ok(parse_diff_name_status_entries(&output)
-        .into_iter()
-        .map(to_file_entry)
-        .collect())
+    .await
 }
 
 pub async fn should_refresh_for_paths(
@@ -403,6 +391,22 @@ async fn is_directory_status_entry(repo_root: &Path, path: &str) -> bool {
         Ok(metadata) => metadata.is_dir(),
         Err(_) => false,
     }
+}
+
+async fn run_git_action(repo_root: &Path, args: &[&str]) -> color_eyre::Result<()> {
+    let _ = git_output(repo_root, args).await?;
+    Ok(())
+}
+
+async fn load_diff_name_status_files(
+    repo_root: &Path,
+    args: &[&str],
+) -> color_eyre::Result<Vec<FileEntry>> {
+    let output = git_output(repo_root, args).await?;
+    Ok(parse_diff_name_status_entries(&output)
+        .into_iter()
+        .map(to_file_entry)
+        .collect())
 }
 
 pub async fn git_output(repo_root: &Path, args: &[&str]) -> color_eyre::Result<String> {

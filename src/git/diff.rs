@@ -402,27 +402,12 @@ impl DiffView {
 
         let left = prepare_side_highlighting(&self.rows, HighlightSide::Left);
         let right = prepare_side_highlighting(&self.rows, HighlightSide::Right);
-        let should_parallelize = left.is_some()
-            && right.is_some()
-            && std::thread::available_parallelism()
-                .map(|parallelism| parallelism.get() > 1)
-                .unwrap_or(false);
-
-        let (left_result, right_result) = if should_parallelize {
-            std::thread::scope(|scope| {
-                let right_task = scope
-                    .spawn(move || right.and_then(|request| request.highlight(filetype, registry)));
-                let left_result = left.and_then(|request| request.highlight(filetype, registry));
-                let right_result = right_task.join().ok().flatten();
-                (left_result, right_result)
-            })
-        } else {
-            (
-                left.and_then(|request| request.highlight(filetype, registry)),
-                right.and_then(|request| request.highlight(filetype, registry)),
-            )
-        };
-
+        let (left_result, right_result) = run_optional_pair(
+            left.is_some(),
+            right.is_some(),
+            || left.and_then(|request| request.highlight(filetype, registry)),
+            || right.and_then(|request| request.highlight(filetype, registry)),
+        );
         if let Some(result) = left_result {
             apply_completed_highlighting(&mut self.rows, result);
         }
@@ -444,39 +429,10 @@ impl DiffView {
         let rows = &self.rows;
         let left_source = self.old_file_source.clone();
         let right_source = self.new_file_source.clone();
-        let should_parallelize = left_source.is_some()
-            && right_source.is_some()
-            && std::thread::available_parallelism()
-                .map(|parallelism| parallelism.get() > 1)
-                .unwrap_or(false);
-
-        let (left, right) = if should_parallelize {
-            std::thread::scope(|scope| {
-                let right_task = scope.spawn(move || {
-                    right_source.and_then(|source| {
-                        prepare_exact_side_highlighting(
-                            rows,
-                            HighlightSide::Right,
-                            &source,
-                            filetype,
-                            registry,
-                        )
-                    })
-                });
-                let left = left_source.and_then(|source| {
-                    prepare_exact_side_highlighting(
-                        rows,
-                        HighlightSide::Left,
-                        &source,
-                        filetype,
-                        registry,
-                    )
-                });
-                let right = right_task.join().ok().flatten();
-                (left, right)
-            })
-        } else {
-            (
+        let (left, right) = run_optional_pair(
+            left_source.is_some(),
+            right_source.is_some(),
+            || {
                 left_source.and_then(|source| {
                     prepare_exact_side_highlighting(
                         rows,
@@ -485,7 +441,9 @@ impl DiffView {
                         filetype,
                         registry,
                     )
-                }),
+                })
+            },
+            || {
                 right_source.and_then(|source| {
                     prepare_exact_side_highlighting(
                         rows,
@@ -494,9 +452,9 @@ impl DiffView {
                         filetype,
                         registry,
                     )
-                }),
-            )
-        };
+                })
+            },
+        );
 
         if left.is_none() && right.is_none() {
             self.apply_syntax_highlighting(Some(filetype), registry);
@@ -553,27 +511,12 @@ impl DiffView {
                 window_end,
             )
         });
-        let should_parallelize = left.is_some()
-            && right.is_some()
-            && std::thread::available_parallelism()
-                .map(|parallelism| parallelism.get() > 1)
-                .unwrap_or(false);
-
-        let (left_result, right_result) = if should_parallelize {
-            std::thread::scope(|scope| {
-                let right_task = scope
-                    .spawn(move || right.and_then(|request| request.highlight(filetype, registry)));
-                let left_result = left.and_then(|request| request.highlight(filetype, registry));
-                let right_result = right_task.join().ok().flatten();
-                (left_result, right_result)
-            })
-        } else {
-            (
-                left.and_then(|request| request.highlight(filetype, registry)),
-                right.and_then(|request| request.highlight(filetype, registry)),
-            )
-        };
-
+        let (left_result, right_result) = run_optional_pair(
+            left.is_some(),
+            right.is_some(),
+            || left.and_then(|request| request.highlight(filetype, registry)),
+            || right.and_then(|request| request.highlight(filetype, registry)),
+        );
         if let Some(result) = left_result {
             apply_completed_highlighting(&mut self.rows, result);
         }
@@ -797,6 +740,36 @@ fn apply_completed_highlighting(rows: &mut [DiffRow], completed: CompletedHighli
 
     for (row_index, tokens) in row_indices.into_iter().zip(highlighted_lines) {
         side.assign(&mut rows[row_index], tokens);
+    }
+}
+
+#[inline]
+fn run_optional_pair<T, LF, RF>(
+    left_ready: bool,
+    right_ready: bool,
+    left_fn: LF,
+    right_fn: RF,
+) -> (Option<T>, Option<T>)
+where
+    T: Send,
+    LF: FnOnce() -> Option<T> + Send,
+    RF: FnOnce() -> Option<T> + Send,
+{
+    let should_parallelize = left_ready
+        && right_ready
+        && std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get() > 1)
+            .unwrap_or(false);
+
+    if should_parallelize {
+        std::thread::scope(|scope| {
+            let right_task = scope.spawn(right_fn);
+            let left = left_fn();
+            let right = right_task.join().ok().flatten();
+            (left, right)
+        })
+    } else {
+        (left_fn(), right_fn())
     }
 }
 
@@ -1072,6 +1045,31 @@ pub struct DiffPreviewData {
     new_file_source: Option<Arc<str>>,
 }
 
+impl DiffPreviewData {
+    fn from_sources(
+        diff: String,
+        note: Option<String>,
+        old_file_lines: Option<Vec<String>>,
+        new_file_lines: Option<Vec<String>>,
+    ) -> Self {
+        let old_file_source = old_file_lines.as_deref().map(source_from_lines);
+        let new_file_source = new_file_lines.as_deref().map(source_from_lines);
+        Self {
+            diff,
+            note,
+            old_file_source,
+            new_file_lines,
+            new_file_source,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PreviewTarget<'a> {
+    Revision(&'a str),
+    WorkingTree,
+}
+
 async fn load_file_preview(
     repo_root: &Path,
     file: &FileEntry,
@@ -1090,7 +1088,7 @@ async fn load_commit_preview(
     selection: &CommitCompareSelection,
     include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
-    let output = git_output(
+    load_revision_preview(
         repo_root,
         &[
             "diff",
@@ -1101,33 +1099,12 @@ async fn load_commit_preview(
             "--",
             file.path.as_str(),
         ],
+        Some(PreviewTarget::Revision(selection.base_ref.as_str())),
+        Some(PreviewTarget::Revision(selection.commit_hash.as_str())),
+        file.path.as_str(),
+        include_exact_context,
     )
-    .await?;
-    let old_file_lines = if include_exact_context {
-        load_revision_file_lines(repo_root, selection.base_ref.as_str(), file.path.as_str()).await?
-    } else {
-        None
-    };
-    let new_file_lines = if include_exact_context || diff_needs_context_lines(&output) {
-        load_revision_file_lines(
-            repo_root,
-            selection.commit_hash.as_str(),
-            file.path.as_str(),
-        )
-        .await?
-    } else {
-        None
-    };
-    let old_file_source = old_file_lines.as_deref().map(source_from_lines);
-    let new_file_source = new_file_lines.as_deref().map(source_from_lines);
-
-    Ok(DiffPreviewData {
-        diff: output,
-        note: None,
-        old_file_source,
-        new_file_lines,
-        new_file_source,
-    })
+    .await
 }
 
 async fn load_branch_preview(
@@ -1136,44 +1113,23 @@ async fn load_branch_preview(
     selection: &BranchCompareSelection,
     include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
-    let output = git_output(
+    let diff_range = build_branch_diff_range(selection);
+    load_revision_preview(
         repo_root,
         &[
             "diff",
             "--no-color",
             "--find-renames",
-            build_branch_diff_range(selection).as_str(),
+            diff_range.as_str(),
             "--",
             file.path.as_str(),
         ],
+        Some(PreviewTarget::Revision(selection.source_ref.as_str())),
+        Some(PreviewTarget::Revision(selection.destination_ref.as_str())),
+        file.path.as_str(),
+        include_exact_context,
     )
-    .await?;
-    let old_file_lines = if include_exact_context {
-        load_revision_file_lines(repo_root, selection.source_ref.as_str(), file.path.as_str())
-            .await?
-    } else {
-        None
-    };
-    let new_file_lines = if include_exact_context || diff_needs_context_lines(&output) {
-        load_revision_file_lines(
-            repo_root,
-            selection.destination_ref.as_str(),
-            file.path.as_str(),
-        )
-        .await?
-    } else {
-        None
-    };
-    let old_file_source = old_file_lines.as_deref().map(source_from_lines);
-    let new_file_source = new_file_lines.as_deref().map(source_from_lines);
-
-    Ok(DiffPreviewData {
-        diff: output,
-        note: None,
-        old_file_source,
-        new_file_lines,
-        new_file_source,
-    })
+    .await
 }
 
 async fn load_tracked_preview(
@@ -1181,7 +1137,7 @@ async fn load_tracked_preview(
     file_path: &str,
     include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
-    let output = git_output(
+    load_revision_preview(
         repo_root,
         &[
             "diff",
@@ -1191,27 +1147,40 @@ async fn load_tracked_preview(
             "--",
             file_path,
         ],
+        Some(PreviewTarget::Revision("HEAD")),
+        Some(PreviewTarget::WorkingTree),
+        file_path,
+        include_exact_context,
     )
-    .await?;
+    .await
+}
+
+async fn load_revision_preview(
+    repo_root: &Path,
+    diff_args: &[&str],
+    old_target: Option<PreviewTarget<'_>>,
+    new_target: Option<PreviewTarget<'_>>,
+    file_path: &str,
+    include_exact_context: bool,
+) -> color_eyre::Result<DiffPreviewData> {
+    let diff = git_output(repo_root, diff_args).await?;
     let old_file_lines = if include_exact_context {
-        load_revision_file_lines(repo_root, "HEAD", file_path).await?
+        load_preview_target_lines(repo_root, old_target, file_path).await?
     } else {
         None
     };
-    let new_file_lines = if include_exact_context || diff_needs_context_lines(&output) {
-        load_working_tree_file_lines(repo_root, file_path).await?
+    let new_file_lines = if include_exact_context || diff_needs_context_lines(&diff) {
+        load_preview_target_lines(repo_root, new_target, file_path).await?
     } else {
         None
     };
-    let old_file_source = old_file_lines.as_deref().map(source_from_lines);
-    let new_file_source = new_file_lines.as_deref().map(source_from_lines);
-    Ok(DiffPreviewData {
-        diff: output,
-        note: None,
-        old_file_source,
+
+    Ok(DiffPreviewData::from_sources(
+        diff,
+        None,
+        old_file_lines,
         new_file_lines,
-        new_file_source,
-    })
+    ))
 }
 
 async fn load_untracked_preview(
@@ -1222,47 +1191,43 @@ async fn load_untracked_preview(
     let full_path = repo_root.join(file_path);
     match fs::metadata(&full_path).await {
         Ok(metadata) if metadata.is_dir() => {
-            return Ok(DiffPreviewData {
-                diff: String::new(),
-                note: Some("Directory or symlinked directory; no preview available.".to_string()),
-                old_file_source: None,
-                new_file_lines: None,
-                new_file_source: None,
-            });
+            return Ok(DiffPreviewData::from_sources(
+                String::new(),
+                Some("Directory or symlinked directory; no preview available.".to_string()),
+                None,
+                None,
+            ));
         }
         Ok(_) => {}
         Err(_) => {
-            return Ok(DiffPreviewData {
-                diff: String::new(),
-                note: Some("Unable to read untracked file content.".to_string()),
-                old_file_source: None,
-                new_file_lines: None,
-                new_file_source: None,
-            });
+            return Ok(DiffPreviewData::from_sources(
+                String::new(),
+                Some("Unable to read untracked file content.".to_string()),
+                None,
+                None,
+            ));
         }
     };
 
     let bytes = match fs::read(&full_path).await {
         Ok(bytes) => bytes,
         Err(_) => {
-            return Ok(DiffPreviewData {
-                diff: String::new(),
-                note: Some("Unable to read untracked file content.".to_string()),
-                old_file_source: None,
-                new_file_lines: None,
-                new_file_source: None,
-            });
+            return Ok(DiffPreviewData::from_sources(
+                String::new(),
+                Some("Unable to read untracked file content.".to_string()),
+                None,
+                None,
+            ));
         }
     };
 
     if bytes.contains(&0) {
-        return Ok(DiffPreviewData {
-            diff: String::new(),
-            note: Some("Binary or non-text file; no preview available.".to_string()),
-            old_file_source: None,
-            new_file_lines: None,
-            new_file_source: None,
-        });
+        return Ok(DiffPreviewData::from_sources(
+            String::new(),
+            Some("Binary or non-text file; no preview available.".to_string()),
+            None,
+            None,
+        ));
     }
 
     let content = String::from_utf8_lossy(&bytes);
@@ -1292,6 +1257,22 @@ async fn load_untracked_preview(
             new_file_source,
         }
     })
+}
+
+async fn load_preview_target_lines(
+    repo_root: &Path,
+    target: Option<PreviewTarget<'_>>,
+    file_path: &str,
+) -> color_eyre::Result<Option<Vec<String>>> {
+    match target {
+        Some(PreviewTarget::Revision(revision)) => {
+            load_revision_file_lines(repo_root, revision, file_path).await
+        }
+        Some(PreviewTarget::WorkingTree) => {
+            load_working_tree_file_lines(repo_root, file_path).await
+        }
+        None => Ok(None),
+    }
 }
 
 async fn load_working_tree_file_lines(

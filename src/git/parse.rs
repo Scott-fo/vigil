@@ -143,12 +143,10 @@ pub(crate) fn parse_commit_log_entries(raw: &str) -> Vec<CommitSearchEntry> {
 
 pub(crate) fn parse_status_entries(raw: &str) -> Vec<StatusEntry> {
     let mut entries = Vec::new();
-    let fields: Vec<&str> = raw.split('\0').collect();
-    let mut index = 0;
+    let mut fields = raw.split('\0');
 
-    while index < fields.len() {
-        let field = fields[index];
-        index += 1;
+    while let Some(field) = fields.next() {
+        let field = field.trim_end();
 
         if field.len() < 4 {
             continue;
@@ -157,27 +155,19 @@ pub(crate) fn parse_status_entries(raw: &str) -> Vec<StatusEntry> {
         let x = field.chars().next().unwrap_or(' ');
         let y = field.chars().nth(1).unwrap_or(' ');
         let status = to_status_pair(x, y);
-        let first_path = field[3..].to_string();
+        let path = &field[3..];
 
-        if first_path.is_empty() {
-            continue;
-        }
-
-        if matches!(x, 'R' | 'C') {
-            let original_path = fields.get(index).copied().unwrap_or_default().to_string();
-            index += 1;
-            entries.push(StatusEntry {
-                status,
-                path: first_path.clone(),
-                original_path: (!original_path.is_empty()).then_some(original_path),
-            });
+        if path.is_empty() {
             continue;
         }
 
         entries.push(StatusEntry {
             status,
-            path: first_path,
-            original_path: None,
+            path: path.to_string(),
+            original_path: matches!(x, 'R' | 'C')
+                .then(|| fields.next().unwrap_or_default())
+                .filter(|original_path| !original_path.is_empty())
+                .map(str::to_owned),
         });
     }
 
@@ -194,12 +184,10 @@ pub(crate) fn build_branch_diff_range(selection: &BranchCompareSelection) -> Str
 
 pub(crate) fn parse_diff_name_status_entries(raw: &str) -> Vec<StatusEntry> {
     let mut entries = Vec::new();
-    let fields: Vec<&str> = raw.split('\0').collect();
-    let mut index = 0;
+    let mut fields = raw.split('\0');
 
-    while index < fields.len() {
-        let status_field = fields[index].trim();
-        index += 1;
+    while let Some(status_field) = fields.next() {
+        let status_field = status_field.trim();
 
         if status_field.is_empty() {
             continue;
@@ -208,13 +196,8 @@ pub(crate) fn parse_diff_name_status_entries(raw: &str) -> Vec<StatusEntry> {
         let status_code = status_field.chars().next().unwrap_or(' ');
         match status_code {
             'R' | 'C' => {
-                let original_path = fields.get(index).copied().unwrap_or_default().to_string();
-                let path = fields
-                    .get(index + 1)
-                    .copied()
-                    .unwrap_or_default()
-                    .to_string();
-                index += 2;
+                let original_path = fields.next().unwrap_or_default();
+                let path = fields.next().unwrap_or_default();
 
                 if path.is_empty() {
                     continue;
@@ -222,13 +205,12 @@ pub(crate) fn parse_diff_name_status_entries(raw: &str) -> Vec<StatusEntry> {
 
                 entries.push(StatusEntry {
                     status: status_code.to_string(),
-                    path,
-                    original_path: (!original_path.is_empty()).then_some(original_path),
+                    path: path.to_string(),
+                    original_path: (!original_path.is_empty()).then_some(original_path.to_string()),
                 });
             }
             _ => {
-                let path = fields.get(index).copied().unwrap_or_default().to_string();
-                index += 1;
+                let path = fields.next().unwrap_or_default();
 
                 if path.is_empty() {
                     continue;
@@ -236,7 +218,7 @@ pub(crate) fn parse_diff_name_status_entries(raw: &str) -> Vec<StatusEntry> {
 
                 entries.push(StatusEntry {
                     status: status_code.to_string(),
-                    path,
+                    path: path.to_string(),
                     original_path: None,
                 });
             }
@@ -304,5 +286,30 @@ pub(crate) fn resolve_diff_filetype(path: &str) -> Option<&'static str> {
             "md" | "mdx" | "markdown" => Some("markdown"),
             _ => None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_diff_name_status_entries, parse_status_entries};
+
+    #[test]
+    fn status_parser_keeps_destination_path_for_renames() {
+        let entries = parse_status_entries("R  after.rs\0before.rs\0");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, "R ");
+        assert_eq!(entries[0].path, "after.rs");
+        assert_eq!(entries[0].original_path.as_deref(), Some("before.rs"));
+    }
+
+    #[test]
+    fn diff_name_status_parser_keeps_destination_path_for_renames() {
+        let entries = parse_diff_name_status_entries("R100\0before.rs\0after.rs\0");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, "R");
+        assert_eq!(entries[0].path, "after.rs");
+        assert_eq!(entries[0].original_path.as_deref(), Some("before.rs"));
     }
 }
