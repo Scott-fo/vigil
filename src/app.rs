@@ -328,21 +328,19 @@ impl App {
         }
     }
 
-    pub async fn new(options: AppLaunchOptions) -> color_eyre::Result<Self> {
-        let repo_root = match options.repo_root {
-            Some(path) => path,
-            None => std::env::current_dir().wrap_err("failed to resolve current directory")?,
-        };
-        let preference = config::read_theme_preference();
-        let theme_name = theme::resolve_theme_name(preference.theme.as_deref()).to_string();
-        let theme_mode = preference.mode.unwrap_or(ThemeMode::Dark);
-        theme::set_active_theme(&theme_name, theme_mode);
-        let mut app = Self {
+    fn build_base_app(
+        repo_root: PathBuf,
+        chooser_file_path: Option<PathBuf>,
+        events: EventHandler,
+        theme_name: String,
+        theme_mode: ThemeMode,
+    ) -> Self {
+        Self {
             running: true,
             repo_root,
-            chooser_file_path: options.chooser_file,
+            chooser_file_path,
             repo_error: None,
-            events: EventHandler::new(),
+            events,
             active_pane: ActivePane::Sidebar,
             review_mode: ReviewMode::WorkingTree,
             files: Vec::new(),
@@ -411,13 +409,45 @@ impl App {
             snackbar_notice: None,
             snackbar_generation: 0,
             status_message: None,
+        }
+    }
+
+    pub async fn new(options: AppLaunchOptions) -> color_eyre::Result<Self> {
+        let repo_root = match options.repo_root {
+            Some(path) => path,
+            None => std::env::current_dir().wrap_err("failed to resolve current directory")?,
         };
+        let preference = config::read_theme_preference();
+        let theme_name = theme::resolve_theme_name(preference.theme.as_deref()).to_string();
+        let theme_mode = preference.mode.unwrap_or(ThemeMode::Dark);
+        theme::set_active_theme(&theme_name, theme_mode);
+        let mut app = Self::build_base_app(
+            repo_root,
+            options.chooser_file,
+            EventHandler::new(),
+            theme_name.clone(),
+            theme_mode,
+        );
         app.refresh().await?;
         app.spawn_highlight_registry_init();
         if let Some(target) = options.initial_blame_target {
             app.open_blame_target(target);
         }
         Ok(app)
+    }
+
+    #[doc(hidden)]
+    pub fn new_for_benchmarks(repo_root: PathBuf) -> Self {
+        let theme_name = theme::resolve_theme_name(None).to_string();
+        let theme_mode = ThemeMode::Dark;
+        theme::set_active_theme(&theme_name, theme_mode);
+        Self::build_base_app(
+            repo_root,
+            None,
+            EventHandler::without_event_task(),
+            theme_name,
+            theme_mode,
+        )
     }
 
     fn redraw(&mut self, terminal: &mut ratatui::DefaultTerminal) -> color_eyre::Result<()> {
@@ -2693,4 +2723,200 @@ fn resolve_default_destination_ref(refs: &[String], source_ref: Option<&str>) ->
         .find(|ref_name| source_ref.is_none_or(|source| source != ref_name.as_str()))
         .cloned()
         .or_else(|| refs.first().cloned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_test_app() -> App {
+        App::new_for_benchmarks(PathBuf::from("/tmp/vigil-app-tests"))
+    }
+
+    fn build_cache_key(index: usize) -> DiffCacheKey {
+        DiffCacheKey {
+            review_scope: "working-tree".to_string(),
+            file_path: format!("src/file-{index}.rs"),
+            file_status: "M ".to_string(),
+        }
+    }
+
+    fn build_commit_entry(hash: &str, short_hash: &str, subject: &str) -> CommitSearchEntry {
+        CommitSearchEntry {
+            hash: hash.to_string(),
+            short_hash: short_hash.to_string(),
+            parent_hashes: vec!["parent".to_string()],
+            author: "Author".to_string(),
+            date: "2026-03-24".to_string(),
+            subject: subject.to_string(),
+        }
+    }
+
+    fn build_diff_view(line_count: usize) -> DiffView {
+        let mut diff = format!(
+            "diff --git a/src/app.rs b/src/app.rs\n\
+--- a/src/app.rs\n\
++++ b/src/app.rs\n\
+@@ -1,0 +1,{} @@\n",
+            line_count
+        );
+        for index in 0..line_count {
+            diff.push_str(&format!("+fn line_{index}() {{}}\n"));
+        }
+        git::build_diff_view_from_diff_text(&diff, Some("rust"))
+    }
+
+    #[test]
+    fn diff_view_cache_touches_recent_entries_before_trimming() {
+        let mut cache = DiffViewCache::default();
+
+        for index in 0..DIFF_CACHE_CAPACITY {
+            cache.insert_plain(
+                build_cache_key(index),
+                DiffView::empty(format!("plain-{index}")),
+            );
+        }
+
+        let touched_key = build_cache_key(0);
+        let evicted_key = build_cache_key(1);
+        assert!(cache.get_plain(&touched_key).is_some());
+
+        cache.insert_plain(
+            build_cache_key(DIFF_CACHE_CAPACITY),
+            DiffView::empty("overflow"),
+        );
+
+        assert!(cache.get_plain(&touched_key).is_some());
+        assert!(cache.get_plain(&evicted_key).is_none());
+    }
+
+    #[test]
+    fn prepare_diff_viewport_keeps_selection_visible_in_diff_pane() {
+        let mut app = build_test_app();
+        app.active_pane = ActivePane::Diff;
+        app.diff_view = build_diff_view(120);
+
+        let rendered_line_count = app.diff_view.display_line_count(DiffViewMode::Split);
+        app.selected_diff_line_index = rendered_line_count.saturating_sub(1);
+        app.diff_scroll = 0;
+
+        let viewport = app
+            .prepare_diff_viewport(DiffViewMode::Split, 160, 12)
+            .expect("viewport should be available");
+
+        assert!(viewport.start <= viewport.selected_index);
+        assert!(viewport.selected_index < viewport.end);
+        assert!(app.diff_scroll > 0);
+    }
+
+    #[test]
+    fn prepare_diff_viewport_does_not_auto_scroll_from_sidebar_pane() {
+        let mut app = build_test_app();
+        app.active_pane = ActivePane::Sidebar;
+        app.diff_view = build_diff_view(120);
+        app.selected_diff_line_index = 40;
+        app.diff_scroll = 0;
+
+        let viewport = app
+            .prepare_diff_viewport(DiffViewMode::Split, 160, 12)
+            .expect("viewport should be available");
+
+        assert_eq!(viewport.start, 0);
+        assert_eq!(app.diff_scroll, 0);
+    }
+
+    #[test]
+    fn commit_search_filter_and_clamp_follow_filtered_entries() {
+        let mut app = build_test_app();
+        app.commit_search_entries = vec![
+            build_commit_entry("aaaaaaaa", "aaaaaaa", "initial import"),
+            build_commit_entry("bbbbbbbb", "bbbbbbb", "refactor parser"),
+            build_commit_entry("cccccccc", "ccccccc", "fix renderer"),
+        ];
+        app.commit_search_query = "parser".to_string();
+
+        assert_eq!(app.filtered_commit_search_indices(), vec![1]);
+
+        app.commit_search_selected_index = 99;
+        app.clamp_commit_search_selection();
+        assert_eq!(app.commit_search_selected_index, 0);
+        assert_eq!(
+            app.selected_commit_search_entry()
+                .map(|entry| entry.subject),
+            Some("refactor parser".to_string())
+        );
+    }
+
+    #[test]
+    fn seed_branch_compare_selection_prefers_default_branch_over_source() {
+        let mut app = build_test_app();
+        app.branch_compare_available_refs = vec![
+            "feature/refactor".to_string(),
+            "master".to_string(),
+            "main".to_string(),
+        ];
+
+        app.seed_branch_compare_selection();
+
+        assert_eq!(
+            app.branch_compare_source_ref.as_deref(),
+            Some("feature/refactor")
+        );
+        assert!(matches!(
+            app.branch_compare_destination_ref.as_deref(),
+            Some("main" | "master")
+        ));
+        assert_eq!(app.branch_compare_selected_source_index, 0);
+        assert_eq!(app.branch_compare_selected_destination_index, 0);
+    }
+
+    #[test]
+    fn branch_compare_query_change_preserves_matching_selection() {
+        let mut app = build_test_app();
+        app.branch_compare_available_refs = vec![
+            "feature/refactor".to_string(),
+            "release/1.0".to_string(),
+            "main".to_string(),
+        ];
+        app.branch_compare_active_field = BranchCompareField::Source;
+        app.branch_compare_source_ref = Some("release/1.0".to_string());
+        app.branch_compare_source_query = "release".to_string();
+
+        app.sync_branch_compare_selection_after_query_change();
+
+        assert_eq!(
+            app.branch_compare_source_ref.as_deref(),
+            Some("release/1.0")
+        );
+        assert_eq!(app.branch_compare_selected_source_index, 0);
+    }
+
+    #[test]
+    fn build_diff_cache_key_includes_review_scope() {
+        let file = FileEntry {
+            status: "M ".to_string(),
+            path: "src/app.rs".to_string(),
+            label: "app.rs".to_string(),
+            filetype: Some("rust"),
+        };
+        let commit_key = App::build_diff_cache_key(
+            &ReviewMode::CommitCompare(CommitCompareSelection {
+                base_ref: "base".to_string(),
+                commit_hash: "commit".to_string(),
+                short_hash: "abc123".to_string(),
+                subject: "subject".to_string(),
+            }),
+            &file,
+        );
+        let branch_key = App::build_diff_cache_key(
+            &ReviewMode::BranchCompare(BranchCompareSelection {
+                source_ref: "feature".to_string(),
+                destination_ref: "main".to_string(),
+            }),
+            &file,
+        );
+
+        assert_eq!(commit_key.review_scope, "commit:base:commit");
+        assert_eq!(branch_key.review_scope, "branch:feature:main");
+    }
 }

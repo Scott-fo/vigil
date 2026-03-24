@@ -67,5 +67,9 @@ name = "app_highlight_path"
 harness = false
 
 [[bench]]
+name = "app_state_paths"
+harness = false
+
+[[bench]]
 name = "highlight_registry_init"
 harness = false

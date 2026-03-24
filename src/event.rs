@@ -70,6 +70,15 @@ impl EventHandler {
         Self::default()
     }
 
+    pub(crate) fn without_event_task() -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        Self {
+            sender,
+            receiver,
+            task: None,
+        }
+    }
+
     pub fn sender(&self) -> mpsc::UnboundedSender<Event> {
         self.sender.clone()
     }
