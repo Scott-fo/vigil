@@ -8,7 +8,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use color_eyre::eyre::{WrapErr, eyre};
@@ -2769,7 +2769,7 @@ fn base_style(kind: DiffLineKind) -> Style {
 }
 
 pub struct HighlightRegistry {
-    configs: Mutex<HashMap<&'static str, Arc<QueryHighlightConfig>>>,
+    configs: HashMap<&'static str, QueryHighlightConfig>,
 }
 
 struct QueryHighlightConfig {
@@ -2793,147 +2793,49 @@ struct ExactHighlightCacheEntry {
 
 impl std::fmt::Debug for HighlightRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let config_count = self
-            .configs
-            .lock()
-            .expect("highlight registry mutex poisoned")
-            .len();
         f.debug_struct("HighlightRegistry")
-            .field("config_count", &config_count)
+            .field("config_count", &self.configs.len())
             .finish()
     }
 }
 
 impl HighlightRegistry {
     pub fn new() -> color_eyre::Result<Self> {
-        Self::new_for_filetypes(Self::all_filetypes().iter().copied())
-    }
+        let mut configs = HashMap::new();
+        let ecma_highlights = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/ecma/highlights.scm"
+        ));
+        let ecma_locals = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/ecma/locals.scm"
+        ));
+        let ecma_injections = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/ecma/injections.scm"
+        ));
+        let jsx_nvim_highlights = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/jsx/highlights.scm"
+        ));
+        let jsx_nvim_injections = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/jsx/injections.scm"
+        ));
+        let typescript_highlights_query = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/typescript/highlights.scm"
+        ));
+        let typescript_locals_query = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/typescript/locals.scm"
+        ));
+        let typescript_injections_query = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/nvim-treesitter/typescript/injections.scm"
+        ));
 
-    pub fn new_for_filetypes<I>(filetypes: I) -> color_eyre::Result<Self>
-    where
-        I: IntoIterator<Item = &'static str>,
-    {
-        let registry = Self {
-            configs: Mutex::new(HashMap::new()),
-        };
-        registry.ensure_filetypes(filetypes)?;
-        Ok(registry)
-    }
-
-    pub fn all_filetypes() -> &'static [&'static str] {
-        &[
-            "rust",
-            "javascript",
-            "jsx",
-            "typescript",
-            "tsx",
-            "python",
-            "go",
-            "c",
-            "cpp",
-            "csharp",
-            "bash",
-            "java",
-            "ruby",
-            "php",
-            "scala",
-            "html",
-            "json",
-            "yaml",
-            "haskell",
-            "css",
-            "nix",
-        ]
-    }
-
-    pub fn ensure_filetypes<I>(&self, filetypes: I) -> color_eyre::Result<()>
-    where
-        I: IntoIterator<Item = &'static str>,
-    {
-        for filetype in filetypes {
-            let _ = self.ensure_filetype(filetype)?;
-        }
-        Ok(())
-    }
-
-    pub fn ensure_filetype(&self, filetype: &'static str) -> color_eyre::Result<bool> {
-        if filetype == "markdown" {
-            return Ok(false);
-        }
-
-        {
-            let configs = self
-                .configs
-                .lock()
-                .expect("highlight registry mutex poisoned");
-            if configs.contains_key(filetype) {
-                return Ok(false);
-            }
-        }
-
-        let Some(config) = build_highlight_config(filetype)? else {
-            return Ok(false);
-        };
-        let mut configs = self
-            .configs
-            .lock()
-            .expect("highlight registry mutex poisoned");
-        if configs.contains_key(filetype) {
-            return Ok(false);
-        }
-        configs.insert(filetype, Arc::new(config));
-        Ok(true)
-    }
-
-    fn config(&self, filetype: &'static str) -> Option<Arc<QueryHighlightConfig>> {
-        let _ = self.ensure_filetype(filetype);
-        let configs = self
-            .configs
-            .lock()
-            .expect("highlight registry mutex poisoned");
-        configs.get(filetype).cloned()
-    }
-}
-
-fn build_highlight_config(
-    filetype: &'static str,
-) -> color_eyre::Result<Option<QueryHighlightConfig>> {
-    let mut configs = HashMap::new();
-    let ecma_highlights = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/ecma/highlights.scm"
-    ));
-    let ecma_locals = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/ecma/locals.scm"
-    ));
-    let ecma_injections = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/ecma/injections.scm"
-    ));
-    let jsx_nvim_highlights = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/jsx/highlights.scm"
-    ));
-    let jsx_nvim_injections = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/jsx/injections.scm"
-    ));
-    let typescript_highlights_query = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/typescript/highlights.scm"
-    ));
-    let typescript_locals_query = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/typescript/locals.scm"
-    ));
-    let typescript_injections_query = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/typescript/injections.scm"
-    ));
-
-    match filetype {
-        "rust" => register_highlight_config(
+        register_highlight_config(
             &mut configs,
             "rust",
             tree_sitter_rust::LANGUAGE.into(),
@@ -2947,8 +2849,9 @@ fn build_highlight_config(
                 env!("CARGO_MANIFEST_DIR"),
                 "/vendor/nvim-treesitter/rust/locals.scm"
             )),
-        )?,
-        "javascript" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "javascript",
             tree_sitter_javascript::LANGUAGE.into(),
@@ -2956,54 +2859,51 @@ fn build_highlight_config(
             tree_sitter_javascript::HIGHLIGHT_QUERY,
             tree_sitter_javascript::INJECTIONS_QUERY,
             tree_sitter_javascript::LOCALS_QUERY,
-        )?,
-        "jsx" => {
-            let jsx_highlights = format!(
-                "{}\n{}",
-                tree_sitter_javascript::HIGHLIGHT_QUERY,
-                tree_sitter_javascript::JSX_HIGHLIGHT_QUERY
-            );
-            register_highlight_config(
-                &mut configs,
-                "jsx",
-                tree_sitter_javascript::LANGUAGE.into(),
-                "javascript",
-                &jsx_highlights,
-                tree_sitter_javascript::INJECTIONS_QUERY,
-                tree_sitter_javascript::LOCALS_QUERY,
-            )?;
-        }
-        "typescript" => {
-            let typescript_highlights = format!("{ecma_highlights}\n{typescript_highlights_query}");
-            let typescript_locals = format!("{ecma_locals}\n{typescript_locals_query}");
-            let typescript_injections = format!("{ecma_injections}\n{typescript_injections_query}");
-            register_highlight_config(
-                &mut configs,
-                "typescript",
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                "typescript",
-                &typescript_highlights,
-                &typescript_injections,
-                &typescript_locals,
-            )?;
-        }
-        "tsx" => {
-            let typescript_locals = format!("{ecma_locals}\n{typescript_locals_query}");
-            let tsx_highlights =
-                format!("{ecma_highlights}\n{typescript_highlights_query}\n{jsx_nvim_highlights}");
-            let tsx_injections =
-                format!("{ecma_injections}\n{typescript_injections_query}\n{jsx_nvim_injections}");
-            register_highlight_config(
-                &mut configs,
-                "tsx",
-                tree_sitter_typescript::LANGUAGE_TSX.into(),
-                "tsx",
-                &tsx_highlights,
-                &tsx_injections,
-                &typescript_locals,
-            )?;
-        }
-        "python" => register_highlight_config(
+        )?;
+
+        let jsx_highlights = format!(
+            "{}\n{}",
+            tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_javascript::JSX_HIGHLIGHT_QUERY
+        );
+        register_highlight_config(
+            &mut configs,
+            "jsx",
+            tree_sitter_javascript::LANGUAGE.into(),
+            "javascript",
+            &jsx_highlights,
+            tree_sitter_javascript::INJECTIONS_QUERY,
+            tree_sitter_javascript::LOCALS_QUERY,
+        )?;
+
+        let typescript_highlights = format!("{ecma_highlights}\n{typescript_highlights_query}");
+        let typescript_locals = format!("{ecma_locals}\n{typescript_locals_query}");
+        let typescript_injections = format!("{ecma_injections}\n{typescript_injections_query}");
+        register_highlight_config(
+            &mut configs,
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            "typescript",
+            &typescript_highlights,
+            &typescript_injections,
+            &typescript_locals,
+        )?;
+
+        let tsx_highlights =
+            format!("{ecma_highlights}\n{typescript_highlights_query}\n{jsx_nvim_highlights}");
+        let tsx_injections =
+            format!("{ecma_injections}\n{typescript_injections_query}\n{jsx_nvim_injections}");
+        register_highlight_config(
+            &mut configs,
+            "tsx",
+            tree_sitter_typescript::LANGUAGE_TSX.into(),
+            "tsx",
+            &tsx_highlights,
+            &tsx_injections,
+            &typescript_locals,
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "python",
             tree_sitter_python::LANGUAGE.into(),
@@ -3011,8 +2911,9 @@ fn build_highlight_config(
             tree_sitter_python::HIGHLIGHTS_QUERY,
             "",
             "",
-        )?,
-        "go" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "go",
             tree_sitter_go::LANGUAGE.into(),
@@ -3026,8 +2927,9 @@ fn build_highlight_config(
                 env!("CARGO_MANIFEST_DIR"),
                 "/vendor/nvim-treesitter/go/locals.scm"
             )),
-        )?,
-        "c" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "c",
             tree_sitter_c::LANGUAGE.into(),
@@ -3035,8 +2937,9 @@ fn build_highlight_config(
             tree_sitter_c::HIGHLIGHT_QUERY,
             "",
             "",
-        )?,
-        "cpp" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "cpp",
             tree_sitter_cpp::LANGUAGE.into(),
@@ -3044,8 +2947,9 @@ fn build_highlight_config(
             tree_sitter_cpp::HIGHLIGHT_QUERY,
             "",
             "",
-        )?,
-        "csharp" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "csharp",
             tree_sitter_c_sharp::LANGUAGE.into(),
@@ -3056,8 +2960,9 @@ fn build_highlight_config(
             )),
             "",
             "",
-        )?,
-        "bash" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "bash",
             tree_sitter_bash::LANGUAGE.into(),
@@ -3065,8 +2970,9 @@ fn build_highlight_config(
             tree_sitter_bash::HIGHLIGHT_QUERY,
             "",
             "",
-        )?,
-        "java" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "java",
             tree_sitter_java::LANGUAGE.into(),
@@ -3074,8 +2980,9 @@ fn build_highlight_config(
             tree_sitter_java::HIGHLIGHTS_QUERY,
             "",
             "",
-        )?,
-        "ruby" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "ruby",
             tree_sitter_ruby::LANGUAGE.into(),
@@ -3083,8 +2990,9 @@ fn build_highlight_config(
             tree_sitter_ruby::HIGHLIGHTS_QUERY,
             "",
             tree_sitter_ruby::LOCALS_QUERY,
-        )?,
-        "php" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "php",
             tree_sitter_php::LANGUAGE_PHP.into(),
@@ -3092,8 +3000,9 @@ fn build_highlight_config(
             tree_sitter_php::HIGHLIGHTS_QUERY,
             tree_sitter_php::INJECTIONS_QUERY,
             "",
-        )?,
-        "scala" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "scala",
             tree_sitter_scala::LANGUAGE.into(),
@@ -3101,8 +3010,9 @@ fn build_highlight_config(
             tree_sitter_scala::HIGHLIGHTS_QUERY,
             "",
             tree_sitter_scala::LOCALS_QUERY,
-        )?,
-        "html" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "html",
             tree_sitter_html::LANGUAGE.into(),
@@ -3110,8 +3020,9 @@ fn build_highlight_config(
             tree_sitter_html::HIGHLIGHTS_QUERY,
             tree_sitter_html::INJECTIONS_QUERY,
             "",
-        )?,
-        "json" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "json",
             tree_sitter_json::LANGUAGE.into(),
@@ -3119,8 +3030,9 @@ fn build_highlight_config(
             tree_sitter_json::HIGHLIGHTS_QUERY,
             "",
             "",
-        )?,
-        "yaml" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "yaml",
             tree_sitter_yaml::LANGUAGE.into(),
@@ -3128,8 +3040,9 @@ fn build_highlight_config(
             tree_sitter_yaml::HIGHLIGHTS_QUERY,
             "",
             "",
-        )?,
-        "haskell" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "haskell",
             tree_sitter_haskell::LANGUAGE.into(),
@@ -3137,8 +3050,9 @@ fn build_highlight_config(
             tree_sitter_haskell::HIGHLIGHTS_QUERY,
             tree_sitter_haskell::INJECTIONS_QUERY,
             tree_sitter_haskell::LOCALS_QUERY,
-        )?,
-        "css" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "css",
             tree_sitter_css::LANGUAGE.into(),
@@ -3146,8 +3060,9 @@ fn build_highlight_config(
             tree_sitter_css::HIGHLIGHTS_QUERY,
             "",
             "",
-        )?,
-        "nix" => register_highlight_config(
+        )?;
+
+        register_highlight_config(
             &mut configs,
             "nix",
             tree_sitter_nix::LANGUAGE.into(),
@@ -3155,11 +3070,14 @@ fn build_highlight_config(
             tree_sitter_nix::HIGHLIGHTS_QUERY,
             tree_sitter_nix::INJECTIONS_QUERY,
             "",
-        )?,
-        _ => return Ok(None),
+        )?;
+
+        Ok(Self { configs })
     }
 
-    Ok(configs.remove(filetype))
+    fn config(&self, filetype: &'static str) -> Option<&QueryHighlightConfig> {
+        self.configs.get(filetype)
+    }
 }
 
 thread_local! {
@@ -3270,47 +3188,15 @@ pub fn clear_exact_highlight_cache() {
     EXACT_HIGHLIGHT_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
-pub fn prewarm_highlight_registry<I>(
-    registry: &HighlightRegistry,
-    filetypes: I,
-) -> color_eyre::Result<()>
-where
-    I: IntoIterator<Item = &'static str>,
-{
-    for filetype in filetypes {
-        let _ = registry.ensure_filetype(filetype)?;
-        if let Some(sample) = sample_source_for_filetype(filetype) {
-            let _ = highlight_source_lines(registry, filetype, sample);
-        }
-    }
-    Ok(())
-}
-
-fn sample_source_for_filetype(filetype: &'static str) -> Option<&'static str> {
-    match filetype {
-        "rust" => Some("fn build_user(id: usize) -> User { User::new(id) }"),
-        "go" => Some("func BuildUser(id int) User { return NewUser(id) }"),
-        "typescript" => Some("const user: User = await loadUser(id);"),
-        "tsx" => Some("<Card title=\"demo\">{value}</Card>"),
-        "javascript" => Some("const user = await loadUser(id);"),
-        "jsx" => Some("<Card>{value}</Card>"),
-        "python" => Some("def build_user(id: int) -> User:\n    return User(id)"),
-        "bash" => Some("build_user() { echo \"$1\"; }"),
-        "java" => Some("class User { String name() { return value; } }"),
-        "ruby" => Some("def build_user(id) = User.new(id)"),
-        "php" => Some("<?php function buildUser($id) { return new User($id); }"),
-        "scala" => Some("def buildUser(id: Int): User = User(id)"),
-        "html" => Some("<div class=\"card\">demo</div>"),
-        "json" => Some("{\"user\": {\"id\": 1}}"),
-        "yaml" => Some("user:\n  id: 1"),
-        "css" => Some(".card { color: red; }"),
-        "c" => Some("int build_user(int id) { return id; }"),
-        "cpp" => Some("int build_user(int id) { return id; }"),
-        "csharp" => Some("class User { string Name() => value; }"),
-        "haskell" => Some("buildUser id = User id"),
-        "nix" => Some("{ user = { id = 1; }; }"),
-        "markdown" => Some("# Prefetch"),
-        _ => None,
+pub fn prewarm_highlight_registry(registry: &HighlightRegistry) {
+    for (filetype, sample) in [
+        ("rust", "fn build_user(id: usize) -> User { User::new(id) }"),
+        ("go", "func BuildUser(id int) User { return NewUser(id) }"),
+        ("typescript", "const user: User = await loadUser(id);"),
+        ("tsx", "<Card title=\"demo\">{value}</Card>"),
+        ("markdown", "# Prefetch"),
+    ] {
+        let _ = highlight_source_lines(registry, filetype, sample);
     }
 }
 
