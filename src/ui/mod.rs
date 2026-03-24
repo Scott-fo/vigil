@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{ActivePane, App, DiffViewMode},
+    app::{ActivePane, App, DiffViewMode, PreparedDiffViewport},
     theme,
 };
 
@@ -203,6 +203,52 @@ pub fn diff_gap_click_at(
         .selected_gap_action(app.diff_view_mode, display_index)?;
 
     Some(display_index)
+}
+
+pub fn prepare_diff_viewport_for_terminal(
+    app: &mut App,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> Option<PreparedDiffViewport> {
+    if app.show_splash() {
+        return None;
+    }
+
+    let [_, diff_area] = main_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let title = app
+        .files
+        .get(app.selected_file_index)
+        .map(|file| file.label.clone())
+        .unwrap_or_else(|| "No file selected".to_string());
+    let mode_label = app.review_mode_label();
+    let right_title = match app.active_pane {
+        ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
+        ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
+    };
+    let block = bordered_panel(
+        &title,
+        app.active_pane == ActivePane::Diff,
+        Some(if mode_label.is_empty() {
+            right_title
+        } else {
+            format!("{right_title}  {mode_label}")
+        }),
+    );
+    let inner = block.inner(diff_area);
+    let chunks = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Min(1),
+            ratatui::layout::Constraint::Length(1),
+        ])
+        .split(inner);
+    let body_area = chunks[0];
+
+    app.prepare_diff_viewport(
+        app.diff_view_mode,
+        body_area.width as usize,
+        body_area.height as usize,
+    )
 }
 
 fn bordered_panel(title: &str, active: bool, right_title: Option<String>) -> Block<'static> {

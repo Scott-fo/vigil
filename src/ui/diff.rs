@@ -50,66 +50,39 @@ pub(super) fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let diff_focused = app.active_pane == ActivePane::Diff;
     let mode = app.diff_view_mode;
-    let viewport_height = area.height as usize;
-    let (visible_start, visible_end, rendered_line_count, visible_lines) = {
+    let Some(viewport) = app.prepare_diff_viewport(mode, area.width as usize, area.height as usize)
+    else {
+        let paragraph = Paragraph::new(Text::default())
+            .style(Style::new().fg(text_color()).bg(panel_color()))
+            .scroll((0, 0));
+        frame.render_widget(paragraph, area);
+        return;
+    };
+    app.update_diff_viewport(mode, viewport.width, viewport.start, viewport.end);
+    let visible_lines = {
         let rendered_lines = app.diff_view.rendered_lines(mode, area.width as usize);
-        let max_scroll = rendered_lines
-            .len()
-            .saturating_sub(viewport_height)
-            .min(u16::MAX as usize) as u16;
-        if app.diff_scroll > max_scroll {
-            app.diff_scroll = max_scroll;
-        }
-
-        let selected_index = app
-            .selected_diff_line_index
-            .min(rendered_lines.len().saturating_sub(1));
-        if diff_focused {
-            if selected_index < app.diff_scroll as usize {
-                app.diff_scroll = selected_index.min(max_scroll as usize) as u16;
-            } else {
-                let visible_end = (app.diff_scroll as usize).saturating_add(viewport_height);
-                if viewport_height > 0 && selected_index >= visible_end {
-                    app.diff_scroll = selected_index
-                        .saturating_add(1)
-                        .saturating_sub(viewport_height)
-                        .min(max_scroll as usize) as u16;
-                }
-            }
-        }
-
-        let visible_start = (app.diff_scroll as usize).min(max_scroll as usize);
-        let visible_end = (visible_start + viewport_height).min(rendered_lines.len());
-        let visible_lines = rendered_lines[visible_start..visible_end]
+        rendered_lines[viewport.start..viewport.end]
             .iter()
             .enumerate()
             .map(|(offset, line)| {
-                let display_index = visible_start + offset;
-                if diff_focused && display_index == selected_index {
+                let display_index = viewport.start + offset;
+                if diff_focused && display_index == viewport.selected_index {
                     highlight_line(line)
                 } else {
                     line.clone()
                 }
             })
-            .collect::<Vec<_>>();
-
-        (
-            visible_start,
-            visible_end,
-            rendered_lines.len(),
-            visible_lines,
-        )
+            .collect::<Vec<_>>()
     };
-    app.update_diff_viewport(mode, area.width as usize, visible_start, visible_end);
     let paragraph = Paragraph::new(Text::from(visible_lines))
         .style(Style::new().fg(text_color()).bg(panel_color()))
         .scroll((0, 0));
     frame.render_widget(paragraph, area);
 
-    if rendered_line_count > viewport_height {
-        let mut scrollbar_state = ScrollbarState::new(rendered_line_count)
+    if viewport.rendered_line_count > area.height as usize {
+        let mut scrollbar_state = ScrollbarState::new(viewport.rendered_line_count)
             .position(app.diff_scroll as usize)
-            .viewport_content_length(viewport_height);
+            .viewport_content_length(area.height as usize);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
