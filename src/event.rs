@@ -13,6 +13,14 @@ use crate::{
 };
 
 #[derive(Debug)]
+pub struct DiffPrefetchedEvent {
+    pub generation: u64,
+    pub key: DiffCacheKey,
+    pub plain: DiffView,
+    pub highlighted: Option<DiffView>,
+}
+
+#[derive(Debug)]
 pub enum Event {
     Crossterm(CrosstermEvent),
     HighlightRegistryReady(Result<SharedHighlightRegistry, String>),
@@ -25,12 +33,7 @@ pub enum Event {
         complete: bool,
         result: Result<DiffView, String>,
     },
-    DiffPrefetched {
-        generation: u64,
-        key: DiffCacheKey,
-        plain: DiffView,
-        highlighted: Option<DiffView>,
-    },
+    DiffPrefetched(Box<DiffPrefetchedEvent>),
     BlameLoaded {
         request_id: u64,
         result: Result<BlameCommitDetails, String>,

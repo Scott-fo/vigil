@@ -24,7 +24,7 @@ use tokio::task;
 use crate::theme::config;
 use crate::ui::splash;
 use crate::{
-    event::{Event, EventHandler},
+    event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{
         self, BlameCommitDetails, BlameTarget, BranchCompareSelection, CommitCompareSelection,
         CommitSearchEntry, DiffView, FileEntry, SharedHighlightRegistry,
@@ -542,12 +542,13 @@ impl App {
                         }
                     }
                 }
-                Event::DiffPrefetched {
-                    generation,
-                    key,
-                    plain,
-                    highlighted,
-                } => {
+                Event::DiffPrefetched(prefetched) => {
+                    let DiffPrefetchedEvent {
+                        generation,
+                        key,
+                        plain,
+                        highlighted,
+                    } = *prefetched;
                     if generation == self.diff_cache_generation {
                         self.diff_view_cache.insert_plain(key.clone(), plain);
                         if let Some(highlighted_view) = highlighted {
@@ -1212,12 +1213,12 @@ impl App {
                     continue;
                 };
 
-                let _ = sender.send(Event::DiffPrefetched {
+                let _ = sender.send(Event::DiffPrefetched(Box::new(DiffPrefetchedEvent {
                     generation,
                     key: cache_key,
                     plain: plain_view,
                     highlighted: None,
-                });
+                })));
             }
         }));
     }

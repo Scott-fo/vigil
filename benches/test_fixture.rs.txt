@@ -1,3 +1,4 @@
+// cargo-ignore
 use std::{
     cell::RefCell,
     cmp::Reverse,

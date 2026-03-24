@@ -21,7 +21,7 @@ struct GitRsNewFileFixture {
 static GIT_RS_NEW_FILE_FIXTURE: LazyLock<GitRsNewFileFixture> = LazyLock::new(build_fixture);
 
 fn build_fixture() -> GitRsNewFileFixture {
-    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches/test.rs");
+    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches/test_fixture.rs.txt");
     let content = fs::read_to_string(&source_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()))
         .replace("\r\n", "\n");
