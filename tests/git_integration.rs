@@ -194,17 +194,30 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
     assert!(rendered.contains("fn added() {}"));
 
     git::toggle_file_stage(&repo.root, &modified).await?;
+    let staged_status = git::load_status_for_path(&repo.root, "src/lib.rs").await?;
+    assert_eq!(
+        staged_status.as_ref().map(|file| file.status.as_str()),
+        Some("M ")
+    );
     let staged_files = git::load_files_with_status(&repo.root).await?;
     let staged = find_file(&staged_files, "src/lib.rs");
     assert_eq!(staged.status, "M ");
     assert!(git::is_file_staged(&staged.status));
 
     git::toggle_file_stage(&repo.root, &staged).await?;
+    let unstaged_status = git::load_status_for_path(&repo.root, "src/lib.rs").await?;
+    assert_eq!(
+        unstaged_status.as_ref().map(|file| file.status.as_str()),
+        Some(" M")
+    );
     let unstaged_files = git::load_files_with_status(&repo.root).await?;
     let unstaged = find_file(&unstaged_files, "src/lib.rs");
     assert_eq!(unstaged.status, " M");
 
     git::discard_file_changes(&repo.root, &unstaged).await?;
+    assert!(git::load_status_for_path(&repo.root, "src/lib.rs")
+        .await?
+        .is_none());
     assert_eq!(repo.read("src/lib.rs"), "pub fn tracked() {}\n");
 
     git::discard_file_changes(&repo.root, &untracked).await?;
