@@ -2,6 +2,7 @@ use std::{
     collections::{HashSet, VecDeque},
     path::PathBuf,
     process::Stdio,
+    time::{Duration, Instant},
 };
 
 use color_eyre::eyre::WrapErr;
@@ -220,6 +221,138 @@ struct DiffHighlightJob {
     kind: DiffHighlightJobKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiffTimingPaintStage {
+    Plain,
+    Viewport,
+    Full,
+}
+
+#[derive(Debug)]
+struct DiffTimingTrace {
+    auto_exit: bool,
+    active_request_id: Option<u64>,
+    active_file_path: Option<String>,
+    started_at: Option<Instant>,
+    plain_painted_at: Option<Duration>,
+    viewport_painted_at: Option<Duration>,
+    full_painted_at: Option<Duration>,
+    pending_paint: Option<(u64, DiffTimingPaintStage)>,
+    finished: bool,
+}
+
+impl DiffTimingTrace {
+    fn from_env() -> Option<Self> {
+        std::env::var_os("VIGIL_TRACE_DIFF_TIMINGS")?;
+        Some(Self {
+            auto_exit: std::env::var_os("VIGIL_TRACE_DIFF_TIMINGS_EXIT").is_some(),
+            active_request_id: None,
+            active_file_path: None,
+            started_at: None,
+            plain_painted_at: None,
+            viewport_painted_at: None,
+            full_painted_at: None,
+            pending_paint: None,
+            finished: false,
+        })
+    }
+
+    fn begin(&mut self, request_id: u64, file_path: &str) {
+        if self.finished || self.active_request_id.is_some() {
+            return;
+        }
+
+        self.active_request_id = Some(request_id);
+        self.active_file_path = Some(file_path.to_string());
+        self.started_at = Some(Instant::now());
+        self.plain_painted_at = None;
+        self.viewport_painted_at = None;
+        self.full_painted_at = None;
+        self.pending_paint = None;
+        eprintln!("[diff-trace] started request={request_id} file={file_path}");
+    }
+
+    fn note_cached_plain_visible(&mut self, request_id: u64) {
+        if self.active_request_id != Some(request_id) || self.plain_painted_at.is_some() {
+            return;
+        }
+
+        self.plain_painted_at = Some(Duration::ZERO);
+        if let Some(file_path) = self.active_file_path.as_deref() {
+            eprintln!("[diff-trace] plain_painted=0.000 ms source=cached file={file_path}");
+        }
+    }
+
+    fn queue_paint(&mut self, request_id: u64, stage: DiffTimingPaintStage) {
+        if self.active_request_id == Some(request_id) {
+            self.pending_paint = Some((request_id, stage));
+        }
+    }
+
+    fn mark_paint_after_draw(&mut self) -> bool {
+        let Some((request_id, stage)) = self.pending_paint.take() else {
+            return false;
+        };
+        if self.active_request_id != Some(request_id) {
+            return false;
+        }
+        let Some(started_at) = self.started_at else {
+            return false;
+        };
+        let elapsed = started_at.elapsed();
+        let file_path = self.active_file_path.as_deref().unwrap_or("<unknown>");
+
+        match stage {
+            DiffTimingPaintStage::Plain => {
+                if self.plain_painted_at.is_none() {
+                    self.plain_painted_at = Some(elapsed);
+                    eprintln!(
+                        "[diff-trace] plain_painted={:.3} ms file={file_path}",
+                        elapsed.as_secs_f64() * 1000.0
+                    );
+                }
+                false
+            }
+            DiffTimingPaintStage::Viewport => {
+                if self.viewport_painted_at.is_none() {
+                    self.viewport_painted_at = Some(elapsed);
+                    let white_to_color = self
+                        .plain_painted_at
+                        .map(|plain| elapsed.saturating_sub(plain))
+                        .unwrap_or(elapsed);
+                    eprintln!(
+                        "[diff-trace] viewport_painted={:.3} ms white_to_viewport={:.3} ms file={file_path}",
+                        elapsed.as_secs_f64() * 1000.0,
+                        white_to_color.as_secs_f64() * 1000.0
+                    );
+                }
+                false
+            }
+            DiffTimingPaintStage::Full => {
+                if self.full_painted_at.is_none() {
+                    self.full_painted_at = Some(elapsed);
+                    let white_to_full = self
+                        .plain_painted_at
+                        .map(|plain| elapsed.saturating_sub(plain))
+                        .unwrap_or(elapsed);
+                    let viewport_to_full = self
+                        .viewport_painted_at
+                        .map(|viewport| elapsed.saturating_sub(viewport))
+                        .unwrap_or(Duration::ZERO);
+                    eprintln!(
+                        "[diff-trace] full_painted={:.3} ms white_to_full={:.3} ms viewport_to_full={:.3} ms file={file_path}",
+                        elapsed.as_secs_f64() * 1000.0,
+                        white_to_full.as_secs_f64() * 1000.0,
+                        viewport_to_full.as_secs_f64() * 1000.0
+                    );
+                }
+                self.finished = true;
+                self.auto_exit
+            }
+        }
+    }
+}
+
 struct CommitSearchCandidate {
     index: usize,
     haystack: String,
@@ -255,6 +388,7 @@ pub struct App {
     diff_highlight_job: Option<DiffHighlightJob>,
     diff_highlight_complete: bool,
     diff_viewport: Option<DiffViewport>,
+    diff_timing_trace: Option<DiffTimingTrace>,
     background_tasks: Vec<task::JoinHandle<()>>,
     diff_view_cache: DiffViewCache,
     diff_cache_generation: u64,
@@ -360,6 +494,7 @@ impl App {
             diff_highlight_job: None,
             diff_highlight_complete: false,
             diff_viewport: None,
+            diff_timing_trace: DiffTimingTrace::from_env(),
             background_tasks: Vec::new(),
             diff_view_cache: DiffViewCache::default(),
             diff_cache_generation: 0,
@@ -428,6 +563,14 @@ impl App {
             self.maybe_queue_diff_highlight();
         }
         terminal.draw(|frame| ui::render(frame, self))?;
+        if self
+            .diff_timing_trace
+            .as_mut()
+            .is_some_and(DiffTimingTrace::mark_paint_after_draw)
+        {
+            self.quit();
+            return Ok(());
+        }
         self.maybe_queue_diff_highlight();
         Ok(())
     }
@@ -493,6 +636,9 @@ impl App {
                                 self.diff_view = diff_view;
                                 self.diff_highlight_complete = self.highlight_registry.is_none();
                                 self.status_message = Some(self.current_status_message());
+                                if let Some(trace) = self.diff_timing_trace.as_mut() {
+                                    trace.queue_paint(request_id, DiffTimingPaintStage::Plain);
+                                }
                             }
                             Err(error) => {
                                 self.diff_view = DiffView::empty(error);
@@ -530,6 +676,16 @@ impl App {
                                     self.diff_view.merge_highlighting_from(&diff_view);
                                 }
                                 self.status_message = Some(self.current_status_message());
+                                if let Some(trace) = self.diff_timing_trace.as_mut() {
+                                    trace.queue_paint(
+                                        request_id,
+                                        if complete {
+                                            DiffTimingPaintStage::Full
+                                        } else {
+                                            DiffTimingPaintStage::Viewport
+                                        },
+                                    );
+                                }
                             }
                             Err(error) => {
                                 self.status_message =
@@ -1248,6 +1404,12 @@ impl App {
             return;
         };
 
+        if self.highlight_registry.is_some()
+            && let Some(trace) = self.diff_timing_trace.as_mut()
+        {
+            trace.begin(request_id, &file.path);
+        }
+
         self.spawn_diff_prefetch();
 
         let cache_key = self.diff_cache_key(&file);
@@ -1259,6 +1421,9 @@ impl App {
             self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
             self.diff_view = diff_view;
             self.diff_highlight_complete = highlight_complete;
+            if let Some(trace) = self.diff_timing_trace.as_mut() {
+                trace.note_cached_plain_visible(request_id);
+            }
             self.status_message = Some(self.current_status_message());
             return;
         }
@@ -1267,6 +1432,9 @@ impl App {
             let max_index = plain_diff_view.last_selectable_index(self.diff_view_mode);
             self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
             self.diff_view = plain_diff_view;
+            if let Some(trace) = self.diff_timing_trace.as_mut() {
+                trace.note_cached_plain_visible(request_id);
+            }
             self.status_message = Some(self.current_status_message());
             return;
         }
