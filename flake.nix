@@ -68,6 +68,7 @@
             };
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
+            nativeCheckInputs = [ pkgs.git ];
 
             postFixup = ''
               wrapProgram "$out/bin/vigil" \
