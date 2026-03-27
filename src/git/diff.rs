@@ -30,8 +30,10 @@ pub struct DiffView {
     gaps: Vec<DiffHunkGap>,
     gap_expansions: HashMap<usize, DiffGapExpansion>,
     old_file_source: Option<Arc<str>>,
+    old_exact_highlighted_lines: Option<Arc<[Vec<SyntaxToken>]>>,
     new_file_lines: Option<Vec<String>>,
     new_file_source: Option<Arc<str>>,
+    new_exact_highlighted_lines: Option<Arc<[Vec<SyntaxToken>]>>,
     display_cache: DiffDisplayCache,
 }
 
@@ -44,8 +46,10 @@ impl DiffView {
             gaps: Vec::new(),
             gap_expansions: HashMap::new(),
             old_file_source: None,
+            old_exact_highlighted_lines: None,
             new_file_lines: None,
             new_file_source: None,
+            new_exact_highlighted_lines: None,
             display_cache: DiffDisplayCache::default(),
         }
     }
@@ -330,7 +334,7 @@ impl DiffView {
                 lines.push(render_expanded_context_line(
                     line_number,
                     &text,
-                    None,
+                    self.expanded_context_highlighting(line_number),
                     width,
                     split,
                 ));
@@ -378,7 +382,7 @@ impl DiffView {
                 lines.push(render_expanded_context_line(
                     line_number,
                     &text,
-                    None,
+                    self.expanded_context_highlighting(line_number),
                     width,
                     split,
                 ));
@@ -390,6 +394,14 @@ impl DiffView {
 
     fn invalidate_display_cache(&mut self) {
         self.display_cache = DiffDisplayCache::default();
+    }
+
+    fn expanded_context_highlighting(&self, line_number: usize) -> Option<Vec<SyntaxToken>> {
+        let line_index = line_number.checked_sub(1)?;
+        self.new_exact_highlighted_lines
+            .as_ref()?
+            .get(line_index)
+            .cloned()
     }
 
     pub fn apply_syntax_highlighting(
@@ -430,30 +442,36 @@ impl DiffView {
         let rows = &self.rows;
         let left_source = self.old_file_source.clone();
         let right_source = self.new_file_source.clone();
+        let left_exact_highlighted_lines = left_source
+            .as_ref()
+            .and_then(|source| highlight_source_lines_cached_exact(registry, filetype, source));
+        let right_exact_highlighted_lines = right_source
+            .as_ref()
+            .and_then(|source| highlight_source_lines_cached_exact(registry, filetype, source));
         let (left, right) = run_optional_pair(
-            left_source.is_some(),
-            right_source.is_some(),
+            left_exact_highlighted_lines.is_some(),
+            right_exact_highlighted_lines.is_some(),
             || {
-                left_source.and_then(|source| {
-                    prepare_exact_side_highlighting(
-                        rows,
-                        HighlightSide::Left,
-                        &source,
-                        filetype,
-                        registry,
-                    )
-                })
+                left_exact_highlighted_lines
+                    .as_deref()
+                    .and_then(|highlighted_lines| {
+                        prepare_exact_side_highlighting(
+                            rows,
+                            HighlightSide::Left,
+                            highlighted_lines,
+                        )
+                    })
             },
             || {
-                right_source.and_then(|source| {
-                    prepare_exact_side_highlighting(
-                        rows,
-                        HighlightSide::Right,
-                        &source,
-                        filetype,
-                        registry,
-                    )
-                })
+                right_exact_highlighted_lines
+                    .as_deref()
+                    .and_then(|highlighted_lines| {
+                        prepare_exact_side_highlighting(
+                            rows,
+                            HighlightSide::Right,
+                            highlighted_lines,
+                        )
+                    })
             },
         );
 
@@ -461,6 +479,9 @@ impl DiffView {
             self.apply_syntax_highlighting(Some(filetype), registry);
             return;
         }
+
+        self.old_exact_highlighted_lines = left_exact_highlighted_lines;
+        self.new_exact_highlighted_lines = right_exact_highlighted_lines;
 
         if let Some(result) = left {
             apply_completed_highlighting(&mut self.rows, result);
@@ -642,15 +663,11 @@ fn prepare_side_highlighting(
 fn prepare_exact_side_highlighting(
     rows: &[DiffRow],
     side: HighlightSide,
-    source: &Arc<str>,
-    filetype: &'static str,
-    registry: &HighlightRegistry,
+    highlighted_lines: &[Vec<SyntaxToken>],
 ) -> Option<CompletedHighlightSide> {
-    if source.is_empty() {
+    if highlighted_lines.is_empty() {
         return None;
     }
-
-    let highlighted_lines = highlight_source_lines_cached_exact(registry, filetype, source)?;
     let mut row_indices = Vec::new();
     let mut exact_row_lines = Vec::new();
 
@@ -993,8 +1010,10 @@ pub fn build_diff_view_from_preview_data(
         gaps,
         gap_expansions: HashMap::new(),
         old_file_source: preview.old_file_source.clone(),
+        old_exact_highlighted_lines: None,
         new_file_lines: preview.new_file_lines.clone(),
         new_file_source: preview.new_file_source.clone(),
+        new_exact_highlighted_lines: None,
         display_cache: DiffDisplayCache::default(),
     };
 
@@ -1031,8 +1050,10 @@ pub fn build_diff_view_from_diff_text_with_context(
         gaps,
         gap_expansions: HashMap::new(),
         old_file_source,
+        old_exact_highlighted_lines: None,
         new_file_lines,
         new_file_source,
+        new_exact_highlighted_lines: None,
         display_cache: DiffDisplayCache::default(),
     }
 }
@@ -1968,12 +1989,75 @@ mod tests {
     }
 
     #[test]
+    fn expanded_context_lines_render_with_exact_syntax_highlighting() {
+        let mut old_file_lines = (1..=40)
+            .map(|index| format!("let gap_value_{index} = old_call_{index}();"))
+            .collect::<Vec<_>>();
+        let mut new_file_lines = (1..=40)
+            .map(|index| format!("let gap_value_{index} = new_call_{index}();"))
+            .collect::<Vec<_>>();
+        old_file_lines[0] = "let old_start = 0;".to_string();
+        new_file_lines[0] = "let new_start = 1;".to_string();
+        old_file_lines[39] = "let old_end = 0;".to_string();
+        new_file_lines[39] = "let new_end = 1;".to_string();
+
+        let diff = "\
+@@ -1 +1 @@
+-let old_start = 0;
++let new_start = 1;
+@@ -40 +40 @@
+-let old_end = 0;
++let new_end = 1;
+";
+        let mut view = build_diff_view_from_diff_text_with_context(
+            diff,
+            Some("rust"),
+            Some(old_file_lines),
+            Some(new_file_lines.clone()),
+        );
+        let registry = HighlightRegistry::new_for_filetypes(["rust"])
+            .expect("highlight registry should initialize");
+        view.apply_exact_syntax_highlighting(Some("rust"), &registry);
+
+        let gap_index = (0..view.display_line_count(DiffViewMode::Unified))
+            .find(|index| {
+                matches!(
+                    view.selected_gap_action(DiffViewMode::Unified, *index),
+                    Some((_, GapExpandDirection::Up))
+                )
+            })
+            .expect("expected expandable gap");
+        let expanded_gap_index = view.expand_selected_gap(DiffViewMode::Unified, gap_index, 1);
+        assert!(
+            expanded_gap_index > 0,
+            "expanded line should precede the gap control"
+        );
+
+        let rendered = view.rendered_lines(DiffViewMode::Unified, 120);
+        let expanded_line = &rendered[expanded_gap_index - 1];
+        let target_text = new_file_lines[1].as_str();
+
+        assert!(
+            expanded_line
+                .spans
+                .iter()
+                .skip(2)
+                .any(|span| span.content.as_ref() == "let"),
+            "expected tokenized syntax spans for expanded context line `{target_text}`, got {expanded_line:?}"
+        );
+        assert!(
+            expanded_line
+                .spans
+                .iter()
+                .skip(2)
+                .all(|span| span.content.as_ref() != target_text),
+            "expanded context line should not render as a single fallback span: {expanded_line:?}"
+        );
+    }
+
+    #[test]
     fn tab_expansion_tracks_columns_across_spans() {
-        let spans = expand_tabs_in_spans(vec![
-            Span::raw("ab"),
-            Span::raw("\t"),
-            Span::raw("cd"),
-        ]);
+        let spans = expand_tabs_in_spans(vec![Span::raw("ab"), Span::raw("\t"), Span::raw("cd")]);
 
         let contents = spans
             .into_iter()

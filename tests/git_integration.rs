@@ -215,9 +215,11 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
     assert_eq!(unstaged.status, " M");
 
     git::discard_file_changes(&repo.root, &unstaged).await?;
-    assert!(git::load_status_for_path(&repo.root, "src/lib.rs")
-        .await?
-        .is_none());
+    assert!(
+        git::load_status_for_path(&repo.root, "src/lib.rs")
+            .await?
+            .is_none()
+    );
     assert_eq!(repo.read("src/lib.rs"), "pub fn tracked() {}\n");
 
     git::discard_file_changes(&repo.root, &untracked).await?;
