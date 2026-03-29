@@ -1643,17 +1643,35 @@ fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<Line<'static>> 
         .collect()
 }
 
-fn render_split_pair_line(
+fn render_split_pair_lines(
     left: Option<&DiffRow>,
     right: Option<&DiffRow>,
     side_width: usize,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
+    let left_lines = render_split_side_lines(left, true, side_width);
+    let right_lines = render_split_side_lines(right, false, side_width);
+    let line_count = left_lines.len().max(right_lines.len());
     let gap = Span::styled("   ", ui::diff_context_style());
-    let mut spans = Vec::new();
-    spans.extend(render_split_side(left, true, side_width));
-    spans.push(gap);
-    spans.extend(render_split_side(right, false, side_width));
-    Line::from(spans)
+
+    (0..line_count)
+        .map(|index| {
+            let mut spans = Vec::new();
+            spans.extend(
+                left_lines
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| blank_split_side(side_width)),
+            );
+            spans.push(gap.clone());
+            spans.extend(
+                right_lines
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| blank_split_side(side_width)),
+            );
+            Line::from(spans)
+        })
+        .collect()
 }
 
 fn render_split_hunk_rows(
@@ -1672,18 +1690,19 @@ fn render_split_hunk_rows(
         for index in 0..row_count {
             let left = removed.get(index).copied();
             let right = added.get(index).copied();
-            rendered.push((
-                render_split_pair_line(
-                    left.map(|(_, row)| row),
-                    right.map(|(_, row)| row),
-                    side_width,
-                ),
-                resolve_split_target_line(left.map(|(_, row)| row), right.map(|(_, row)| row)),
-                DisplayRowRefs {
-                    left: left.map(|(row_index, _)| row_index),
-                    right: right.map(|(row_index, _)| row_index),
-                },
-            ));
+            let target_line =
+                resolve_split_target_line(left.map(|(_, row)| row), right.map(|(_, row)| row));
+            let row_refs = DisplayRowRefs {
+                left: left.map(|(row_index, _)| row_index),
+                right: right.map(|(row_index, _)| row_index),
+            };
+            for rendered_line in render_split_pair_lines(
+                left.map(|(_, row)| row),
+                right.map(|(_, row)| row),
+                side_width,
+            ) {
+                rendered.push((rendered_line, target_line, row_refs));
+            }
         }
         removed.clear();
         added.clear();
@@ -1696,14 +1715,14 @@ fn render_split_hunk_rows(
             DiffLineKind::Added => pending_added.push((row_index, row)),
             DiffLineKind::Context => {
                 flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
-                rendered.push((
-                    render_split_pair_line(Some(row), Some(row), side_width),
-                    resolve_split_target_line(Some(row), Some(row)),
-                    DisplayRowRefs {
-                        left: Some(row_index),
-                        right: Some(row_index),
-                    },
-                ));
+                let target_line = resolve_split_target_line(Some(row), Some(row));
+                let row_refs = DisplayRowRefs {
+                    left: Some(row_index),
+                    right: Some(row_index),
+                };
+                for rendered_line in render_split_pair_lines(Some(row), Some(row), side_width) {
+                    rendered.push((rendered_line, target_line, row_refs));
+                }
             }
         }
     }
@@ -1758,15 +1777,19 @@ fn render_expanded_context_lines(
         let total_width = width.saturating_sub(1);
         let gutter_width = 3;
         let side_width = total_width.saturating_sub(gutter_width) / 2;
-        vec![render_split_pair_line(Some(&row), Some(&row), side_width)]
+        render_split_pair_lines(Some(&row), Some(&row), side_width)
     } else {
         render_unified_code_lines(&row, width)
     }
 }
 
-fn render_split_side(row: Option<&DiffRow>, left_side: bool, width: usize) -> Vec<Span<'static>> {
+fn render_split_side_lines(
+    row: Option<&DiffRow>,
+    left_side: bool,
+    width: usize,
+) -> Vec<Vec<Span<'static>>> {
     let Some(row) = row else {
-        return vec![Span::styled(" ".repeat(width), ui::diff_context_style())];
+        return vec![blank_split_side(width)];
     };
 
     let line_number = if left_side {
@@ -1775,16 +1798,20 @@ fn render_split_side(row: Option<&DiffRow>, left_side: bool, width: usize) -> Ve
         row.new_line
     };
     let base_style = base_style(row.kind);
-    let mut spans = vec![Span::styled(
+    let prefix = vec![Span::styled(
         format_line_number(line_number),
         base_style.patch(ui::line_number_style()),
     )];
-    spans.extend(render_row_content(
-        row.side_content(left_side),
-        &row.text,
-        base_style,
-    ));
-    fit_spans_to_width(spans, width, base_style)
+    let continuation_prefix = vec![Span::styled(
+        " ".repeat(format_line_number(None).width()),
+        base_style.patch(ui::line_number_style()),
+    )];
+    let content = render_row_content(row.side_content(left_side), &row.text, base_style);
+    wrap_prefixed_spans_to_lines(prefix, continuation_prefix, content, width + 1, base_style)
+}
+
+fn blank_split_side(width: usize) -> Vec<Span<'static>> {
+    vec![Span::styled(" ".repeat(width), ui::diff_context_style())]
 }
 
 fn render_row_content(
@@ -2141,6 +2168,43 @@ mod tests {
         let rows = render_lines_to_strings(rendered, 29);
 
         assert_eq!(rows, vec!["   1     old      1     new  "]);
+    }
+
+    #[test]
+    fn split_render_wraps_sides_and_keeps_columns_aligned() {
+        let diff = "@@ -1 +1 @@\n-abcdefghijklmnop\n+xy";
+        let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+        let rendered = view.rendered_lines(DiffViewMode::Split, 29).to_vec();
+        let rows = render_lines_to_strings(rendered, 29);
+
+        assert_eq!(
+            rows,
+            vec![
+                "   1 abcdefg      1 xy       ",
+                "     hijklmn                 ",
+                "     op                      ",
+            ]
+        );
+    }
+
+    #[test]
+    fn split_wrapped_rows_keep_line_navigation_targets() {
+        let diff = "@@ -1 +1 @@\n-abcdefghijklmnop\n+xy";
+        let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+
+        assert_eq!(view.display_line_count(DiffViewMode::Split, 29), 3);
+        assert_eq!(
+            view.selected_line_number(DiffViewMode::Split, 29, 0),
+            Some(1)
+        );
+        assert_eq!(
+            view.selected_line_number(DiffViewMode::Split, 29, 1),
+            Some(1)
+        );
+        assert_eq!(
+            view.selected_line_number(DiffViewMode::Split, 29, 2),
+            Some(1)
+        );
     }
 
     #[test]
