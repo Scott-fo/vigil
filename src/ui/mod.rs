@@ -199,8 +199,11 @@ pub fn diff_gap_click_at(
         return None;
     }
 
-    app.diff_view
-        .selected_gap_action(app.diff_view_mode, display_index)?;
+    app.diff_view.selected_gap_action(
+        app.diff_view_mode,
+        body_area.width as usize,
+        display_index,
+    )?;
 
     Some(display_index)
 }

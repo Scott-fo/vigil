@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    path::Path,
+    sync::Arc,
+};
 
 use color_eyre::eyre::WrapErr;
 use ratatui::{
@@ -59,22 +63,28 @@ impl DiffView {
         &self.display_cache.entry(mode).lines
     }
 
-    pub fn first_selectable_index(&mut self, mode: DiffViewMode) -> usize {
-        self.nav_targets(mode)
+    pub fn first_selectable_index(&mut self, mode: DiffViewMode, width: usize) -> usize {
+        self.nav_targets(mode, width)
             .iter()
             .position(|target| target.is_some())
             .unwrap_or(0)
     }
 
-    pub fn last_selectable_index(&mut self, mode: DiffViewMode) -> usize {
-        self.nav_targets(mode)
+    pub fn last_selectable_index(&mut self, mode: DiffViewMode, width: usize) -> usize {
+        self.nav_targets(mode, width)
             .iter()
             .rposition(|target| target.is_some())
             .unwrap_or(0)
     }
 
-    pub fn move_selection(&mut self, mode: DiffViewMode, current: usize, delta: i32) -> usize {
-        let nav = self.nav_targets(mode);
+    pub fn move_selection(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        current: usize,
+        delta: i32,
+    ) -> usize {
+        let nav = self.nav_targets(mode, width);
         if nav.is_empty() {
             return 0;
         }
@@ -109,44 +119,56 @@ impl DiffView {
         index
     }
 
-    pub fn selected_line_number(&mut self, mode: DiffViewMode, index: usize) -> Option<usize> {
-        match self.nav_targets(mode).get(index).copied().flatten() {
+    pub fn selected_line_number(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        index: usize,
+    ) -> Option<usize> {
+        match self.nav_targets(mode, width).get(index).copied().flatten() {
             Some(DisplayNavTarget::Line(line_number)) => Some(line_number),
             _ => None,
         }
     }
 
-    pub fn selected_gap_index(&mut self, mode: DiffViewMode, index: usize) -> Option<usize> {
-        self.selected_gap_action(mode, index)
+    pub fn selected_gap_index(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        index: usize,
+    ) -> Option<usize> {
+        self.selected_gap_action(mode, width, index)
             .map(|(gap_index, _)| gap_index)
     }
 
     pub fn selected_gap_action(
         &mut self,
         mode: DiffViewMode,
+        width: usize,
         index: usize,
     ) -> Option<(usize, GapExpandDirection)> {
-        match self.nav_targets(mode).get(index).copied().flatten() {
+        match self.nav_targets(mode, width).get(index).copied().flatten() {
             Some(DisplayNavTarget::Gap(gap_index, direction)) => Some((gap_index, direction)),
             _ => None,
         }
     }
 
-    pub fn display_line_count(&mut self, mode: DiffViewMode) -> usize {
-        self.nav_targets(mode).len()
+    pub fn display_line_count(&mut self, mode: DiffViewMode, width: usize) -> usize {
+        self.nav_targets(mode, width).len()
     }
 
     pub fn expand_selected_gap(
         &mut self,
         mode: DiffViewMode,
+        width: usize,
         index: usize,
         amount: usize,
     ) -> usize {
-        let Some((gap_index, direction)) = self.selected_gap_action(mode, index) else {
+        let Some((gap_index, direction)) = self.selected_gap_action(mode, width, index) else {
             return index;
         };
         let _ = self.expand_gap(gap_index, direction, amount);
-        self.nav_targets(mode)
+        self.nav_targets(mode, width)
             .iter()
             .position(|target| {
                 matches!(
@@ -155,7 +177,7 @@ impl DiffView {
                         if *candidate == gap_index && *candidate_direction == direction
                 )
             })
-            .unwrap_or(index.min(self.nav_targets(mode).len().saturating_sub(1)))
+            .unwrap_or(index.min(self.nav_targets(mode, width).len().saturating_sub(1)))
     }
 
     fn expand_gap(
@@ -221,8 +243,8 @@ impl DiffView {
         cache.valid = true;
     }
 
-    fn nav_targets(&mut self, mode: DiffViewMode) -> &[Option<DisplayNavTarget>] {
-        self.ensure_display_cache(mode, 0);
+    fn nav_targets(&mut self, mode: DiffViewMode, width: usize) -> &[Option<DisplayNavTarget>] {
+        self.ensure_display_cache(mode, width);
         &self.display_cache.entry(mode).nav
     }
 
@@ -245,9 +267,7 @@ impl DiffView {
                     DiffLineKind::Added | DiffLineKind::Context => row.new_line,
                     DiffLineKind::Removed => row.old_line,
                 };
-                lines.push(render_unified_code_line(row, width));
-                nav.push(line_number.map(DisplayNavTarget::Line));
-                row_refs.push(match row.kind {
+                let display_row_refs = match row.kind {
                     DiffLineKind::Removed => DisplayRowRefs {
                         left: Some(row_index),
                         right: None,
@@ -256,7 +276,12 @@ impl DiffView {
                         left: None,
                         right: Some(row_index),
                     },
-                });
+                };
+                for rendered_line in render_unified_code_lines(row, width) {
+                    lines.push(rendered_line);
+                    nav.push(line_number.map(DisplayNavTarget::Line));
+                    row_refs.push(display_row_refs);
+                }
             }
 
             if let Some(gap) = self.gaps.get(hunk_offset) {
@@ -331,15 +356,17 @@ impl DiffView {
             for offset in 0..context_after_count {
                 let line_number = gap.new_start + offset;
                 let text = file_lines.get(start + offset).cloned().unwrap_or_default();
-                lines.push(render_expanded_context_line(
+                for rendered_line in render_expanded_context_lines(
                     line_number,
                     &text,
                     self.expanded_context_highlighting(line_number),
                     width,
                     split,
-                ));
-                nav.push(Some(DisplayNavTarget::Line(line_number)));
-                row_refs.push(DisplayRowRefs::default());
+                ) {
+                    lines.push(rendered_line);
+                    nav.push(Some(DisplayNavTarget::Line(line_number)));
+                    row_refs.push(DisplayRowRefs::default());
+                }
             }
         }
 
@@ -379,15 +406,17 @@ impl DiffView {
             for offset in 0..context_before_count {
                 let line_number = gap.new_start + gap.new_count - context_before_count + offset;
                 let text = file_lines.get(start + offset).cloned().unwrap_or_default();
-                lines.push(render_expanded_context_line(
+                for rendered_line in render_expanded_context_lines(
                     line_number,
                     &text,
                     self.expanded_context_highlighting(line_number),
                     width,
                     split,
-                ));
-                nav.push(Some(DisplayNavTarget::Line(line_number)));
-                row_refs.push(DisplayRowRefs::default());
+                ) {
+                    lines.push(rendered_line);
+                    nav.push(Some(DisplayNavTarget::Line(line_number)));
+                    row_refs.push(DisplayRowRefs::default());
+                }
             }
         }
     }
@@ -1576,7 +1605,7 @@ fn resolve_split_target_line(left: Option<&DiffRow>, right: Option<&DiffRow>) ->
         .or_else(|| left.and_then(|row| row.old_line))
 }
 
-fn render_unified_code_line(row: &DiffRow, width: usize) -> Line<'static> {
+fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<Line<'static>> {
     let base_style = base_style(row.kind);
     let sign_style = match row.kind {
         DiffLineKind::Context => ui::context_sign_style(),
@@ -1593,20 +1622,25 @@ fn render_unified_code_line(row: &DiffRow, width: usize) -> Line<'static> {
         DiffLineKind::Removed => row.old_line,
     };
 
-    let mut spans = vec![
+    let prefix = vec![
         Span::styled(
             format_line_number(unified_line_number),
             base_style.patch(ui::line_number_style()),
         ),
         Span::styled(format!("{marker} "), sign_style),
     ];
-    spans.extend(render_row_content(
-        row.unified_content(),
-        &row.text,
-        base_style,
-    ));
-    let padded = fit_spans_to_width(spans, width.saturating_sub(1), base_style);
-    Line::from(padded).style(base_style)
+    let continuation_prefix = vec![
+        Span::styled(
+            " ".repeat(format_line_number(None).width()),
+            base_style.patch(ui::line_number_style()),
+        ),
+        Span::styled("  ", sign_style),
+    ];
+    let content = render_row_content(row.unified_content(), &row.text, base_style);
+    wrap_prefixed_spans_to_lines(prefix, continuation_prefix, content, width, base_style)
+        .into_iter()
+        .map(|spans| Line::from(spans).style(base_style))
+        .collect()
 }
 
 fn render_split_pair_line(
@@ -1703,13 +1737,13 @@ fn render_expand_gap_line(
     Line::from(spans).style(ui::diff_hunk_style())
 }
 
-fn render_expanded_context_line(
+fn render_expanded_context_lines(
     line_number: usize,
     text: &str,
     highlighted_content: Option<Vec<SyntaxToken>>,
     width: usize,
     split: bool,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
     let row = DiffRow {
         kind: DiffLineKind::Context,
         old_line: Some(line_number),
@@ -1724,9 +1758,9 @@ fn render_expanded_context_line(
         let total_width = width.saturating_sub(1);
         let gutter_width = 3;
         let side_width = total_width.saturating_sub(gutter_width) / 2;
-        render_split_pair_line(Some(&row), Some(&row), side_width)
+        vec![render_split_pair_line(Some(&row), Some(&row), side_width)]
     } else {
-        render_unified_code_line(&row, width)
+        render_unified_code_lines(&row, width)
     }
 }
 
@@ -1875,6 +1909,127 @@ fn fit_spans_to_width(
     fitted
 }
 
+fn wrap_prefixed_spans_to_lines(
+    prefix: Vec<Span<'static>>,
+    continuation_prefix: Vec<Span<'static>>,
+    content: Vec<Span<'static>>,
+    width: usize,
+    pad_style: Style,
+) -> Vec<Vec<Span<'static>>> {
+    let target_width = width.saturating_sub(1);
+    let prefix_width = spans_width(&prefix);
+    let continuation_prefix_width = spans_width(&continuation_prefix);
+    let content_width = target_width.saturating_sub(prefix_width);
+    let continuation_content_width = target_width.saturating_sub(continuation_prefix_width);
+
+    if target_width == 0 || content_width == 0 || continuation_content_width == 0 {
+        let mut spans = prefix;
+        spans.extend(content);
+        return wrap_spans_to_width(spans, target_width.max(1), pad_style);
+    }
+
+    let wrapped_content = wrap_spans_to_width(content, content_width, pad_style);
+    wrapped_content
+        .into_iter()
+        .enumerate()
+        .map(|(index, line_content)| {
+            let mut spans = if index == 0 {
+                prefix.clone()
+            } else {
+                continuation_prefix.clone()
+            };
+            spans.extend(line_content);
+            spans
+        })
+        .collect()
+}
+
+fn wrap_spans_to_width(
+    spans: Vec<Span<'static>>,
+    width: usize,
+    pad_style: Style,
+) -> Vec<Vec<Span<'static>>> {
+    if width == 0 {
+        return vec![Vec::new()];
+    }
+
+    let mut queue = VecDeque::from(spans);
+    let mut wrapped = Vec::new();
+
+    while !queue.is_empty() {
+        let mut line = Vec::new();
+        let mut current_width = 0usize;
+
+        while current_width < width {
+            let Some(span) = queue.pop_front() else {
+                break;
+            };
+
+            let content = span.content.into_owned();
+            let remaining = width.saturating_sub(current_width);
+            let content_width = UnicodeWidthStr::width(content.as_str());
+
+            if content_width <= remaining {
+                current_width += content_width;
+                line.push(Span::styled(content, span.style));
+                continue;
+            }
+
+            let (head, tail) = split_string_at_width(&content, remaining);
+            if !head.is_empty() {
+                current_width += UnicodeWidthStr::width(head.as_str());
+                line.push(Span::styled(head, span.style));
+            }
+            if !tail.is_empty() {
+                queue.push_front(Span::styled(tail, span.style));
+            }
+            break;
+        }
+
+        if current_width < width {
+            line.push(Span::styled(" ".repeat(width - current_width), pad_style));
+        }
+        wrapped.push(line);
+    }
+
+    if wrapped.is_empty() {
+        wrapped.push(vec![Span::styled(" ".repeat(width), pad_style)]);
+    }
+
+    wrapped
+}
+
+fn spans_width(spans: &[Span<'static>]) -> usize {
+    spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum()
+}
+
+fn split_string_at_width(content: &str, width: usize) -> (String, String) {
+    let mut head = String::new();
+    let mut used = 0usize;
+    let mut split_at = content.len();
+
+    for (index, ch) in content.char_indices() {
+        let Some(ch_width) = UnicodeWidthChar::width(ch) else {
+            continue;
+        };
+        if ch_width == 0 {
+            continue;
+        }
+        if used + ch_width > width {
+            split_at = index;
+            return (head, content[split_at..].to_string());
+        }
+        used += ch_width;
+        head.push(ch);
+        split_at = index + ch.len_utf8();
+    }
+
+    (head, content[split_at..].to_string())
+}
+
 fn truncate_to_width(content: &str, width: usize) -> String {
     let mut result = String::new();
     let mut used = 0usize;
@@ -1989,6 +2144,32 @@ mod tests {
     }
 
     #[test]
+    fn unified_render_wraps_long_lines_with_indented_continuations() {
+        let diff = "@@ -1 +1 @@\n+abcdefghijklmnop";
+        let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+        let rendered = view.rendered_lines(DiffViewMode::Unified, 16).to_vec();
+        let rows = render_lines_to_strings(rendered, 16);
+
+        assert_eq!(rows, vec!["   1 + abcdefgh ", "       ijklmnop "]);
+    }
+
+    #[test]
+    fn unified_wrapped_rows_keep_line_navigation_targets() {
+        let diff = "@@ -1 +1 @@\n+abcdefghijklmnop";
+        let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+
+        assert_eq!(view.display_line_count(DiffViewMode::Unified, 16), 2);
+        assert_eq!(
+            view.selected_line_number(DiffViewMode::Unified, 16, 0),
+            Some(1)
+        );
+        assert_eq!(
+            view.selected_line_number(DiffViewMode::Unified, 16, 1),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn expanded_context_lines_render_with_exact_syntax_highlighting() {
         let mut old_file_lines = (1..=40)
             .map(|index| format!("let gap_value_{index} = old_call_{index}();"))
@@ -2019,15 +2200,15 @@ mod tests {
             .expect("highlight registry should initialize");
         view.apply_exact_syntax_highlighting(Some("rust"), &registry);
 
-        let gap_index = (0..view.display_line_count(DiffViewMode::Unified))
+        let gap_index = (0..view.display_line_count(DiffViewMode::Unified, 120))
             .find(|index| {
                 matches!(
-                    view.selected_gap_action(DiffViewMode::Unified, *index),
+                    view.selected_gap_action(DiffViewMode::Unified, 120, *index),
                     Some((_, GapExpandDirection::Up))
                 )
             })
             .expect("expected expandable gap");
-        let expanded_gap_index = view.expand_selected_gap(DiffViewMode::Unified, gap_index, 1);
+        let expanded_gap_index = view.expand_selected_gap(DiffViewMode::Unified, 120, gap_index, 1);
         assert!(
             expanded_gap_index > 0,
             "expanded line should precede the gap control"

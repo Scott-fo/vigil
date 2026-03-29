@@ -360,8 +360,10 @@ impl App {
                                     self.diff_view_cache
                                         .insert_plain(cache_key, diff_view.clone());
                                 }
-                                let max_index =
-                                    diff_view.last_selectable_index(self.diff_view_mode);
+                                let max_index = diff_view.last_selectable_index(
+                                    self.diff_view_mode,
+                                    self.current_diff_display_width(),
+                                );
                                 self.selected_diff_line_index =
                                     self.selected_diff_line_index.min(max_index);
                                 self.diff_view = diff_view;
@@ -743,8 +745,9 @@ impl App {
                     DiffViewMode::Split => DiffViewMode::Unified,
                 };
                 self.diff_scroll = 0;
-                self.selected_diff_line_index =
-                    self.diff_view.first_selectable_index(self.diff_view_mode);
+                self.selected_diff_line_index = self
+                    .diff_view
+                    .first_selectable_index(self.diff_view_mode, self.current_diff_display_width());
             }
             KeyCode::Char('d') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.page_or_scroll_diff(12);
@@ -770,11 +773,16 @@ impl App {
                     && matches!(key_event.code, KeyCode::Enter)
                     && self
                         .diff_view
-                        .selected_gap_action(self.diff_view_mode, self.selected_diff_line_index)
+                        .selected_gap_action(
+                            self.diff_view_mode,
+                            self.current_diff_display_width(),
+                            self.selected_diff_line_index,
+                        )
                         .is_some()
                 {
                     self.selected_diff_line_index = self.diff_view.expand_selected_gap(
                         self.diff_view_mode,
+                        self.current_diff_display_width(),
                         self.selected_diff_line_index,
                         20,
                     );
@@ -785,6 +793,7 @@ impl App {
                     if self.active_pane == ActivePane::Diff {
                         if let Some(line_number) = self.diff_view.selected_line_number(
                             self.diff_view_mode,
+                            self.current_diff_display_width(),
                             self.selected_diff_line_index,
                         ) {
                             return Ok(Some(AppCommand::OpenFileInEditorAtLine(
@@ -815,8 +824,10 @@ impl App {
             KeyCode::Home => match self.active_pane {
                 ActivePane::Sidebar => self.select_file_at(0).await?,
                 ActivePane::Diff => {
-                    self.selected_diff_line_index =
-                        self.diff_view.first_selectable_index(self.diff_view_mode);
+                    self.selected_diff_line_index = self.diff_view.first_selectable_index(
+                        self.diff_view_mode,
+                        self.current_diff_display_width(),
+                    );
                     self.diff_scroll = 0;
                 }
             },
@@ -827,8 +838,10 @@ impl App {
                     }
                 }
                 ActivePane::Diff => {
-                    self.selected_diff_line_index =
-                        self.diff_view.last_selectable_index(self.diff_view_mode);
+                    self.selected_diff_line_index = self.diff_view.last_selectable_index(
+                        self.diff_view_mode,
+                        self.current_diff_display_width(),
+                    );
                     self.diff_scroll = u16::MAX;
                 }
             },
@@ -879,6 +892,7 @@ impl App {
                     self.selected_diff_line_index = display_index;
                     self.selected_diff_line_index = self.diff_view.expand_selected_gap(
                         self.diff_view_mode,
+                        self.current_diff_display_width(),
                         self.selected_diff_line_index,
                         20,
                     );

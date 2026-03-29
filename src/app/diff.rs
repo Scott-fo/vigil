@@ -139,6 +139,12 @@ pub(super) struct DiffHighlightJob {
 }
 
 impl App {
+    pub(super) fn current_diff_display_width(&self) -> usize {
+        self.diff_viewport
+            .map(|viewport| viewport.width)
+            .unwrap_or(usize::MAX)
+    }
+
     fn build_diff_cache_key(review_mode: &ReviewMode, file: &FileEntry) -> DiffCacheKey {
         let review_scope = match review_mode {
             ReviewMode::WorkingTree => "working-tree".to_string(),
@@ -273,7 +279,8 @@ impl App {
         if let Some((mut diff_view, highlight_complete)) =
             self.diff_view_cache.get_highlighted(&cache_key)
         {
-            let max_index = diff_view.last_selectable_index(self.diff_view_mode);
+            let max_index = diff_view
+                .last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
             self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
             self.diff_view = diff_view;
             self.diff_highlight_complete = highlight_complete;
@@ -282,7 +289,8 @@ impl App {
         }
 
         if let Some(mut plain_diff_view) = self.diff_view_cache.get_plain(&cache_key) {
-            let max_index = plain_diff_view.last_selectable_index(self.diff_view_mode);
+            let max_index = plain_diff_view
+                .last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
             self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
             self.diff_view = plain_diff_view;
             self.status_message = Some(self.current_status_message());
@@ -531,6 +539,7 @@ impl App {
     pub(super) fn move_diff_selection(&mut self, delta: i32) {
         self.selected_diff_line_index = self.diff_view.move_selection(
             self.diff_view_mode,
+            self.current_diff_display_width(),
             self.selected_diff_line_index,
             delta,
         );
@@ -687,7 +696,7 @@ mod tests {
         app.active_pane = ActivePane::Diff;
         app.diff_view = build_diff_view(120);
 
-        let rendered_line_count = app.diff_view.display_line_count(DiffViewMode::Split);
+        let rendered_line_count = app.diff_view.display_line_count(DiffViewMode::Split, 160);
         app.selected_diff_line_index = rendered_line_count.saturating_sub(1);
         app.diff_scroll = 0;
 
