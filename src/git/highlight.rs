@@ -192,6 +192,7 @@ impl HighlightRegistry {
             "haskell",
             "css",
             "nix",
+            "zig",
         ]
     }
 
@@ -505,6 +506,15 @@ fn build_highlight_config(
             tree_sitter_nix::INJECTIONS_QUERY,
             "",
         )?,
+        "zig" => register_highlight_config(
+            &mut configs,
+            "zig",
+            tree_sitter_zig::LANGUAGE.into(),
+            "zig",
+            tree_sitter_zig::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        )?,
         _ => return Ok(None),
     }
 
@@ -658,6 +668,9 @@ fn sample_source_for_filetype(filetype: &'static str) -> Option<&'static str> {
         "csharp" => Some("class User { string Name() => value; }"),
         "haskell" => Some("buildUser id = User id"),
         "nix" => Some("{ user = { id = 1; }; }"),
+        "zig" => Some(
+            "const User = struct { id: usize }; fn buildUser(id: usize) User { return .{ .id = id }; }",
+        ),
         "markdown" => Some("# Prefetch"),
         _ => None,
     }
@@ -1136,7 +1149,7 @@ mod tests {
     }
 
     #[test]
-    fn highlights_rust_go_typescript_and_markdown_without_falling_back() {
+    fn highlights_rust_go_typescript_zig_and_markdown_without_falling_back() {
         let registry = HighlightRegistry::new().expect("highlight registry should initialize");
 
         for (filetype, line) in [
@@ -1144,6 +1157,7 @@ mod tests {
             ("go", "func buildUser(id int) Foo { return NewUser(id) }"),
             ("typescript", "const value: Foo = await loadUser(id);"),
             ("tsx", "<Card title=\"demo\">{value}</Card>"),
+            ("zig", "const value = Foo.init(bar);"),
             ("markdown", "# Heading"),
         ] {
             let spans = highlight_source_lines(&registry, filetype, line)

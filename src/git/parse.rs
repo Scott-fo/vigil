@@ -283,6 +283,7 @@ pub(crate) fn resolve_diff_filetype(path: &str) -> Option<&'static str> {
             "hs" => Some("haskell"),
             "css" => Some("css"),
             "nix" => Some("nix"),
+            "zig" => Some("zig"),
             "md" | "mdx" | "markdown" => Some("markdown"),
             _ => None,
         },
@@ -291,7 +292,7 @@ pub(crate) fn resolve_diff_filetype(path: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_diff_name_status_entries, parse_status_entries};
+    use super::{parse_diff_name_status_entries, parse_status_entries, resolve_diff_filetype};
 
     #[test]
     fn status_parser_keeps_destination_path_for_renames() {
@@ -311,5 +312,10 @@ mod tests {
         assert_eq!(entries[0].status, "R");
         assert_eq!(entries[0].path, "after.rs");
         assert_eq!(entries[0].original_path.as_deref(), Some("before.rs"));
+    }
+
+    #[test]
+    fn resolves_zig_filetype_from_extension() {
+        assert_eq!(resolve_diff_filetype("src/main.zig"), Some("zig"));
     }
 }

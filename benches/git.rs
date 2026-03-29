@@ -2327,6 +2327,7 @@ fn resolve_diff_filetype(path: &str) -> Option<&'static str> {
             "hs" => Some("haskell"),
             "css" => Some("css"),
             "nix" => Some("nix"),
+            "zig" => Some("zig"),
             "md" | "mdx" | "markdown" => Some("markdown"),
             _ => None,
         },
@@ -3072,6 +3073,16 @@ impl HighlightRegistry {
             "",
         )?;
 
+        register_highlight_config(
+            &mut configs,
+            "zig",
+            tree_sitter_zig::LANGUAGE.into(),
+            "zig",
+            tree_sitter_zig::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        )?;
+
         Ok(Self { configs })
     }
 
@@ -3194,6 +3205,10 @@ pub fn prewarm_highlight_registry(registry: &HighlightRegistry) {
         ("go", "func BuildUser(id int) User { return NewUser(id) }"),
         ("typescript", "const user: User = await loadUser(id);"),
         ("tsx", "<Card title=\"demo\">{value}</Card>"),
+        (
+            "zig",
+            "const User = struct { id: usize }; fn buildUser(id: usize) User { return .{ .id = id }; }",
+        ),
         ("markdown", "# Prefetch"),
     ] {
         let _ = highlight_source_lines(registry, filetype, sample);
@@ -3712,7 +3727,7 @@ mod tests {
     }
 
     #[test]
-    fn highlights_rust_go_typescript_and_markdown_without_falling_back() {
+    fn highlights_rust_go_typescript_zig_and_markdown_without_falling_back() {
         let registry = HighlightRegistry::new().expect("highlight registry should initialize");
 
         for (filetype, line) in [
@@ -3720,6 +3735,7 @@ mod tests {
             ("go", "func buildUser(id int) Foo { return NewUser(id) }"),
             ("typescript", "const value: Foo = await loadUser(id);"),
             ("tsx", "<Card title=\"demo\">{value}</Card>"),
+            ("zig", "const value = Foo.init(bar);"),
             ("markdown", "# Heading"),
         ] {
             let spans = highlight_source_lines(&registry, filetype, line)
