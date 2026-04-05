@@ -10,7 +10,7 @@ use crate::app::{ActivePane, App};
 
 use super::{
     border_active_color, border_color, bordered_panel, diff_mode_label, highlight_line,
-    panel_color, text_color,
+    highlight_line_range, panel_color, text_color,
 };
 
 use crate::ui::status::render_status_line;
@@ -60,16 +60,30 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     app.update_diff_viewport(mode, viewport.width, viewport.start, viewport.end);
     let visible_lines = {
-        let rendered_lines = app.diff_view.rendered_lines(mode, area.width as usize);
-        rendered_lines[viewport.start..viewport.end]
+        let rendered_lines = app.diff_view.rendered_lines(mode, area.width as usize)
+            [viewport.start..viewport.end]
+            .to_vec();
+        rendered_lines
             .iter()
             .enumerate()
             .map(|(offset, line)| {
                 let display_index = viewport.start + offset;
+                let mut rendered_line = line.clone();
+                if let Some(selection) = app.diff_text_selection
+                    && let Some((start, end)) = app.diff_view.selection_columns(
+                        mode,
+                        area.width as usize,
+                        selection.anchor,
+                        selection.head,
+                        display_index,
+                    )
+                {
+                    rendered_line = highlight_line_range(&rendered_line, start, end);
+                }
                 if diff_focused && display_index == viewport.selected_index {
-                    highlight_line(line)
+                    highlight_line(&rendered_line)
                 } else {
-                    line.clone()
+                    rendered_line
                 }
             })
             .collect::<Vec<_>>()

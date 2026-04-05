@@ -1,4 +1,9 @@
-use std::{collections::HashSet, path::PathBuf, process::Stdio};
+use std::{
+    collections::HashSet,
+    io::{Write, stdout},
+    path::PathBuf,
+    process::Stdio,
+};
 
 use color_eyre::eyre::WrapErr;
 use crossterm::terminal;
@@ -27,15 +32,13 @@ use crate::{
     event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{
         self, BlameCommitDetails, BlameTarget, BranchCompareSelection, CommitCompareSelection,
-        CommitSearchEntry, DiffView, FileEntry, SharedHighlightRegistry,
+        CommitSearchEntry, DiffSelectionPoint, DiffView, FileEntry, SharedHighlightRegistry,
     },
     sidebar::{self, SidebarItem},
     theme::{self, ThemeMode},
     ui,
     watcher::RepoWatcher,
 };
-use std::io::stdout;
-
 pub use self::diff::{DiffCacheKey, PreparedDiffViewport};
 use self::diff::{DiffHighlightJob, DiffViewCache, DiffViewport};
 
@@ -94,6 +97,12 @@ pub struct SnackbarNotice {
     pub variant: SnackbarVariant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiffTextSelection {
+    pub anchor: DiffSelectionPoint,
+    pub head: DiffSelectionPoint,
+}
+
 #[derive(Debug)]
 pub struct App {
     pub running: bool,
@@ -112,6 +121,8 @@ pub struct App {
     pub diff_view_mode: DiffViewMode,
     pub diff_scroll: u16,
     pub selected_diff_line_index: usize,
+    pub diff_text_selection: Option<DiffTextSelection>,
+    diff_text_selection_anchor: Option<DiffSelectionPoint>,
     pub diff_request_id: u64,
     diff_load_task: Option<task::JoinHandle<()>>,
     diff_highlight_task: Option<task::JoinHandle<()>>,
@@ -196,6 +207,8 @@ impl App {
             diff_view_mode: DiffViewMode::Split,
             diff_scroll: 0,
             selected_diff_line_index: 0,
+            diff_text_selection: None,
+            diff_text_selection_anchor: None,
             diff_request_id: 0,
             diff_load_task: None,
             diff_highlight_task: None,
@@ -699,11 +712,17 @@ impl App {
         }
 
         match key_event.code {
+            KeyCode::Esc if self.diff_text_selection.is_some() => {
+                self.clear_diff_text_selection();
+            }
             KeyCode::Esc | KeyCode::Char('q') => self.quit(),
             KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
-                self.quit();
+                if !self.copy_diff_selection_to_clipboard()? {
+                    self.quit();
+                }
             }
             KeyCode::Tab => {
+                self.clear_diff_text_selection();
                 self.active_pane = match self.active_pane {
                     ActivePane::Sidebar => ActivePane::Diff,
                     ActivePane::Diff => ActivePane::Sidebar,
@@ -740,6 +759,7 @@ impl App {
                 self.open_commit_search_modal();
             }
             KeyCode::Char('v') => {
+                self.clear_diff_text_selection();
                 self.diff_view_mode = match self.diff_view_mode {
                     DiffViewMode::Unified => DiffViewMode::Split,
                     DiffViewMode::Split => DiffViewMode::Unified,
@@ -750,18 +770,26 @@ impl App {
                     .first_selectable_index(self.diff_view_mode, self.current_diff_display_width());
             }
             KeyCode::Char('d') if key_event.modifiers == KeyModifiers::CONTROL => {
+                self.clear_diff_text_selection();
                 self.page_or_scroll_diff(12);
             }
             KeyCode::Char('u') if key_event.modifiers == KeyModifiers::CONTROL => {
+                self.clear_diff_text_selection();
                 self.page_or_scroll_diff(-12);
             }
             KeyCode::Down | KeyCode::Char('j') => match self.active_pane {
                 ActivePane::Sidebar => self.select_next_file().await?,
-                ActivePane::Diff => self.move_diff_selection(1),
+                ActivePane::Diff => {
+                    self.clear_diff_text_selection();
+                    self.move_diff_selection(1);
+                }
             },
             KeyCode::Up | KeyCode::Char('k') => match self.active_pane {
                 ActivePane::Sidebar => self.select_previous_file().await?,
-                ActivePane::Diff => self.move_diff_selection(-1),
+                ActivePane::Diff => {
+                    self.clear_diff_text_selection();
+                    self.move_diff_selection(-1);
+                }
             },
             KeyCode::Char(' ') => {
                 if self.active_pane == ActivePane::Sidebar {
@@ -815,15 +843,22 @@ impl App {
             }
             KeyCode::PageDown => match self.active_pane {
                 ActivePane::Sidebar => self.page_files_down().await?,
-                ActivePane::Diff => self.page_diff(12),
+                ActivePane::Diff => {
+                    self.clear_diff_text_selection();
+                    self.page_diff(12);
+                }
             },
             KeyCode::PageUp => match self.active_pane {
                 ActivePane::Sidebar => self.page_files_up().await?,
-                ActivePane::Diff => self.page_diff(-12),
+                ActivePane::Diff => {
+                    self.clear_diff_text_selection();
+                    self.page_diff(-12);
+                }
             },
             KeyCode::Home => match self.active_pane {
                 ActivePane::Sidebar => self.select_file_at(0).await?,
                 ActivePane::Diff => {
+                    self.clear_diff_text_selection();
                     self.selected_diff_line_index = self.diff_view.first_selectable_index(
                         self.diff_view_mode,
                         self.current_diff_display_width(),
@@ -838,6 +873,7 @@ impl App {
                     }
                 }
                 ActivePane::Diff => {
+                    self.clear_diff_text_selection();
                     self.selected_diff_line_index = self.diff_view.last_selectable_index(
                         self.diff_view_mode,
                         self.current_diff_display_width(),
@@ -881,10 +917,31 @@ impl App {
         }
 
         match mouse_event.kind {
-            MouseEventKind::ScrollDown => self.page_or_scroll_diff(3),
-            MouseEventKind::ScrollUp => self.page_or_scroll_diff(-3),
+            MouseEventKind::ScrollDown => {
+                self.clear_diff_text_selection();
+                self.page_or_scroll_diff(3);
+            }
+            MouseEventKind::ScrollUp => {
+                self.clear_diff_text_selection();
+                self.page_or_scroll_diff(-3);
+            }
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                 let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
+                if let Some(selection_point) = ui::diff_selection_point_at(
+                    self,
+                    mouse_event.column,
+                    mouse_event.row,
+                    width,
+                    height,
+                ) {
+                    self.active_pane = ActivePane::Diff;
+                    self.selected_diff_line_index = selection_point.display_index;
+                    self.diff_text_selection_anchor = Some(selection_point);
+                    self.diff_text_selection = None;
+                    return Ok(());
+                }
+
+                self.clear_diff_text_selection();
                 if let Some(display_index) =
                     ui::diff_gap_click_at(self, mouse_event.column, mouse_event.row, width, height)
                 {
@@ -903,6 +960,36 @@ impl App {
                     ui::sidebar_file_at(self, mouse_event.column, mouse_event.row, width, height)
                 {
                     self.select_file_by_path(&path).await?;
+                }
+            }
+            MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+                let Some(anchor) = self.diff_text_selection_anchor else {
+                    return Ok(());
+                };
+                let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
+                if let Some(selection_point) = ui::diff_selection_drag_point_at(
+                    self,
+                    anchor.pane,
+                    mouse_event.column,
+                    mouse_event.row,
+                    width,
+                    height,
+                ) {
+                    self.active_pane = ActivePane::Diff;
+                    self.selected_diff_line_index = selection_point.display_index;
+                    self.diff_text_selection = Some(DiffTextSelection {
+                        anchor,
+                        head: selection_point,
+                    });
+                }
+            }
+            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                let Some(anchor) = self.diff_text_selection_anchor.take() else {
+                    return Ok(());
+                };
+                if self.diff_text_selection.is_none() {
+                    self.selected_diff_line_index = anchor.display_index;
+                    return Ok(());
                 }
             }
             _ => {}
@@ -964,6 +1051,35 @@ impl App {
 
     fn selected_file(&self) -> Option<&FileEntry> {
         self.files.get(self.selected_file_index)
+    }
+
+    fn clear_diff_text_selection(&mut self) {
+        self.diff_text_selection = None;
+        self.diff_text_selection_anchor = None;
+    }
+
+    fn copy_diff_selection_to_clipboard(&mut self) -> color_eyre::Result<bool> {
+        if self.active_pane != ActivePane::Diff {
+            return Ok(false);
+        }
+
+        let Some(selection) = self.diff_text_selection else {
+            return Ok(false);
+        };
+        let text = self.diff_view.selected_text(
+            self.diff_view_mode,
+            self.current_diff_display_width(),
+            selection.anchor,
+            selection.head,
+        );
+        let Some(text) = text else {
+            self.status_message = Some("selection is empty".to_string());
+            return Ok(true);
+        };
+
+        write_osc52_clipboard(&text)?;
+        self.status_message = Some("copied diff selection".to_string());
+        Ok(true)
     }
 
     fn spawn_highlight_prewarm(&mut self) {
@@ -1806,6 +1922,42 @@ impl App {
 
 fn quote_shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn write_osc52_clipboard(text: &str) -> color_eyre::Result<()> {
+    let encoded = encode_base64(text.as_bytes());
+    let mut output = stdout();
+    write!(output, "\x1b]52;c;{encoded}\x07")?;
+    output.flush()?;
+    Ok(())
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0];
+        let second = *chunk.get(1).unwrap_or(&0);
+        let third = *chunk.get(2).unwrap_or(&0);
+
+        encoded.push(TABLE[(first >> 2) as usize] as char);
+        encoded.push(TABLE[((first & 0b0000_0011) << 4 | (second >> 4)) as usize] as char);
+
+        if chunk.len() > 1 {
+            encoded.push(TABLE[((second & 0b0000_1111) << 2 | (third >> 6)) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+
+        if chunk.len() > 2 {
+            encoded.push(TABLE[(third & 0b0011_1111) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+
+    encoded
 }
 
 fn current_editor_command() -> Option<String> {

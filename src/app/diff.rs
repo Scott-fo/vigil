@@ -257,6 +257,7 @@ impl App {
 
     pub(super) fn queue_selected_diff_load(&mut self, show_loading: bool, reset_viewport: bool) {
         self.cancel_inflight_diff_load();
+        self.clear_diff_text_selection();
         self.diff_request_id = self.diff_request_id.saturating_add(1);
         let request_id = self.diff_request_id;
         self.diff_highlight_complete = false;

@@ -41,6 +41,20 @@ pub struct DiffView {
     display_cache: DiffDisplayCache,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffSelectionPane {
+    Unified,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiffSelectionPoint {
+    pub display_index: usize,
+    pub pane: DiffSelectionPane,
+    pub column: usize,
+}
+
 impl DiffView {
     pub fn empty(message: impl Into<String>) -> Self {
         Self {
@@ -61,6 +75,141 @@ impl DiffView {
     pub fn rendered_lines(&mut self, mode: DiffViewMode, width: usize) -> &[Line<'static>] {
         self.ensure_display_cache(mode, width);
         &self.display_cache.entry(mode).lines
+    }
+
+    pub fn selection_point_at(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        display_index: usize,
+        column: usize,
+    ) -> Option<DiffSelectionPoint> {
+        self.ensure_display_cache(mode, width);
+        let selection_line = self.display_cache.entry(mode).selection.get(display_index)?;
+        let (pane, segment) = match mode {
+            DiffViewMode::Unified => (
+                DiffSelectionPane::Unified,
+                selection_line
+                    .unified
+                    .as_ref()
+                    .filter(|segment| segment.contains(column))?,
+            ),
+            DiffViewMode::Split => {
+                if let Some(segment) = selection_line
+                    .left
+                    .as_ref()
+                    .filter(|segment| segment.contains(column))
+                {
+                    (DiffSelectionPane::Left, segment)
+                } else if let Some(segment) = selection_line
+                    .right
+                    .as_ref()
+                    .filter(|segment| segment.contains(column))
+                {
+                    (DiffSelectionPane::Right, segment)
+                } else {
+                    return None;
+                }
+            }
+        };
+
+        Some(DiffSelectionPoint {
+            display_index,
+            pane,
+            column: segment.clamp_column(column),
+        })
+    }
+
+    pub fn selection_point_for_pane(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        display_index: usize,
+        pane: DiffSelectionPane,
+        column: usize,
+    ) -> Option<DiffSelectionPoint> {
+        self.ensure_display_cache(mode, width);
+        let selection_line = self.display_cache.entry(mode).selection.get(display_index)?;
+        let segment = selection_line.segment(pane)?;
+        Some(DiffSelectionPoint {
+            display_index,
+            pane,
+            column: segment.clamp_column(column),
+        })
+    }
+
+    pub fn selected_text(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        anchor: DiffSelectionPoint,
+        head: DiffSelectionPoint,
+    ) -> Option<String> {
+        if anchor.pane != head.pane {
+            return None;
+        }
+
+        self.ensure_display_cache(mode, width);
+        let selection = self.display_cache.entry(mode).selection.as_slice();
+        let (start, end) = normalize_selection_points(anchor, head);
+        let mut lines = Vec::new();
+
+        for display_index in start.display_index..=end.display_index {
+            let segment = selection.get(display_index)?.segment(anchor.pane)?;
+            let start_column = if display_index == start.display_index {
+                start.column
+            } else {
+                0
+            };
+            let end_column = if display_index == end.display_index {
+                end.column.saturating_add(1)
+            } else {
+                segment.content_width
+            };
+            lines.push(segment.slice(start_column, end_column));
+        }
+
+        if lines.iter().all(|line| line.is_empty()) {
+            return None;
+        }
+
+        Some(lines.join("\n"))
+    }
+
+    pub fn selection_columns(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        anchor: DiffSelectionPoint,
+        head: DiffSelectionPoint,
+        display_index: usize,
+    ) -> Option<(usize, usize)> {
+        if anchor.pane != head.pane {
+            return None;
+        }
+
+        self.ensure_display_cache(mode, width);
+        let selection = self.display_cache.entry(mode).selection.as_slice();
+        let (start, end) = normalize_selection_points(anchor, head);
+        if display_index < start.display_index || display_index > end.display_index {
+            return None;
+        }
+
+        let segment = selection.get(display_index)?.segment(anchor.pane)?;
+        let start_column = if display_index == start.display_index {
+            start.column
+        } else {
+            0
+        };
+        let end_column = if display_index == end.display_index {
+            end.column.saturating_add(1)
+        } else {
+            segment.content_width
+        };
+        let clamped_start = start_column.min(segment.content_width);
+        let clamped_end = end_column.min(segment.content_width);
+        (clamped_start < clamped_end)
+            .then_some((segment.start_column + clamped_start, segment.start_column + clamped_end))
     }
 
     pub fn first_selectable_index(&mut self, mode: DiffViewMode, width: usize) -> usize {
@@ -217,7 +366,7 @@ impl DiffView {
             return;
         }
 
-        let (lines, nav, row_refs) = if self.rows.is_empty() {
+        let (lines, nav, row_refs, selection) = if self.rows.is_empty() {
             (
                 vec![Line::from(Span::styled(
                     self.note
@@ -227,6 +376,7 @@ impl DiffView {
                 ))],
                 vec![None],
                 vec![DisplayRowRefs::default()],
+                vec![DisplaySelectionLine::default()],
             )
         } else {
             match mode {
@@ -240,6 +390,7 @@ impl DiffView {
         cache.lines = lines;
         cache.nav = nav;
         cache.row_refs = row_refs;
+        cache.selection = selection;
         cache.valid = true;
     }
 
@@ -255,10 +406,12 @@ impl DiffView {
         Vec<Line<'static>>,
         Vec<Option<DisplayNavTarget>>,
         Vec<DisplayRowRefs>,
+        Vec<DisplaySelectionLine>,
     ) {
         let mut lines = Vec::new();
         let mut nav = Vec::new();
         let mut row_refs = Vec::new();
+        let mut selection = Vec::new();
 
         for (hunk_offset, hunk) in self.hunks.iter().enumerate() {
             for row_index in hunk.row_start..hunk.row_end {
@@ -278,18 +431,27 @@ impl DiffView {
                     },
                 };
                 for rendered_line in render_unified_code_lines(row, width) {
-                    lines.push(rendered_line);
+                    lines.push(rendered_line.line);
                     nav.push(line_number.map(DisplayNavTarget::Line));
                     row_refs.push(display_row_refs);
+                    selection.push(rendered_line.selection);
                 }
             }
 
             if let Some(gap) = self.gaps.get(hunk_offset) {
-                self.push_gap_display_rows(&mut lines, &mut nav, &mut row_refs, gap, width, false);
+                self.push_gap_display_rows(
+                    &mut lines,
+                    &mut nav,
+                    &mut row_refs,
+                    &mut selection,
+                    gap,
+                    width,
+                    false,
+                );
             }
         }
 
-        (lines, nav, row_refs)
+        (lines, nav, row_refs, selection)
     }
 
     fn build_split_display(
@@ -299,6 +461,7 @@ impl DiffView {
         Vec<Line<'static>>,
         Vec<Option<DisplayNavTarget>>,
         Vec<DisplayRowRefs>,
+        Vec<DisplaySelectionLine>,
     ) {
         let total_width = width.saturating_sub(1);
         let gutter_width = 3;
@@ -306,9 +469,10 @@ impl DiffView {
         let mut lines = Vec::new();
         let mut nav = Vec::new();
         let mut row_refs = Vec::new();
+        let mut selection = Vec::new();
 
         for (hunk_offset, hunk) in self.hunks.iter().enumerate() {
-            for (line, target_line, refs) in render_split_hunk_rows(
+            for (line, target_line, refs, line_selection) in render_split_hunk_rows(
                 &self.rows[hunk.row_start..hunk.row_end],
                 hunk.row_start,
                 side_width,
@@ -316,6 +480,7 @@ impl DiffView {
                 lines.push(line);
                 nav.push(target_line.map(DisplayNavTarget::Line));
                 row_refs.push(refs);
+                selection.push(line_selection);
             }
 
             if let Some(gap) = self.gaps.get(hunk_offset) {
@@ -323,6 +488,7 @@ impl DiffView {
                     &mut lines,
                     &mut nav,
                     &mut row_refs,
+                    &mut selection,
                     gap,
                     total_width,
                     true,
@@ -330,7 +496,7 @@ impl DiffView {
             }
         }
 
-        (lines, nav, row_refs)
+        (lines, nav, row_refs, selection)
     }
 
     fn push_gap_display_rows(
@@ -338,6 +504,7 @@ impl DiffView {
         lines: &mut Vec<Line<'static>>,
         nav: &mut Vec<Option<DisplayNavTarget>>,
         row_refs: &mut Vec<DisplayRowRefs>,
+        selection: &mut Vec<DisplaySelectionLine>,
         gap: &DiffHunkGap,
         width: usize,
         split: bool,
@@ -363,9 +530,10 @@ impl DiffView {
                     width,
                     split,
                 ) {
-                    lines.push(rendered_line);
+                    lines.push(rendered_line.line);
                     nav.push(Some(DisplayNavTarget::Line(line_number)));
                     row_refs.push(DisplayRowRefs::default());
+                    selection.push(rendered_line.selection);
                 }
             }
         }
@@ -385,6 +553,7 @@ impl DiffView {
                 GapExpandDirection::Up,
             )));
             row_refs.push(DisplayRowRefs::default());
+            selection.push(DisplaySelectionLine::default());
             lines.push(render_expand_gap_line(
                 width,
                 remaining,
@@ -396,6 +565,7 @@ impl DiffView {
                 GapExpandDirection::Down,
             )));
             row_refs.push(DisplayRowRefs::default());
+            selection.push(DisplaySelectionLine::default());
         }
 
         if let Some(file_lines) = self.new_file_lines.as_ref() {
@@ -413,9 +583,10 @@ impl DiffView {
                     width,
                     split,
                 ) {
-                    lines.push(rendered_line);
+                    lines.push(rendered_line.line);
                     nav.push(Some(DisplayNavTarget::Line(line_number)));
                     row_refs.push(DisplayRowRefs::default());
+                    selection.push(rendered_line.selection);
                 }
             }
         }
@@ -848,7 +1019,67 @@ struct CachedDisplay {
     lines: Vec<Line<'static>>,
     nav: Vec<Option<DisplayNavTarget>>,
     row_refs: Vec<DisplayRowRefs>,
+    selection: Vec<DisplaySelectionLine>,
     valid: bool,
+}
+
+#[derive(Debug, Default, Clone)]
+struct DisplaySelectionLine {
+    unified: Option<DisplaySelectionSegment>,
+    left: Option<DisplaySelectionSegment>,
+    right: Option<DisplaySelectionSegment>,
+}
+
+impl DisplaySelectionLine {
+    fn segment(&self, pane: DiffSelectionPane) -> Option<&DisplaySelectionSegment> {
+        match pane {
+            DiffSelectionPane::Unified => self.unified.as_ref(),
+            DiffSelectionPane::Left => self.left.as_ref(),
+            DiffSelectionPane::Right => self.right.as_ref(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DisplaySelectionSegment {
+    start_column: usize,
+    content_width: usize,
+    text: String,
+}
+
+impl DisplaySelectionSegment {
+    fn contains(&self, column: usize) -> bool {
+        column >= self.start_column
+            && column < self.start_column.saturating_add(self.content_width)
+            && self.content_width > 0
+    }
+
+    fn clamp_column(&self, column: usize) -> usize {
+        if self.content_width == 0 {
+            return 0;
+        }
+
+        if column <= self.start_column {
+            0
+        } else {
+            (column - self.start_column).min(self.content_width.saturating_sub(1))
+        }
+    }
+
+    fn slice(&self, start: usize, end: usize) -> String {
+        let text_width = UnicodeWidthStr::width(self.text.as_str());
+        if text_width == 0 {
+            return String::new();
+        }
+
+        let start = start.min(text_width);
+        let end = end.min(text_width);
+        if start >= end {
+            return String::new();
+        }
+
+        slice_string_by_width(&self.text, start, end)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1605,7 +1836,20 @@ fn resolve_split_target_line(left: Option<&DiffRow>, right: Option<&DiffRow>) ->
         .or_else(|| left.and_then(|row| row.old_line))
 }
 
-fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<Line<'static>> {
+#[derive(Debug, Clone)]
+struct RenderedDisplayLine {
+    line: Line<'static>,
+    selection: DisplaySelectionLine,
+}
+
+#[derive(Debug, Clone)]
+struct WrappedLineContent {
+    spans: Vec<Span<'static>>,
+    text: String,
+    content_width: usize,
+}
+
+fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<RenderedDisplayLine> {
     let base_style = base_style(row.kind);
     let sign_style = match row.kind {
         DiffLineKind::Context => ui::context_sign_style(),
@@ -1637,9 +1881,20 @@ fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<Line<'static>> 
         Span::styled("  ", sign_style),
     ];
     let content = render_row_content(row.unified_content(), &row.text, base_style);
+    let prefix_width = spans_width(&prefix);
     wrap_prefixed_spans_to_lines(prefix, continuation_prefix, content, width, base_style)
         .into_iter()
-        .map(|spans| Line::from(spans).style(base_style))
+        .map(|wrapped| RenderedDisplayLine {
+            line: Line::from(wrapped.spans).style(base_style),
+            selection: DisplaySelectionLine {
+                unified: Some(DisplaySelectionSegment {
+                    start_column: prefix_width,
+                    content_width: wrapped.content_width,
+                    text: wrapped.text,
+                }),
+                ..DisplaySelectionLine::default()
+            },
+        })
         .collect()
 }
 
@@ -1647,7 +1902,7 @@ fn render_split_pair_lines(
     left: Option<&DiffRow>,
     right: Option<&DiffRow>,
     side_width: usize,
-) -> Vec<Line<'static>> {
+) -> Vec<RenderedDisplayLine> {
     let left_lines = render_split_side_lines(left, true, side_width);
     let right_lines = render_split_side_lines(right, false, side_width);
     let line_count = left_lines.len().max(right_lines.len());
@@ -1655,21 +1910,34 @@ fn render_split_pair_lines(
 
     (0..line_count)
         .map(|index| {
+            let left_line = left_lines
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| blank_split_side(side_width));
+            let right_line = right_lines
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| blank_split_side(side_width));
             let mut spans = Vec::new();
-            spans.extend(
-                left_lines
-                    .get(index)
-                    .cloned()
-                    .unwrap_or_else(|| blank_split_side(side_width)),
-            );
+            spans.extend(left_line.spans.clone());
             spans.push(gap.clone());
-            spans.extend(
-                right_lines
-                    .get(index)
-                    .cloned()
-                    .unwrap_or_else(|| blank_split_side(side_width)),
-            );
-            Line::from(spans)
+            spans.extend(right_line.spans.clone());
+            RenderedDisplayLine {
+                line: Line::from(spans),
+                selection: DisplaySelectionLine {
+                    left: Some(DisplaySelectionSegment {
+                        start_column: left_line.start_column,
+                        content_width: left_line.content_width,
+                        text: left_line.text,
+                    }),
+                    right: Some(DisplaySelectionSegment {
+                        start_column: side_width + 3 + right_line.start_column,
+                        content_width: right_line.content_width,
+                        text: right_line.text,
+                    }),
+                    ..DisplaySelectionLine::default()
+                },
+            }
         })
         .collect()
 }
@@ -1678,12 +1946,13 @@ fn render_split_hunk_rows(
     rows: &[DiffRow],
     row_index_offset: usize,
     side_width: usize,
-) -> Vec<(Line<'static>, Option<usize>, DisplayRowRefs)> {
+) -> Vec<(Line<'static>, Option<usize>, DisplayRowRefs, DisplaySelectionLine)> {
     let mut rendered = Vec::with_capacity(rows.len());
     let mut pending_removed: Vec<(usize, &DiffRow)> = Vec::new();
     let mut pending_added: Vec<(usize, &DiffRow)> = Vec::new();
 
-    let flush_pending = |rendered: &mut Vec<(Line<'static>, Option<usize>, DisplayRowRefs)>,
+    let flush_pending =
+        |rendered: &mut Vec<(Line<'static>, Option<usize>, DisplayRowRefs, DisplaySelectionLine)>,
                          removed: &mut Vec<(usize, &DiffRow)>,
                          added: &mut Vec<(usize, &DiffRow)>| {
         let row_count = removed.len().max(added.len());
@@ -1701,7 +1970,7 @@ fn render_split_hunk_rows(
                 right.map(|(_, row)| row),
                 side_width,
             ) {
-                rendered.push((rendered_line, target_line, row_refs));
+                rendered.push((rendered_line.line, target_line, row_refs, rendered_line.selection));
             }
         }
         removed.clear();
@@ -1721,7 +1990,7 @@ fn render_split_hunk_rows(
                     right: Some(row_index),
                 };
                 for rendered_line in render_split_pair_lines(Some(row), Some(row), side_width) {
-                    rendered.push((rendered_line, target_line, row_refs));
+                    rendered.push((rendered_line.line, target_line, row_refs, rendered_line.selection));
                 }
             }
         }
@@ -1762,7 +2031,7 @@ fn render_expanded_context_lines(
     highlighted_content: Option<Vec<SyntaxToken>>,
     width: usize,
     split: bool,
-) -> Vec<Line<'static>> {
+) -> Vec<RenderedDisplayLine> {
     let row = DiffRow {
         kind: DiffLineKind::Context,
         old_line: Some(line_number),
@@ -1783,11 +2052,19 @@ fn render_expanded_context_lines(
     }
 }
 
+#[derive(Debug, Clone)]
+struct WrappedSideLine {
+    spans: Vec<Span<'static>>,
+    start_column: usize,
+    content_width: usize,
+    text: String,
+}
+
 fn render_split_side_lines(
     row: Option<&DiffRow>,
     left_side: bool,
     width: usize,
-) -> Vec<Vec<Span<'static>>> {
+) -> Vec<WrappedSideLine> {
     let Some(row) = row else {
         return vec![blank_split_side(width)];
     };
@@ -1807,11 +2084,25 @@ fn render_split_side_lines(
         base_style.patch(ui::line_number_style()),
     )];
     let content = render_row_content(row.side_content(left_side), &row.text, base_style);
+    let prefix_width = spans_width(&prefix);
     wrap_prefixed_spans_to_lines(prefix, continuation_prefix, content, width + 1, base_style)
+        .into_iter()
+        .map(|wrapped| WrappedSideLine {
+            spans: wrapped.spans,
+            start_column: prefix_width,
+            content_width: wrapped.content_width,
+            text: wrapped.text,
+        })
+        .collect()
 }
 
-fn blank_split_side(width: usize) -> Vec<Span<'static>> {
-    vec![Span::styled(" ".repeat(width), ui::diff_context_style())]
+fn blank_split_side(width: usize) -> WrappedSideLine {
+    WrappedSideLine {
+        spans: vec![Span::styled(" ".repeat(width), ui::diff_context_style())],
+        start_column: 0,
+        content_width: width,
+        text: String::new(),
+    }
 }
 
 fn render_row_content(
@@ -1942,7 +2233,7 @@ fn wrap_prefixed_spans_to_lines(
     content: Vec<Span<'static>>,
     width: usize,
     pad_style: Style,
-) -> Vec<Vec<Span<'static>>> {
+) -> Vec<WrappedLineContent> {
     let target_width = width.saturating_sub(1);
     let prefix_width = spans_width(&prefix);
     let continuation_prefix_width = spans_width(&continuation_prefix);
@@ -1952,7 +2243,14 @@ fn wrap_prefixed_spans_to_lines(
     if target_width == 0 || content_width == 0 || continuation_content_width == 0 {
         let mut spans = prefix;
         spans.extend(content);
-        return wrap_spans_to_width(spans, target_width.max(1), pad_style);
+        return wrap_spans_to_width(spans, target_width.max(1), pad_style)
+            .into_iter()
+            .map(|line| WrappedLineContent {
+                text: line_text(&line),
+                content_width: spans_width(&line),
+                spans: line,
+            })
+            .collect();
     }
 
     let wrapped_content = wrap_spans_to_width(content, content_width, pad_style);
@@ -1960,15 +2258,33 @@ fn wrap_prefixed_spans_to_lines(
         .into_iter()
         .enumerate()
         .map(|(index, line_content)| {
+            let text = line_text(&line_content);
             let mut spans = if index == 0 {
                 prefix.clone()
             } else {
                 continuation_prefix.clone()
             };
             spans.extend(line_content);
-            spans
+            WrappedLineContent {
+                text,
+                content_width: if index == 0 {
+                    content_width
+                } else {
+                    continuation_content_width
+                },
+                spans,
+            }
         })
         .collect()
+}
+
+fn line_text(spans: &[Span<'static>]) -> String {
+    spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>()
+        .trim_end_matches(' ')
+        .to_string()
 }
 
 fn wrap_spans_to_width(
@@ -2033,6 +2349,17 @@ fn spans_width(spans: &[Span<'static>]) -> usize {
         .sum()
 }
 
+fn normalize_selection_points(
+    anchor: DiffSelectionPoint,
+    head: DiffSelectionPoint,
+) -> (DiffSelectionPoint, DiffSelectionPoint) {
+    if (anchor.display_index, anchor.column) <= (head.display_index, head.column) {
+        (anchor, head)
+    } else {
+        (head, anchor)
+    }
+}
+
 fn split_string_at_width(content: &str, width: usize) -> (String, String) {
     let mut head = String::new();
     let mut used = 0usize;
@@ -2055,6 +2382,34 @@ fn split_string_at_width(content: &str, width: usize) -> (String, String) {
     }
 
     (head, content[split_at..].to_string())
+}
+
+fn slice_string_by_width(content: &str, start: usize, end: usize) -> String {
+    let mut result = String::new();
+    let mut used = 0usize;
+
+    for ch in content.chars() {
+        let Some(ch_width) = UnicodeWidthChar::width(ch) else {
+            continue;
+        };
+        if ch_width == 0 {
+            continue;
+        }
+
+        let next_width = used + ch_width;
+        if next_width <= start {
+            used = next_width;
+            continue;
+        }
+        if used >= end {
+            break;
+        }
+
+        result.push(ch);
+        used = next_width;
+    }
+
+    result
 }
 
 fn truncate_to_width(content: &str, width: usize) -> String {
@@ -2231,6 +2586,62 @@ mod tests {
             view.selected_line_number(DiffViewMode::Unified, 16, 1),
             Some(1)
         );
+    }
+
+    #[test]
+    fn selection_hit_testing_ignores_prefix_and_targets_split_panes() {
+        let diff = "@@ -1 +1 @@\n-old\n+new";
+        let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+
+        assert!(
+            view.selection_point_at(DiffViewMode::Unified, 24, 0, 3)
+                .is_none()
+        );
+        assert_eq!(
+            view.selection_point_at(DiffViewMode::Unified, 24, 0, 8),
+            Some(DiffSelectionPoint {
+                display_index: 0,
+                pane: DiffSelectionPane::Unified,
+                column: 1,
+            })
+        );
+        assert_eq!(
+            view.selection_point_at(DiffViewMode::Split, 29, 0, 21),
+            Some(DiffSelectionPoint {
+                display_index: 0,
+                pane: DiffSelectionPane::Right,
+                column: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn split_selection_extracts_only_selected_pane_text() {
+        let diff = "\
+@@ -1,2 +1,2 @@
+-old_one
++new_one
+-old_two
++new_two
+";
+        let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+
+        let selected = view.selected_text(
+            DiffViewMode::Split,
+            40,
+            DiffSelectionPoint {
+                display_index: 0,
+                pane: DiffSelectionPane::Right,
+                column: 0,
+            },
+            DiffSelectionPoint {
+                display_index: 1,
+                pane: DiffSelectionPane::Right,
+                column: 2,
+            },
+        );
+
+        assert_eq!(selected.as_deref(), Some("new_one\nnew"));
     }
 
     #[test]

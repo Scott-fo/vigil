@@ -7,11 +7,12 @@ mod repo;
 mod types;
 
 pub use diff::{
-    DiffPreviewData, DiffView, GapExpandDirection, build_diff_view_from_diff_text,
-    build_diff_view_from_diff_text_with_context, build_diff_view_from_preview_data,
-    load_diff_preview_for_branch_compare, load_diff_preview_for_commit_compare,
-    load_diff_preview_for_working_tree, load_diff_view, load_diff_view_for_branch_compare,
-    load_diff_view_for_commit_compare, load_diff_view_for_working_tree,
+    DiffPreviewData, DiffSelectionPane, DiffSelectionPoint, DiffView, GapExpandDirection,
+    build_diff_view_from_diff_text, build_diff_view_from_diff_text_with_context,
+    build_diff_view_from_preview_data, load_diff_preview_for_branch_compare,
+    load_diff_preview_for_commit_compare, load_diff_preview_for_working_tree, load_diff_view,
+    load_diff_view_for_branch_compare, load_diff_view_for_commit_compare,
+    load_diff_view_for_working_tree,
 };
 pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_highlight_registry};
 pub use repo::{

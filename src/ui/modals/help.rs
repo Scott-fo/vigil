@@ -52,6 +52,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         key_line("j / k", "move selection"),
         key_line("Ctrl-D / Ctrl-U", "page diff"),
         key_line("mouse wheel", "scroll diff"),
+        key_line("drag in diff", "select code text"),
         Line::default(),
         Line::from(Span::styled(
             "Actions",
@@ -63,6 +64,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
             "click gap rows",
             "top row expands up, bottom row expands down",
         ),
+        key_line("Ctrl-C", "copy selected diff text or quit if nothing is selected"),
         key_line("space", "stage / unstage selected file"),
         key_line("d", "discard selected file"),
         key_line("c", "commit staged changes"),
