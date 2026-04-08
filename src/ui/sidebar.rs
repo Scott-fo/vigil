@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::{
@@ -26,9 +26,24 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    app.sidebar_viewport_height = inner.height as usize;
+    let max_scroll = app
+        .sidebar_items
+        .len()
+        .saturating_sub(app.sidebar_viewport_height);
+    if app.sidebar_scroll > max_scroll {
+        app.sidebar_scroll = max_scroll;
+    }
+    let visible_start = app.sidebar_scroll.min(max_scroll);
+    let visible_end = visible_start
+        .saturating_add(app.sidebar_viewport_height)
+        .min(app.sidebar_items.len());
+
     let items: Vec<ListItem> = app
         .sidebar_items
         .iter()
+        .skip(visible_start)
+        .take(visible_end.saturating_sub(visible_start))
         .map(|item| match item {
             SidebarItem::Header {
                 label,
@@ -74,6 +89,7 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
+    let item_count = items.len();
     let list = List::new(items)
         .highlight_style(
             Style::new()
@@ -83,11 +99,21 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_symbol("");
 
-    frame.render_stateful_widget(list, inner, &mut app.sidebar_state);
+    let selected_row = app.files.get(app.selected_file_index).and_then(|selected_file| {
+        app.sidebar_items.iter().position(
+            |item| matches!(item, SidebarItem::File { file, .. } if file.path == selected_file.path),
+        )
+    });
+    let mut list_state = ListState::default();
+    list_state.select(selected_row.and_then(|row| {
+        row.checked_sub(visible_start)
+            .filter(|relative_row| *relative_row < item_count)
+    }));
+    frame.render_stateful_widget(list, inner, &mut list_state);
 
     let sidebar_height = inner.height.saturating_sub(1) as usize;
     let mut scrollbar_state = ScrollbarState::new(app.sidebar_items.len())
-        .position(app.sidebar_state.offset())
+        .position(visible_start)
         .viewport_content_length(sidebar_height);
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .thumb_style(Style::new().fg(border_active_color()))

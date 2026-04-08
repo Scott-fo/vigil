@@ -85,7 +85,11 @@ impl DiffView {
         column: usize,
     ) -> Option<DiffSelectionPoint> {
         self.ensure_display_cache(mode, width);
-        let selection_line = self.display_cache.entry(mode).selection.get(display_index)?;
+        let selection_line = self
+            .display_cache
+            .entry(mode)
+            .selection
+            .get(display_index)?;
         let (pane, segment) = match mode {
             DiffViewMode::Unified => (
                 DiffSelectionPane::Unified,
@@ -129,7 +133,11 @@ impl DiffView {
         column: usize,
     ) -> Option<DiffSelectionPoint> {
         self.ensure_display_cache(mode, width);
-        let selection_line = self.display_cache.entry(mode).selection.get(display_index)?;
+        let selection_line = self
+            .display_cache
+            .entry(mode)
+            .selection
+            .get(display_index)?;
         let segment = selection_line.segment(pane)?;
         Some(DiffSelectionPoint {
             display_index,
@@ -208,8 +216,10 @@ impl DiffView {
         };
         let clamped_start = start_column.min(segment.content_width);
         let clamped_end = end_column.min(segment.content_width);
-        (clamped_start < clamped_end)
-            .then_some((segment.start_column + clamped_start, segment.start_column + clamped_end))
+        (clamped_start < clamped_end).then_some((
+            segment.start_column + clamped_start,
+            segment.start_column + clamped_end,
+        ))
     }
 
     pub fn first_selectable_index(&mut self, mode: DiffViewMode, width: usize) -> usize {
@@ -1946,13 +1956,22 @@ fn render_split_hunk_rows(
     rows: &[DiffRow],
     row_index_offset: usize,
     side_width: usize,
-) -> Vec<(Line<'static>, Option<usize>, DisplayRowRefs, DisplaySelectionLine)> {
+) -> Vec<(
+    Line<'static>,
+    Option<usize>,
+    DisplayRowRefs,
+    DisplaySelectionLine,
+)> {
     let mut rendered = Vec::with_capacity(rows.len());
     let mut pending_removed: Vec<(usize, &DiffRow)> = Vec::new();
     let mut pending_added: Vec<(usize, &DiffRow)> = Vec::new();
 
-    let flush_pending =
-        |rendered: &mut Vec<(Line<'static>, Option<usize>, DisplayRowRefs, DisplaySelectionLine)>,
+    let flush_pending = |rendered: &mut Vec<(
+        Line<'static>,
+        Option<usize>,
+        DisplayRowRefs,
+        DisplaySelectionLine,
+    )>,
                          removed: &mut Vec<(usize, &DiffRow)>,
                          added: &mut Vec<(usize, &DiffRow)>| {
         let row_count = removed.len().max(added.len());
@@ -1970,7 +1989,12 @@ fn render_split_hunk_rows(
                 right.map(|(_, row)| row),
                 side_width,
             ) {
-                rendered.push((rendered_line.line, target_line, row_refs, rendered_line.selection));
+                rendered.push((
+                    rendered_line.line,
+                    target_line,
+                    row_refs,
+                    rendered_line.selection,
+                ));
             }
         }
         removed.clear();
@@ -1990,7 +2014,12 @@ fn render_split_hunk_rows(
                     right: Some(row_index),
                 };
                 for rendered_line in render_split_pair_lines(Some(row), Some(row), side_width) {
-                    rendered.push((rendered_line.line, target_line, row_refs, rendered_line.selection));
+                    rendered.push((
+                        rendered_line.line,
+                        target_line,
+                        row_refs,
+                        rendered_line.selection,
+                    ));
                 }
             }
         }

@@ -621,11 +621,20 @@ impl App {
         self.move_diff_selection(delta);
     }
 
-    fn scroll_diff(&mut self, delta: i32) {
+    pub(super) fn scroll_diff(&mut self, delta: i32) {
         self.diff_scroll = if delta.is_negative() {
             self.diff_scroll.saturating_sub(delta.unsigned_abs() as u16)
         } else {
             self.diff_scroll.saturating_add(delta as u16)
+        };
+    }
+
+    pub(super) fn scroll_sidebar(&mut self, delta: i32) {
+        self.sidebar_scroll = if delta.is_negative() {
+            self.sidebar_scroll
+                .saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            self.sidebar_scroll.saturating_add(delta as usize)
         };
     }
 
@@ -724,6 +733,16 @@ mod tests {
 
         assert_eq!(viewport.start, 0);
         assert_eq!(app.diff_scroll, 0);
+    }
+
+    #[test]
+    fn scroll_sidebar_saturates_at_zero() {
+        let mut app = build_test_app();
+        app.sidebar_scroll = 2;
+
+        app.scroll_sidebar(-5);
+
+        assert_eq!(app.sidebar_scroll, 0);
     }
 
     #[test]

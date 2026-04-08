@@ -26,6 +26,8 @@ mod branch_compare;
 mod commit_search;
 mod diff;
 
+pub use self::diff::{DiffCacheKey, PreparedDiffViewport};
+use self::diff::{DiffHighlightJob, DiffViewCache, DiffViewport};
 use crate::theme::config;
 use crate::ui::splash;
 use crate::{
@@ -39,8 +41,6 @@ use crate::{
     ui,
     watcher::RepoWatcher,
 };
-pub use self::diff::{DiffCacheKey, PreparedDiffViewport};
-use self::diff::{DiffHighlightJob, DiffViewCache, DiffViewport};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePane {
@@ -116,6 +116,8 @@ pub struct App {
     pub sidebar_items: Vec<SidebarItem>,
     pub collapsed_directories: HashSet<String>,
     pub sidebar_state: ListState,
+    pub sidebar_scroll: usize,
+    pub sidebar_viewport_height: usize,
     pub selected_file_index: usize,
     pub diff_view: DiffView,
     pub diff_view_mode: DiffViewMode,
@@ -202,6 +204,8 @@ impl App {
             sidebar_items: Vec::new(),
             collapsed_directories: HashSet::new(),
             sidebar_state: ListState::default(),
+            sidebar_scroll: 0,
+            sidebar_viewport_height: 0,
             selected_file_index: 0,
             diff_view: DiffView::default(),
             diff_view_mode: DiffViewMode::Split,
@@ -918,12 +922,28 @@ impl App {
 
         match mouse_event.kind {
             MouseEventKind::ScrollDown => {
-                self.clear_diff_text_selection();
-                self.page_or_scroll_diff(3);
+                let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
+                match ui::hovered_pane_at(self, mouse_event.column, mouse_event.row, width, height)
+                {
+                    Some(ActivePane::Sidebar) => self.scroll_sidebar(3),
+                    Some(ActivePane::Diff) => {
+                        self.clear_diff_text_selection();
+                        self.scroll_diff(3);
+                    }
+                    None => {}
+                }
             }
             MouseEventKind::ScrollUp => {
-                self.clear_diff_text_selection();
-                self.page_or_scroll_diff(-3);
+                let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
+                match ui::hovered_pane_at(self, mouse_event.column, mouse_event.row, width, height)
+                {
+                    Some(ActivePane::Sidebar) => self.scroll_sidebar(-3),
+                    Some(ActivePane::Diff) => {
+                        self.clear_diff_text_selection();
+                        self.scroll_diff(-3);
+                    }
+                    None => {}
+                }
             }
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                 let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
@@ -1622,6 +1642,30 @@ impl App {
             )
         });
         self.sidebar_state.select(selected_row);
+        self.ensure_selected_sidebar_item_visible(selected_row);
+    }
+
+    fn ensure_selected_sidebar_item_visible(&mut self, selected_row: Option<usize>) {
+        let Some(selected_row) = selected_row else {
+            return;
+        };
+        if self.sidebar_viewport_height == 0 {
+            return;
+        }
+
+        if selected_row < self.sidebar_scroll {
+            self.sidebar_scroll = selected_row;
+            return;
+        }
+
+        let visible_end = self
+            .sidebar_scroll
+            .saturating_add(self.sidebar_viewport_height);
+        if selected_row >= visible_end {
+            self.sidebar_scroll = selected_row
+                .saturating_add(1)
+                .saturating_sub(self.sidebar_viewport_height);
+        }
     }
 
     fn staged_file_count(&self) -> usize {

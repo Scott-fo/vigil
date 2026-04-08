@@ -123,21 +123,46 @@ pub fn sidebar_file_at(
         return None;
     }
 
-    let [sidebar_area, _] = main_layout(Rect::new(0, 0, terminal_width, terminal_height));
-    let sidebar_inner = bordered_panel("Changed Files", false, None).inner(sidebar_area);
+    let sidebar_inner = sidebar_inner_area(terminal_width, terminal_height);
     let point = Position::new(mouse_column, mouse_row);
 
     if !sidebar_inner.contains(point) {
         return None;
     }
 
+    let viewport_height = sidebar_inner.height as usize;
+    let max_scroll = app.sidebar_items.len().saturating_sub(viewport_height);
+    let visible_start = app.sidebar_scroll.min(max_scroll);
     let relative_row = mouse_row.saturating_sub(sidebar_inner.y) as usize;
-    let item_index = app.sidebar_state.offset().saturating_add(relative_row);
+    let item_index = visible_start.saturating_add(relative_row);
     let item = app.sidebar_items.get(item_index)?;
 
     match item {
         crate::sidebar::SidebarItem::File { file, .. } => Some(file.path.clone()),
         crate::sidebar::SidebarItem::Header { .. } => None,
+    }
+}
+
+pub fn hovered_pane_at(
+    app: &App,
+    mouse_column: u16,
+    mouse_row: u16,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> Option<ActivePane> {
+    if app.show_splash() {
+        return None;
+    }
+
+    let [sidebar_area, diff_area] = main_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let point = Position::new(mouse_column, mouse_row);
+
+    if sidebar_area.contains(point) {
+        Some(ActivePane::Sidebar)
+    } else if diff_area.contains(point) {
+        Some(ActivePane::Diff)
+    } else {
+        None
     }
 }
 
@@ -148,8 +173,13 @@ pub fn diff_gap_click_at(
     terminal_width: u16,
     terminal_height: u16,
 ) -> Option<usize> {
-    let (body_area, display_index) =
-        diff_body_hit(app, mouse_column, mouse_row, terminal_width, terminal_height)?;
+    let (body_area, display_index) = diff_body_hit(
+        app,
+        mouse_column,
+        mouse_row,
+        terminal_width,
+        terminal_height,
+    )?;
 
     app.diff_view.selected_gap_action(
         app.diff_view_mode,
@@ -167,8 +197,13 @@ pub fn diff_selection_point_at(
     terminal_width: u16,
     terminal_height: u16,
 ) -> Option<DiffSelectionPoint> {
-    let (body_area, display_index) =
-        diff_body_hit(app, mouse_column, mouse_row, terminal_width, terminal_height)?;
+    let (body_area, display_index) = diff_body_hit(
+        app,
+        mouse_column,
+        mouse_row,
+        terminal_width,
+        terminal_height,
+    )?;
     let relative_column = mouse_column.saturating_sub(body_area.x) as usize;
     app.diff_view.selection_point_at(
         app.diff_view_mode,
@@ -186,8 +221,13 @@ pub fn diff_selection_drag_point_at(
     terminal_width: u16,
     terminal_height: u16,
 ) -> Option<DiffSelectionPoint> {
-    let (body_area, display_index) =
-        diff_body_clamped_hit(app, mouse_column, mouse_row, terminal_width, terminal_height)?;
+    let (body_area, display_index) = diff_body_clamped_hit(
+        app,
+        mouse_column,
+        mouse_row,
+        terminal_width,
+        terminal_height,
+    )?;
     let relative_column = mouse_column.saturating_sub(body_area.x) as usize;
     app.diff_view.selection_point_for_pane(
         app.diff_view_mode,
@@ -329,6 +369,11 @@ fn diff_body_state(
         body_area.height as usize,
     )?;
     Some((body_area, viewport))
+}
+
+fn sidebar_inner_area(terminal_width: u16, terminal_height: u16) -> Rect {
+    let [sidebar_area, _] = main_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    bordered_panel("Changed Files", false, None).inner(sidebar_area)
 }
 
 fn bordered_panel(title: &str, active: bool, right_title: Option<String>) -> Block<'static> {
