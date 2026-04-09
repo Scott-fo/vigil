@@ -40,10 +40,12 @@ impl ThemeMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThemePreference {
+pub struct TuiPreference {
     pub theme: Option<String>,
     #[serde(rename = "theme_mode")]
     pub mode: Option<ThemeMode>,
+    #[serde(rename = "diff_view_mode")]
+    pub diff_view_mode: Option<String>,
 }
 
 static ACTIVE_THEME_INDEX: AtomicUsize = AtomicUsize::new(0);

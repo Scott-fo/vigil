@@ -19,6 +19,7 @@ use nucleo_matcher::{
     pattern::{CaseMatching, Normalization, Pattern},
 };
 use ratatui::widgets::ListState;
+use strum_macros::{EnumString, IntoStaticStr};
 use tokio::fs;
 use tokio::task;
 
@@ -48,10 +49,17 @@ pub enum ActivePane {
     Diff,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum DiffViewMode {
     Unified,
     Split,
+}
+
+impl DiffViewMode {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +199,7 @@ impl App {
         events: EventHandler,
         theme_name: String,
         theme_mode: ThemeMode,
+        diff_view_mode: DiffViewMode,
     ) -> Self {
         Self {
             running: true,
@@ -208,7 +217,7 @@ impl App {
             sidebar_viewport_height: 0,
             selected_file_index: 0,
             diff_view: DiffView::default(),
-            diff_view_mode: DiffViewMode::Split,
+            diff_view_mode,
             diff_scroll: 0,
             selected_diff_line_index: 0,
             diff_text_selection: None,
@@ -278,9 +287,14 @@ impl App {
             Some(path) => path,
             None => std::env::current_dir().wrap_err("failed to resolve current directory")?,
         };
-        let preference = config::read_theme_preference();
+        let preference = config::read_tui_preference();
         let theme_name = theme::resolve_theme_name(preference.theme.as_deref()).to_string();
         let theme_mode = preference.mode.unwrap_or(ThemeMode::Dark);
+        let diff_view_mode = preference
+            .diff_view_mode
+            .as_deref()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DiffViewMode::Split);
         theme::set_active_theme(&theme_name, theme_mode);
         let mut app = Self::build_base_app(
             repo_root,
@@ -288,6 +302,7 @@ impl App {
             EventHandler::new(),
             theme_name.clone(),
             theme_mode,
+            diff_view_mode,
         );
         app.refresh().await?;
         app.spawn_highlight_registry_init();
@@ -308,6 +323,7 @@ impl App {
             EventHandler::without_event_task(),
             theme_name,
             theme_mode,
+            DiffViewMode::Split,
         )
     }
 
@@ -771,6 +787,10 @@ impl App {
                     DiffViewMode::Unified => DiffViewMode::Split,
                     DiffViewMode::Split => DiffViewMode::Unified,
                 };
+                if let Err(error) = config::persist_diff_view_mode(self.diff_view_mode.as_str()) {
+                    self.status_message =
+                        Some(format!("failed to persist diff view mode: {error}"));
+                }
                 self.diff_scroll = 0;
                 self.selected_diff_line_index = self
                     .diff_view
