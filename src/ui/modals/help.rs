@@ -11,7 +11,7 @@ use super::super::layout::centered_rect;
 use super::super::{border_active_color, panel_color, primary_color, text_color, text_muted_color};
 
 pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
-    let area = centered_rect(76, 20, frame.area());
+    let area = centered_rect(76, 21, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -69,6 +69,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
             "copy selected diff text or quit if nothing is selected",
         ),
         key_line("space", "stage / unstage selected file"),
+        key_line("A", "toggle stage all files"),
         key_line("d", "discard selected file"),
         key_line("c", "commit staged changes"),
         key_line("p / P", "pull / push"),

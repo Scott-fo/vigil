@@ -229,6 +229,55 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
 }
 
 #[tokio::test]
+async fn stage_all_changes_stages_tracked_and_untracked_files() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("src/lib.rs", "pub fn tracked() {}\n");
+    repo.write("notes.md", "# notes\n");
+    repo.commit_all("initial state", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    repo.append("src/lib.rs", "pub fn changed() {}\n");
+    repo.write("new/script.rs", "fn added() {}\n");
+    repo.git(&["rm", "notes.md"]);
+
+    git::stage_all_changes(&repo.root).await?;
+
+    let files = git::load_files_with_status(&repo.root).await?;
+    assert_eq!(find_file(&files, "src/lib.rs").status, "M ");
+    assert_eq!(find_file(&files, "new/script.rs").status, "A ");
+    assert_eq!(find_file(&files, "notes.md").status, "D ");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn unstage_all_changes_restores_working_tree_statuses() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("src/lib.rs", "pub fn tracked() {}\n");
+    repo.write("notes.md", "# notes\n");
+    repo.commit_all("initial state", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    repo.append("src/lib.rs", "pub fn changed() {}\n");
+    repo.write("new/script.rs", "fn added() {}\n");
+    repo.git(&["rm", "notes.md"]);
+
+    git::stage_all_changes(&repo.root).await?;
+    git::unstage_all_changes(&repo.root).await?;
+
+    let files = git::load_files_with_status(&repo.root).await?;
+    assert_eq!(find_file(&files, "src/lib.rs").status, " M");
+    assert_eq!(find_file(&files, "new/script.rs").status, "??");
+    assert_eq!(find_file(&files, "notes.md").status, " D");
+    assert!(!git::is_file_fully_staged(
+        &find_file(&files, "src/lib.rs").status
+    ));
+    assert!(git::is_file_fully_staged("M "));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn commit_search_blame_and_commit_compare_report_expected_metadata() -> Result<()> {
     let repo = TestRepo::init().await?;
     repo.write("src/main.rs", "fn main() {\n    println!(\"one\");\n}\n");

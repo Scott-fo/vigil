@@ -1116,6 +1116,17 @@ pub fn is_file_staged(status: &str) -> bool {
     index_status != ' ' && index_status != '?'
 }
 
+pub fn is_file_fully_staged(status: &str) -> bool {
+    if status == "??" {
+        return false;
+    }
+
+    let mut chars = status.chars();
+    let index_status = chars.next().unwrap_or(' ');
+    let worktree_status = chars.next().unwrap_or(' ');
+    index_status != ' ' && index_status != '?' && worktree_status == ' '
+}
+
 pub fn status_color(status: &str) -> ratatui::style::Color {
     let palette = theme::active_palette();
 
@@ -1142,6 +1153,16 @@ pub async fn toggle_file_stage(repo_root: &Path, file: &FileEntry) -> color_eyre
     };
 
     let _ = git_output(repo_root, &args).await?;
+    Ok(())
+}
+
+pub async fn stage_all_changes(repo_root: &Path) -> color_eyre::Result<()> {
+    let _ = git_output(repo_root, &["add", "-A"]).await?;
+    Ok(())
+}
+
+pub async fn unstage_all_changes(repo_root: &Path) -> color_eyre::Result<()> {
+    let _ = git_output(repo_root, &["restore", "--staged", "--", "."]).await?;
     Ok(())
 }
 
