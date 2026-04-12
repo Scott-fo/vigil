@@ -736,6 +736,21 @@ mod tests {
     }
 
     #[test]
+    fn page_or_scroll_diff_moves_selection_when_diff_pane_is_active() {
+        let mut app = build_test_app();
+        app.active_pane = ActivePane::Diff;
+        app.diff_view = build_diff_view(120);
+        app.update_diff_viewport(DiffViewMode::Split, 160, 0, 12);
+
+        let initial_selection = app.diff_view.first_selectable_index(DiffViewMode::Split, 160);
+        app.selected_diff_line_index = initial_selection;
+
+        app.page_or_scroll_diff(3);
+
+        assert!(app.selected_diff_line_index > initial_selection);
+    }
+
+    #[test]
     fn scroll_sidebar_saturates_at_zero() {
         let mut app = build_test_app();
         app.sidebar_scroll = 2;

@@ -1002,7 +1002,7 @@ impl App {
                     Some(ActivePane::Sidebar) => self.scroll_sidebar(3),
                     Some(ActivePane::Diff) => {
                         self.clear_diff_text_selection();
-                        self.scroll_diff(3);
+                        self.page_or_scroll_diff(3);
                     }
                     None => {}
                 }
@@ -1014,7 +1014,7 @@ impl App {
                     Some(ActivePane::Sidebar) => self.scroll_sidebar(-3),
                     Some(ActivePane::Diff) => {
                         self.clear_diff_text_selection();
-                        self.scroll_diff(-3);
+                        self.page_or_scroll_diff(-3);
                     }
                     None => {}
                 }
