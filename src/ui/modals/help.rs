@@ -11,7 +11,7 @@ use super::super::layout::centered_rect;
 use super::super::{border_active_color, panel_color, primary_color, text_color, text_muted_color};
 
 pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
-    let area = centered_rect(76, 21, frame.area());
+    let area = centered_rect(76, 22, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -26,8 +26,9 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
     frame.render_widget(block, area);
 
     let pane_hint = match app.active_pane {
-        ActivePane::Sidebar => "Sidebar focused",
+        ActivePane::Sidebar if !app.sidebar_hidden => "Sidebar focused",
         ActivePane::Diff => "Diff focused",
+        ActivePane::Sidebar => "Sidebar hidden",
     };
 
     let mut lines = vec![
@@ -37,6 +38,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         )),
         key_line("?", "toggle help"),
         key_line("tab", "switch sidebar / diff focus"),
+        key_line("Ctrl-B", "toggle left sidebar"),
         key_line("v", "toggle unified / split diff"),
         key_line("r", "refresh"),
         key_line("g", "open commit search"),

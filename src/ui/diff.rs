@@ -9,7 +9,7 @@ use ratatui::{
 use crate::app::{ActivePane, App};
 
 use super::{
-    border_active_color, border_color, bordered_panel, diff_mode_label, highlight_line,
+    border_active_color, border_color, bordered_panel, diff_pane_label, highlight_line,
     highlight_line_range, panel_color, text_color,
 };
 
@@ -22,17 +22,13 @@ pub(super) fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|file| file.label.clone())
         .unwrap_or_else(|| "No file selected".to_string());
     let mode_label = app.review_mode_label();
-    let right_title = match app.active_pane {
-        ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
-        ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
-    };
     let block = bordered_panel(
         &title,
         app.active_pane == ActivePane::Diff,
         Some(if mode_label.is_empty() {
-            right_title
+            diff_pane_label(app)
         } else {
-            format!("{right_title}  {mode_label}")
+            format!("{}  {mode_label}", diff_pane_label(app))
         }),
     );
     let inner = block.inner(area);

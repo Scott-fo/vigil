@@ -103,8 +103,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             frame.area(),
         );
     } else {
-        let [sidebar_area, diff_area] = main_layout(frame.area());
-        render_sidebar(frame, app, sidebar_area);
+        let [sidebar_area, diff_area] = main_layout(frame.area(), app.sidebar_hidden);
+        if !app.sidebar_hidden {
+            render_sidebar(frame, app, sidebar_area);
+        }
         render_diff(frame, app, diff_area);
     }
 
@@ -119,11 +121,11 @@ pub fn sidebar_file_at(
     terminal_width: u16,
     terminal_height: u16,
 ) -> Option<String> {
-    if app.show_splash() {
+    if app.show_splash() || app.sidebar_hidden {
         return None;
     }
 
-    let sidebar_inner = sidebar_inner_area(terminal_width, terminal_height);
+    let sidebar_inner = sidebar_inner_area(app, terminal_width, terminal_height);
     let point = Position::new(mouse_column, mouse_row);
 
     if !sidebar_inner.contains(point) {
@@ -154,10 +156,13 @@ pub fn hovered_pane_at(
         return None;
     }
 
-    let [sidebar_area, diff_area] = main_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let [sidebar_area, diff_area] = main_layout(
+        Rect::new(0, 0, terminal_width, terminal_height),
+        app.sidebar_hidden,
+    );
     let point = Position::new(mouse_column, mouse_row);
 
-    if sidebar_area.contains(point) {
+    if !app.sidebar_hidden && sidebar_area.contains(point) {
         Some(ActivePane::Sidebar)
     } else if diff_area.contains(point) {
         Some(ActivePane::Diff)
@@ -247,24 +252,23 @@ pub fn prepare_diff_viewport_for_terminal(
         return None;
     }
 
-    let [_, diff_area] = main_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let [_, diff_area] = main_layout(
+        Rect::new(0, 0, terminal_width, terminal_height),
+        app.sidebar_hidden,
+    );
     let title = app
         .files
         .get(app.selected_file_index)
         .map(|file| file.label.clone())
         .unwrap_or_else(|| "No file selected".to_string());
     let mode_label = app.review_mode_label();
-    let right_title = match app.active_pane {
-        ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
-        ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
-    };
     let block = bordered_panel(
         &title,
         app.active_pane == ActivePane::Diff,
         Some(if mode_label.is_empty() {
-            right_title
+            diff_pane_label(app)
         } else {
-            format!("{right_title}  {mode_label}")
+            format!("{}  {mode_label}", diff_pane_label(app))
         }),
     );
     let inner = block.inner(diff_area);
@@ -334,24 +338,23 @@ fn diff_body_state(
         return None;
     }
 
-    let [_, diff_area] = main_layout(Rect::new(0, 0, terminal_width, terminal_height));
+    let [_, diff_area] = main_layout(
+        Rect::new(0, 0, terminal_width, terminal_height),
+        app.sidebar_hidden,
+    );
     let title = app
         .files
         .get(app.selected_file_index)
         .map(|file| file.label.clone())
         .unwrap_or_else(|| "No file selected".to_string());
     let mode_label = app.review_mode_label();
-    let right_title = match app.active_pane {
-        ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
-        ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
-    };
     let block = bordered_panel(
         &title,
         app.active_pane == ActivePane::Diff,
         Some(if mode_label.is_empty() {
-            right_title
+            diff_pane_label(app)
         } else {
-            format!("{right_title}  {mode_label}")
+            format!("{}  {mode_label}", diff_pane_label(app))
         }),
     );
     let inner = block.inner(diff_area);
@@ -371,9 +374,23 @@ fn diff_body_state(
     Some((body_area, viewport))
 }
 
-fn sidebar_inner_area(terminal_width: u16, terminal_height: u16) -> Rect {
-    let [sidebar_area, _] = main_layout(Rect::new(0, 0, terminal_width, terminal_height));
+fn sidebar_inner_area(app: &App, terminal_width: u16, terminal_height: u16) -> Rect {
+    let [sidebar_area, _] = main_layout(
+        Rect::new(0, 0, terminal_width, terminal_height),
+        app.sidebar_hidden,
+    );
     bordered_panel("Changed Files", false, None).inner(sidebar_area)
+}
+
+fn diff_pane_label(app: &App) -> String {
+    if app.sidebar_hidden {
+        return format!("{}  diff  sidebar hidden", diff_mode_label(app.diff_view_mode));
+    }
+
+    match app.active_pane {
+        ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
+        ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
+    }
 }
 
 fn bordered_panel(title: &str, active: bool, right_title: Option<String>) -> Block<'static> {
@@ -407,6 +424,41 @@ fn diff_mode_label(mode: DiffViewMode) -> &'static str {
     match mode {
         DiffViewMode::Unified => "unified",
         DiffViewMode::Split => "split",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::git::FileEntry;
+
+    fn build_test_app() -> App {
+        let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-ui-tests"));
+        app.files.push(FileEntry {
+            status: "M ".to_string(),
+            path: "src/main.rs".to_string(),
+            label: "main.rs".to_string(),
+            filetype: Some("rust"),
+        });
+        app
+    }
+
+    #[test]
+    fn hovered_pane_uses_full_width_diff_when_sidebar_is_hidden() {
+        let mut app = build_test_app();
+        app.sidebar_hidden = true;
+
+        assert_eq!(hovered_pane_at(&app, 2, 2, 120, 40), Some(ActivePane::Diff));
+    }
+
+    #[test]
+    fn sidebar_hit_testing_is_disabled_when_sidebar_is_hidden() {
+        let mut app = build_test_app();
+        app.sidebar_hidden = true;
+
+        assert_eq!(sidebar_file_at(&app, 2, 2, 120, 40), None);
     }
 }
 

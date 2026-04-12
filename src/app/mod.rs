@@ -126,6 +126,7 @@ pub struct App {
     pub sidebar_state: ListState,
     pub sidebar_scroll: usize,
     pub sidebar_viewport_height: usize,
+    pub sidebar_hidden: bool,
     pub selected_file_index: usize,
     pub diff_view: DiffView,
     pub diff_view_mode: DiffViewMode,
@@ -215,6 +216,7 @@ impl App {
             sidebar_state: ListState::default(),
             sidebar_scroll: 0,
             sidebar_viewport_height: 0,
+            sidebar_hidden: false,
             selected_file_index: 0,
             diff_view: DiffView::default(),
             diff_view_mode,
@@ -743,10 +745,12 @@ impl App {
             }
             KeyCode::Tab => {
                 self.clear_diff_text_selection();
-                self.active_pane = match self.active_pane {
-                    ActivePane::Sidebar => ActivePane::Diff,
-                    ActivePane::Diff => ActivePane::Sidebar,
-                };
+                if !self.sidebar_hidden {
+                    self.active_pane = match self.active_pane {
+                        ActivePane::Sidebar => ActivePane::Diff,
+                        ActivePane::Diff => ActivePane::Sidebar,
+                    };
+                }
             }
             KeyCode::Char('?') => {
                 self.help_modal_open = true;
@@ -759,6 +763,9 @@ impl App {
             }
             KeyCode::Char('i') => {
                 self.initialize_repo_if_needed().await?;
+            }
+            KeyCode::Char('b') if key_event.modifiers == KeyModifiers::CONTROL => {
+                self.toggle_sidebar_hidden();
             }
             KeyCode::Char('l') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.reset_to_working_tree().await?;
@@ -1729,6 +1736,13 @@ impl App {
             .count()
     }
 
+    fn toggle_sidebar_hidden(&mut self) {
+        self.sidebar_hidden = !self.sidebar_hidden;
+        if self.sidebar_hidden {
+            self.active_pane = ActivePane::Diff;
+        }
+    }
+
     fn show_snackbar(&mut self, message: String, variant: SnackbarVariant) {
         self.snackbar_generation = self.snackbar_generation.saturating_add(1);
         let generation = self.snackbar_generation;
@@ -2015,6 +2029,31 @@ impl App {
         }
 
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_test_app() -> App {
+        App::new_for_benchmarks(PathBuf::from("/tmp/vigil-app-tests"))
+    }
+
+    #[test]
+    fn toggling_sidebar_hidden_moves_focus_to_diff() {
+        let mut app = build_test_app();
+        app.active_pane = ActivePane::Sidebar;
+
+        app.toggle_sidebar_hidden();
+
+        assert!(app.sidebar_hidden);
+        assert_eq!(app.active_pane, ActivePane::Diff);
+
+        app.toggle_sidebar_hidden();
+
+        assert!(!app.sidebar_hidden);
+        assert_eq!(app.active_pane, ActivePane::Diff);
     }
 }
 
