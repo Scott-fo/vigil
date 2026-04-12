@@ -39,12 +39,14 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         key_line("?", "toggle help"),
         key_line("tab", "switch sidebar / diff focus"),
         key_line("Ctrl-B", "toggle left sidebar"),
+        key_line("p", "open file search"),
         key_line("v", "toggle unified / split diff"),
         key_line("r", "refresh"),
         key_line("g", "open commit search"),
         key_line("b", "open branch compare"),
         key_line("t", "open theme picker"),
         key_line("Ctrl-L", "reset compare mode"),
+        key_line("Ctrl-P / P", "pull / push"),
         key_line("q", "quit"),
         Line::default(),
         Line::from(Span::styled(
@@ -74,7 +76,6 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         key_line("A", "toggle stage all files"),
         key_line("d", "discard selected file"),
         key_line("c", "commit staged changes"),
-        key_line("p / P", "pull / push"),
         Line::default(),
         Line::from(Span::styled(
             format!("{pane_hint}. Esc closes help."),

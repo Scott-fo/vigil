@@ -26,6 +26,7 @@ use tokio::task;
 mod branch_compare;
 mod commit_search;
 mod diff;
+mod file_search;
 
 pub use self::diff::{DiffCacheKey, PreparedDiffViewport};
 use self::diff::{DiffHighlightJob, DiffViewCache, DiffViewport};
@@ -164,6 +165,11 @@ pub struct App {
     pub theme_name: String,
     pub theme_mode: ThemeMode,
     pub theme_matcher: Matcher,
+    pub file_search_modal_open: bool,
+    pub file_search_query: String,
+    pub file_search_selected_index: usize,
+    pub file_search_initial_path: Option<String>,
+    pub file_search_matcher: Matcher,
     pub commit_search_modal_open: bool,
     pub commit_search_query: String,
     pub commit_search_entries: Vec<CommitSearchEntry>,
@@ -254,6 +260,11 @@ impl App {
             theme_name,
             theme_mode,
             theme_matcher: Matcher::new(MatcherConfig::DEFAULT),
+            file_search_modal_open: false,
+            file_search_query: String::new(),
+            file_search_selected_index: 0,
+            file_search_initial_path: None,
+            file_search_matcher: Matcher::new(MatcherConfig::DEFAULT),
             commit_search_modal_open: false,
             commit_search_query: String::new(),
             commit_search_entries: Vec::new(),
@@ -671,6 +682,36 @@ impl App {
             return Ok(None);
         }
 
+        if self.file_search_modal_open {
+            match key_event.code {
+                KeyCode::Esc => {
+                    self.cancel_file_search_modal().await?;
+                }
+                KeyCode::Enter => {
+                    self.confirm_file_search_modal();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.move_file_search_selection(1).await?;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.move_file_search_selection(-1).await?;
+                }
+                KeyCode::Backspace => {
+                    self.file_search_query.pop();
+                    self.sync_file_search_selection_after_query_change().await?;
+                }
+                KeyCode::Char(ch)
+                    if !key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key_event.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.file_search_query.push(ch);
+                    self.sync_file_search_selection_after_query_change().await?;
+                }
+                _ => {}
+            }
+            return Ok(None);
+        }
+
         if self.branch_compare_modal_open {
             match key_event.code {
                 KeyCode::Esc => self.close_branch_compare_modal(),
@@ -770,8 +811,11 @@ impl App {
             KeyCode::Char('l') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.reset_to_working_tree().await?;
             }
-            KeyCode::Char('p') => {
+            KeyCode::Char('p') if key_event.modifiers == KeyModifiers::CONTROL => {
                 self.start_pull();
+            }
+            KeyCode::Char('p') => {
+                self.open_file_search_modal().await?;
             }
             KeyCode::Char('P') => {
                 self.start_push();
