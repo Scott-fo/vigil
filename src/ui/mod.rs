@@ -384,7 +384,10 @@ fn sidebar_inner_area(app: &App, terminal_width: u16, terminal_height: u16) -> R
 
 fn diff_pane_label(app: &App) -> String {
     if app.sidebar_hidden {
-        return format!("{}  diff  sidebar hidden", diff_mode_label(app.diff_view_mode));
+        return format!(
+            "{}  diff  sidebar hidden",
+            diff_mode_label(app.diff_view_mode)
+        );
     }
 
     match app.active_pane {

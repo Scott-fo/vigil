@@ -742,7 +742,9 @@ mod tests {
         app.diff_view = build_diff_view(120);
         app.update_diff_viewport(DiffViewMode::Split, 160, 0, 12);
 
-        let initial_selection = app.diff_view.first_selectable_index(DiffViewMode::Split, 160);
+        let initial_selection = app
+            .diff_view
+            .first_selectable_index(DiffViewMode::Split, 160);
         app.selected_diff_line_index = initial_selection;
 
         app.page_or_scroll_diff(3);

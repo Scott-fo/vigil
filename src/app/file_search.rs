@@ -168,7 +168,9 @@ mod tests {
     #[tokio::test]
     async fn cancelling_file_search_restores_initial_selection() {
         let mut app = build_test_app();
-        app.open_file_search_modal().await.expect("modal should open");
+        app.open_file_search_modal()
+            .await
+            .expect("modal should open");
         app.move_file_search_selection(1)
             .await
             .expect("selection should preview");

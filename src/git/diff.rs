@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use color_eyre::eyre::WrapErr;
+use color_eyre::eyre::{WrapErr, eyre};
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
@@ -1406,6 +1406,7 @@ async fn load_branch_preview(
     include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
     let diff_range = build_branch_diff_range(selection);
+    let merge_base = resolve_branch_compare_base(repo_root, selection).await?;
     load_revision_preview(
         repo_root,
         &[
@@ -1416,12 +1417,36 @@ async fn load_branch_preview(
             "--",
             file.path.as_str(),
         ],
+        Some(PreviewTarget::Revision(merge_base.as_str())),
         Some(PreviewTarget::Revision(selection.source_ref.as_str())),
-        Some(PreviewTarget::Revision(selection.destination_ref.as_str())),
         file.path.as_str(),
         include_exact_context,
     )
     .await
+}
+
+async fn resolve_branch_compare_base(
+    repo_root: &Path,
+    selection: &BranchCompareSelection,
+) -> color_eyre::Result<String> {
+    let merge_base = git_output(
+        repo_root,
+        &[
+            "merge-base",
+            selection.destination_ref.as_str(),
+            selection.source_ref.as_str(),
+        ],
+    )
+    .await?;
+    let merge_base = merge_base.trim().to_string();
+    if merge_base.is_empty() {
+        return Err(eyre!(
+            "failed to resolve merge base for {} and {}",
+            selection.destination_ref,
+            selection.source_ref
+        ));
+    }
+    Ok(merge_base)
 }
 
 async fn load_tracked_preview(

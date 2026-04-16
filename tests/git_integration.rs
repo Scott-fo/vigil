@@ -398,6 +398,61 @@ async fn branch_compare_and_ref_listing_cover_diverged_history() -> Result<()> {
 }
 
 #[tokio::test]
+async fn branch_compare_exact_highlighting_uses_merge_base_and_source_content() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write(
+        "src/lib.rs",
+        "pub fn shared() {\n    let value = base_call();\n}\n",
+    );
+    repo.commit_all("base", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    let feature_line =
+        "let branch_compare_exact_rendering = feature_call_with_long_name(\"source\");";
+
+    repo.checkout_new_branch("feature");
+    repo.write(
+        "src/lib.rs",
+        &format!("pub fn shared() {{\n    {feature_line}\n}}\n"),
+    );
+    repo.commit_all("feature work", "2024-01-02T00:00:00+0000");
+
+    repo.checkout("main");
+    repo.write("src/lib.rs", "pub fn shared() {\n    x();\n}\n");
+    repo.commit_all("main work", "2024-01-03T00:00:00+0000");
+
+    let selection = BranchCompareSelection {
+        source_ref: "feature".to_string(),
+        destination_ref: "main".to_string(),
+    };
+    let diff_files = git::load_files_with_branch_diff(&repo.root, &selection).await?;
+    let compared_file = find_file(&diff_files, "src/lib.rs");
+    assert_eq!(compared_file.status, "M");
+    assert_eq!(compared_file.filetype, Some("rust"));
+
+    let preview =
+        git::load_diff_preview_for_branch_compare(&repo.root, &compared_file, &selection, true)
+            .await?;
+    let mut diff_view = git::build_diff_view_from_preview_data(&preview, &compared_file, None)?;
+    let registry = git::HighlightRegistry::new_for_filetypes(["rust"])?;
+    diff_view.apply_exact_syntax_highlighting(Some("rust"), &registry);
+
+    let unified = rendered_lines(&mut diff_view, DiffViewMode::Unified, 200).join("\n");
+    assert!(
+        unified.contains(feature_line),
+        "exact highlighting should preserve the feature-side text in unified mode:\n{unified}"
+    );
+
+    let split = rendered_lines(&mut diff_view, DiffViewMode::Split, 200).join("\n");
+    assert!(
+        split.contains(feature_line),
+        "exact highlighting should preserve the feature-side text in split mode:\n{split}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn init_repo_root_resolution_commit_messages_and_empty_untracked_previews_work() -> Result<()>
 {
     let repo = TestRepo::init().await?;

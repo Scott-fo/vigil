@@ -14,8 +14,8 @@ use crate::app::App;
 use self::{
     blame::render_blame_modal, branch_compare::render_branch_compare_modal,
     commit::render_commit_modal, commit_search::render_commit_search_modal,
-    discard::render_discard_modal, file_search::render_file_search_modal,
-    help::render_help_modal, theme::render_theme_modal,
+    discard::render_discard_modal, file_search::render_file_search_modal, help::render_help_modal,
+    theme::render_theme_modal,
 };
 
 pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
