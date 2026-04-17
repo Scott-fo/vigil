@@ -10,8 +10,8 @@ use tokio::{fs, process::Command};
 use crate::theme;
 
 use super::{
-    BlameCommitDetails, BlameTarget, BranchCompareSelection, CommitCompareSelection,
-    CommitSearchEntry, EMPTY_TREE_HASH, FileEntry,
+    BlameCommitDetails, BlameTarget, BranchCompareRefs, BranchCompareSelection,
+    CommitCompareSelection, CommitSearchEntry, EMPTY_TREE_HASH, FileEntry,
     parse::{
         build_branch_diff_range, is_uncommitted_blame_hash, parse_blame_porcelain_header,
         parse_commit_log_entries, parse_commit_show_output, parse_diff_name_status_entries,
@@ -302,6 +302,13 @@ pub async fn list_comparable_refs(repo_root: &Path) -> color_eyre::Result<Vec<St
     Ok(refs)
 }
 
+pub async fn load_branch_compare_refs(repo_root: &Path) -> color_eyre::Result<BranchCompareRefs> {
+    Ok(BranchCompareRefs {
+        refs: list_comparable_refs(repo_root).await?,
+        current_ref: resolve_current_branch_ref(repo_root).await?,
+    })
+}
+
 pub async fn load_files_with_branch_diff(
     repo_root: &Path,
     selection: &BranchCompareSelection,
@@ -442,6 +449,32 @@ async fn is_directory_status_entry(repo_root: &Path, path: &str) -> bool {
 async fn run_git_action(repo_root: &Path, args: &[&str]) -> color_eyre::Result<()> {
     let _ = git_output(repo_root, args).await?;
     Ok(())
+}
+
+async fn resolve_current_branch_ref(repo_root: &Path) -> color_eyre::Result<Option<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .output()
+        .await
+        .wrap_err("failed to resolve current branch")?;
+
+    match output.status.code() {
+        Some(0) => {
+            let current_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if current_ref.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(current_ref))
+            }
+        }
+        Some(1) => Ok(None),
+        _ => Err(eyre!(
+            "{}",
+            String::from_utf8_lossy(&output.stderr).trim().to_string()
+        )),
+    }
 }
 
 async fn load_diff_name_status_files(

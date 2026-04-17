@@ -3,17 +3,20 @@ use tokio::task;
 use super::*;
 
 impl App {
-    pub(super) fn handle_branch_compare_loaded(&mut self, result: Result<Vec<String>, String>) {
+    pub(super) fn handle_branch_compare_loaded(
+        &mut self,
+        result: Result<git::BranchCompareRefs, String>,
+    ) {
         if !self.branch_compare_modal_open {
             return;
         }
 
         self.branch_compare_loading = false;
         match result {
-            Ok(refs) => {
-                self.branch_compare_available_refs = refs;
+            Ok(branch_compare_refs) => {
+                self.branch_compare_available_refs = branch_compare_refs.refs;
                 self.branch_compare_error = None;
-                self.seed_branch_compare_selection();
+                self.seed_branch_compare_selection(branch_compare_refs.current_ref.as_deref());
             }
             Err(error) => {
                 self.branch_compare_available_refs.clear();
@@ -44,7 +47,7 @@ impl App {
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
         self.track_background_task(task::spawn(async move {
-            let result = git::list_comparable_refs(&repo_root)
+            let result = git::load_branch_compare_refs(&repo_root)
                 .await
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::BranchCompareLoaded(result));
@@ -65,7 +68,7 @@ impl App {
         self.sync_branch_compare_selection_after_query_change();
     }
 
-    pub(super) fn seed_branch_compare_selection(&mut self) {
+    pub(super) fn seed_branch_compare_selection(&mut self, preferred_source_ref: Option<&str>) {
         if self.branch_compare_available_refs.is_empty() {
             self.branch_compare_source_ref = None;
             self.branch_compare_destination_ref = None;
@@ -80,8 +83,14 @@ impl App {
                 self.branch_compare_destination_ref = Some(selection.destination_ref.clone());
             }
             _ => {
-                self.branch_compare_source_ref =
-                    self.branch_compare_available_refs.first().cloned();
+                self.branch_compare_source_ref = preferred_source_ref
+                    .and_then(|current_ref| {
+                        self.branch_compare_available_refs
+                            .iter()
+                            .find(|ref_name| ref_name.as_str() == current_ref)
+                            .cloned()
+                    })
+                    .or_else(|| self.branch_compare_available_refs.first().cloned());
                 self.branch_compare_destination_ref = resolve_default_destination_ref(
                     &self.branch_compare_available_refs,
                     self.branch_compare_source_ref.as_deref(),
@@ -222,7 +231,27 @@ mod tests {
     }
 
     #[test]
-    fn seed_branch_compare_selection_prefers_default_branch_over_source() {
+    fn seed_branch_compare_selection_prefers_current_branch_for_source() {
+        let mut app = build_test_app();
+        app.branch_compare_available_refs = vec![
+            "feature/refactor".to_string(),
+            "main".to_string(),
+            "master".to_string(),
+        ];
+
+        app.seed_branch_compare_selection(Some("main"));
+
+        assert_eq!(app.branch_compare_source_ref.as_deref(), Some("main"));
+        assert_eq!(
+            app.branch_compare_destination_ref.as_deref(),
+            Some("master")
+        );
+        assert_eq!(app.branch_compare_selected_source_index, 1);
+        assert_eq!(app.branch_compare_selected_destination_index, 0);
+    }
+
+    #[test]
+    fn seed_branch_compare_selection_falls_back_to_first_ref_without_current_branch() {
         let mut app = build_test_app();
         app.branch_compare_available_refs = vec![
             "feature/refactor".to_string(),
@@ -230,7 +259,7 @@ mod tests {
             "main".to_string(),
         ];
 
-        app.seed_branch_compare_selection();
+        app.seed_branch_compare_selection(None);
 
         assert_eq!(
             app.branch_compare_source_ref.as_deref(),

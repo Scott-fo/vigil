@@ -9,7 +9,9 @@ use tokio::task::JoinHandle;
 use crate::watcher::RepoWatcher;
 use crate::{
     app::DiffCacheKey,
-    git::{BlameCommitDetails, CommitSearchEntry, DiffView, SharedHighlightRegistry},
+    git::{
+        BlameCommitDetails, BranchCompareRefs, CommitSearchEntry, DiffView, SharedHighlightRegistry,
+    },
 };
 
 #[derive(Debug)]
@@ -39,7 +41,7 @@ pub enum Event {
         result: Result<BlameCommitDetails, String>,
     },
     CommitSearchLoaded(Result<Vec<CommitSearchEntry>, String>),
-    BranchCompareLoaded(Result<Vec<String>, String>),
+    BranchCompareLoaded(Result<BranchCompareRefs, String>),
     RepoWatcherReady(PathBuf, Result<RepoWatcher, String>),
     RepoChanged(Vec<PathBuf>),
     RemoteSyncFinished(Result<String, String>),

@@ -48,3 +48,9 @@ pub struct BranchCompareSelection {
     pub source_ref: String,
     pub destination_ref: String,
 }
+
+#[derive(Debug, Clone)]
+pub struct BranchCompareRefs {
+    pub refs: Vec<String>,
+    pub current_ref: Option<String>,
+}
