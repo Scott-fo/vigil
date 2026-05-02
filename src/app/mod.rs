@@ -1,11 +1,12 @@
 use std::{
-    collections::HashSet,
+    collections::{HashSet, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
     io::{Write, stdout},
-    path::PathBuf,
+    path::{Component, Path, PathBuf},
     process::Stdio,
 };
 
-use color_eyre::eyre::WrapErr;
+use color_eyre::eyre::{WrapErr, eyre};
 use crossterm::terminal;
 use crossterm::{
     event::{
@@ -86,6 +87,12 @@ pub struct AppLaunchOptions {
 enum AppCommand {
     OpenFileInEditor(String),
     OpenFileInEditorAtLine(String, usize),
+}
+
+struct EditorOpenTarget {
+    full_path: PathBuf,
+    display_path: String,
+    line_number: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -897,11 +904,21 @@ impl App {
 
                 if let Some(file_path) = self.selected_file().map(|file| file.path.clone()) {
                     if self.active_pane == ActivePane::Diff {
-                        if let Some(line_number) = self.diff_view.selected_line_number(
-                            self.diff_view_mode,
-                            self.current_diff_display_width(),
-                            self.selected_diff_line_index,
-                        ) {
+                        let line_number = if self.is_working_tree_mode() {
+                            self.diff_view.selected_line_number(
+                                self.diff_view_mode,
+                                self.current_diff_display_width(),
+                                self.selected_diff_line_index,
+                            )
+                        } else {
+                            self.diff_view.selected_new_line_number(
+                                self.diff_view_mode,
+                                self.current_diff_display_width(),
+                                self.selected_diff_line_index,
+                            )
+                        };
+
+                        if let Some(line_number) = line_number {
                             return Ok(Some(AppCommand::OpenFileInEditorAtLine(
                                 file_path,
                                 line_number,
@@ -1506,40 +1523,37 @@ impl App {
         command: AppCommand,
         terminal: &mut ratatui::DefaultTerminal,
     ) -> color_eyre::Result<()> {
-        match command {
-            AppCommand::OpenFileInEditor(path) => {
-                if self.chooser_file_path.is_some() {
-                    self.write_chooser_selection_and_exit(&path, None).await?;
-                } else {
-                    self.open_file_in_editor(&path, terminal).await?;
-                }
+        let (path, line_number) = match command {
+            AppCommand::OpenFileInEditor(path) => (path, None),
+            AppCommand::OpenFileInEditorAtLine(path, line_number) => (path, Some(line_number)),
+        };
+        let target = match self.resolve_editor_open_target(&path, line_number).await {
+            Ok(target) => target,
+            Err(error) => {
+                self.status_message = Some(format!("failed to prepare editor target: {error}"));
+                return Ok(());
             }
-            AppCommand::OpenFileInEditorAtLine(path, line_number) => {
-                if self.chooser_file_path.is_some() {
-                    self.write_chooser_selection_and_exit(&path, Some(line_number))
-                        .await?;
-                } else {
-                    self.open_file_in_editor_at_line(&path, line_number, terminal)
-                        .await?;
-                }
-            }
+        };
+
+        if self.chooser_file_path.is_some() {
+            self.write_chooser_selection_and_exit(&target).await?;
+        } else {
+            self.open_file_in_editor(&target, terminal).await?;
         }
         Ok(())
     }
 
     async fn write_chooser_selection_and_exit(
         &mut self,
-        file_path: &str,
-        line_number: Option<usize>,
+        target: &EditorOpenTarget,
     ) -> color_eyre::Result<()> {
         let Some(chooser_file_path) = self.chooser_file_path.as_ref() else {
             return Ok(());
         };
 
-        let absolute_path = self.repo_root.join(file_path);
-        let payload = match line_number {
-            Some(line_number) => format!("{}\n{}\n", absolute_path.display(), line_number),
-            None => format!("{}\n\n", absolute_path.display()),
+        let payload = match target.line_number {
+            Some(line_number) => format!("{}\n{}\n", target.full_path.display(), line_number),
+            None => format!("{}\n\n", target.full_path.display()),
         };
         fs::write(chooser_file_path, payload)
             .await
@@ -1555,7 +1569,7 @@ impl App {
 
     async fn open_file_in_editor(
         &mut self,
-        file_path: &str,
+        target: &EditorOpenTarget,
         terminal: &mut ratatui::DefaultTerminal,
     ) -> color_eyre::Result<()> {
         let Some(editor_command) = current_editor_command() else {
@@ -1564,14 +1578,17 @@ impl App {
             return Ok(());
         };
 
-        let full_path = self.repo_root.join(file_path);
-        let command = build_editor_shell_command(&editor_command, &full_path, None);
+        let command =
+            build_editor_shell_command(&editor_command, &target.full_path, target.line_number);
         let result = self.run_editor_command(command, terminal).await;
 
         match result {
             Ok(Ok(status)) if status.success() => {
                 self.refresh().await?;
-                self.status_message = Some(format!("opened {}", file_path));
+                self.status_message = Some(match target.line_number {
+                    Some(line_number) => format!("opened {}:{}", target.display_path, line_number),
+                    None => format!("opened {}", target.display_path),
+                });
             }
             Ok(Ok(status)) => {
                 self.status_message = Some(format!(
@@ -1590,42 +1607,87 @@ impl App {
         Ok(())
     }
 
-    async fn open_file_in_editor_at_line(
-        &mut self,
+    async fn resolve_editor_open_target(
+        &self,
         file_path: &str,
-        line_number: usize,
-        terminal: &mut ratatui::DefaultTerminal,
-    ) -> color_eyre::Result<()> {
-        let Some(editor_command) = current_editor_command() else {
-            self.status_message =
-                Some("Set VISUAL or EDITOR to open files from vigil.".to_string());
-            return Ok(());
-        };
-
-        let full_path = self.repo_root.join(file_path);
-        let command = build_editor_shell_command(&editor_command, &full_path, Some(line_number));
-        let result = self.run_editor_command(command, terminal).await;
-
-        match result {
-            Ok(Ok(status)) if status.success() => {
-                self.refresh().await?;
-                self.status_message = Some(format!("opened {}:{}", file_path, line_number));
+        line_number: Option<usize>,
+    ) -> color_eyre::Result<EditorOpenTarget> {
+        match &self.review_mode {
+            ReviewMode::WorkingTree => Ok(self.worktree_editor_open_target(file_path, line_number)),
+            ReviewMode::CommitCompare(selection) => {
+                self.revision_editor_open_target(
+                    selection.commit_hash.as_str(),
+                    file_path,
+                    line_number,
+                )
+                .await
             }
-            Ok(Ok(status)) => {
-                self.status_message = Some(format!(
-                    "editor exited with code {}",
-                    status.code().unwrap_or(1)
-                ));
-            }
-            Ok(Err(error)) => {
-                self.status_message = Some(format!("failed to launch editor: {error}"));
-            }
-            Err(error) => {
-                self.status_message = Some(format!("editor task failed: {error}"));
+            ReviewMode::BranchCompare(selection) => {
+                self.revision_editor_open_target(
+                    selection.source_ref.as_str(),
+                    file_path,
+                    line_number,
+                )
+                .await
             }
         }
+    }
 
-        Ok(())
+    fn worktree_editor_open_target(
+        &self,
+        file_path: &str,
+        line_number: Option<usize>,
+    ) -> EditorOpenTarget {
+        EditorOpenTarget {
+            full_path: self.repo_root.join(file_path),
+            display_path: file_path.to_string(),
+            line_number,
+        }
+    }
+
+    async fn revision_editor_open_target(
+        &self,
+        revision: &str,
+        file_path: &str,
+        line_number: Option<usize>,
+    ) -> color_eyre::Result<EditorOpenTarget> {
+        if git::revision_matches_head(&self.repo_root, revision)
+            .await
+            .unwrap_or(false)
+            && git::worktree_file_matches_head(&self.repo_root, file_path)
+                .await
+                .unwrap_or(false)
+        {
+            return Ok(self.worktree_editor_open_target(file_path, line_number));
+        }
+
+        let full_path = self.materialize_revision_file(revision, file_path).await?;
+        Ok(EditorOpenTarget {
+            full_path,
+            display_path: format!("{revision}:{file_path}"),
+            line_number,
+        })
+    }
+
+    async fn materialize_revision_file(
+        &self,
+        revision: &str,
+        file_path: &str,
+    ) -> color_eyre::Result<PathBuf> {
+        let bytes = git::load_revision_file_bytes(&self.repo_root, revision, file_path).await?;
+        let snapshot_path = revision_snapshot_path(&self.repo_root, revision, file_path)?;
+        if let Some(parent) = snapshot_path.parent() {
+            fs::create_dir_all(parent).await.wrap_err_with(|| {
+                format!("failed to create snapshot directory {}", parent.display())
+            })?;
+        }
+        fs::write(&snapshot_path, bytes).await.wrap_err_with(|| {
+            format!(
+                "failed to write revision snapshot {}",
+                snapshot_path.display()
+            )
+        })?;
+        Ok(snapshot_path)
     }
 
     async fn run_editor_command(
@@ -2103,6 +2165,67 @@ mod tests {
 
 fn quote_shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn revision_snapshot_path(
+    repo_root: &Path,
+    revision: &str,
+    file_path: &str,
+) -> color_eyre::Result<PathBuf> {
+    let relative_path = safe_snapshot_relative_path(file_path)?;
+    let revision_component = snapshot_component(revision);
+    Ok(std::env::temp_dir()
+        .join("vigil")
+        .join("revision-snapshots")
+        .join(format!(
+            "{:016x}",
+            stable_hash(&repo_root.to_string_lossy())
+        ))
+        .join(revision_component)
+        .join(relative_path))
+}
+
+fn safe_snapshot_relative_path(file_path: &str) -> color_eyre::Result<PathBuf> {
+    let mut relative_path = PathBuf::new();
+    for component in Path::new(file_path).components() {
+        match component {
+            Component::Normal(part) => relative_path.push(part),
+            Component::CurDir => {}
+            _ => return Err(eyre!("invalid repository path: {file_path}")),
+        }
+    }
+
+    if relative_path.as_os_str().is_empty() {
+        return Err(eyre!("invalid repository path: {file_path}"));
+    }
+
+    Ok(relative_path)
+}
+
+fn snapshot_component(value: &str) -> String {
+    let mut component = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    component.truncate(80);
+
+    if component.is_empty() {
+        component.push_str("revision");
+    }
+
+    format!("{component}-{:016x}", stable_hash(value))
+}
+
+fn stable_hash<T: Hash + ?Sized>(value: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn write_osc52_clipboard(text: &str) -> color_eyre::Result<()> {

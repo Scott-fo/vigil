@@ -290,6 +290,40 @@ impl DiffView {
         }
     }
 
+    pub fn selected_new_line_number(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        index: usize,
+    ) -> Option<usize> {
+        self.ensure_display_cache(mode, width);
+        let row_refs = self
+            .display_cache
+            .entry(mode)
+            .row_refs
+            .get(index)
+            .copied()?;
+        if let Some(row_index) = row_refs.right {
+            return self.rows.get(row_index).and_then(|row| row.new_line);
+        }
+
+        if row_refs == DisplayRowRefs::default() {
+            return match self
+                .display_cache
+                .entry(mode)
+                .nav
+                .get(index)
+                .copied()
+                .flatten()
+            {
+                Some(DisplayNavTarget::Line(line_number)) => Some(line_number),
+                _ => None,
+            };
+        }
+
+        None
+    }
+
     pub fn selected_gap_index(
         &mut self,
         mode: DiffViewMode,
@@ -2639,6 +2673,32 @@ mod tests {
         assert_eq!(
             view.selected_line_number(DiffViewMode::Unified, 16, 1),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn compare_source_line_navigation_ignores_removed_only_rows() {
+        let diff = "@@ -1,2 +1,2 @@\n-old\n+new\n context";
+        let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+
+        assert_eq!(
+            view.selected_new_line_number(DiffViewMode::Unified, 80, 0),
+            None
+        );
+        assert_eq!(
+            view.selected_new_line_number(DiffViewMode::Unified, 80, 1),
+            Some(1)
+        );
+        assert_eq!(
+            view.selected_new_line_number(DiffViewMode::Split, 80, 0),
+            Some(1)
+        );
+
+        let deleted_diff = "@@ -1 +0,0 @@\n-old";
+        let mut deleted_view = build_diff_view_from_diff_text(deleted_diff, Some("rust"));
+        assert_eq!(
+            deleted_view.selected_new_line_number(DiffViewMode::Split, 80, 0),
+            None
         );
     }
 
