@@ -36,6 +36,7 @@ impl TestRepo {
         let repo = Self { root };
         repo.git(&["config", "user.name", "Vigil Tests"]);
         repo.git(&["config", "user.email", "vigil-tests@example.com"]);
+        repo.git(&["config", "commit.gpgsign", "false"]);
         Ok(repo)
     }
 
@@ -458,7 +459,7 @@ async fn init_repo_root_resolution_commit_messages_and_empty_untracked_previews_
     let repo = TestRepo::init().await?;
     fs::create_dir_all(repo.path("nested/deeper"))?;
     let resolved = git::resolve_repo_root_from(Path::new(&repo.path("nested/deeper"))).await?;
-    assert_eq!(resolved, repo.root);
+    assert_eq!(fs::canonicalize(resolved)?, fs::canonicalize(&repo.root)?);
 
     repo.write("tracked.txt", "base\n");
     repo.commit_all("base", "2024-01-01T00:00:00+0000");

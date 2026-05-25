@@ -357,28 +357,6 @@ pub async fn revision_matches_head(repo_root: &Path, revision: &str) -> color_ey
     Ok(revision_hash.trim() == head_hash.trim())
 }
 
-pub async fn worktree_file_matches_head(
-    repo_root: &Path,
-    file_path: &str,
-) -> color_eyre::Result<bool> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["diff", "--quiet", "HEAD", "--", file_path])
-        .output()
-        .await
-        .wrap_err_with(|| format!("failed to compare {file_path} with HEAD"))?;
-
-    match output.status.code() {
-        Some(0) => Ok(true),
-        Some(1) => Ok(false),
-        _ => Err(eyre!(
-            "{}",
-            String::from_utf8_lossy(&output.stderr).trim().to_string()
-        )),
-    }
-}
-
 pub async fn should_refresh_for_paths(
     repo_root: &Path,
     changed_paths: &[PathBuf],

@@ -1615,7 +1615,7 @@ impl App {
         match &self.review_mode {
             ReviewMode::WorkingTree => Ok(self.worktree_editor_open_target(file_path, line_number)),
             ReviewMode::CommitCompare(selection) => {
-                self.revision_editor_open_target(
+                self.snapshot_revision_editor_open_target(
                     selection.commit_hash.as_str(),
                     file_path,
                     line_number,
@@ -1623,7 +1623,7 @@ impl App {
                 .await
             }
             ReviewMode::BranchCompare(selection) => {
-                self.revision_editor_open_target(
+                self.branch_compare_editor_open_target(
                     selection.source_ref.as_str(),
                     file_path,
                     line_number,
@@ -1645,22 +1645,30 @@ impl App {
         }
     }
 
-    async fn revision_editor_open_target(
+    async fn branch_compare_editor_open_target(
+        &self,
+        source_ref: &str,
+        file_path: &str,
+        line_number: Option<usize>,
+    ) -> color_eyre::Result<EditorOpenTarget> {
+        if git::revision_matches_head(&self.repo_root, source_ref)
+            .await
+            .unwrap_or(false)
+            && fs::metadata(self.repo_root.join(file_path)).await.is_ok()
+        {
+            return Ok(self.worktree_editor_open_target(file_path, line_number));
+        }
+
+        self.snapshot_revision_editor_open_target(source_ref, file_path, line_number)
+            .await
+    }
+
+    async fn snapshot_revision_editor_open_target(
         &self,
         revision: &str,
         file_path: &str,
         line_number: Option<usize>,
     ) -> color_eyre::Result<EditorOpenTarget> {
-        if git::revision_matches_head(&self.repo_root, revision)
-            .await
-            .unwrap_or(false)
-            && git::worktree_file_matches_head(&self.repo_root, file_path)
-                .await
-                .unwrap_or(false)
-        {
-            return Ok(self.worktree_editor_open_target(file_path, line_number));
-        }
-
         let full_path = self.materialize_revision_file(revision, file_path).await?;
         Ok(EditorOpenTarget {
             full_path,
