@@ -74,6 +74,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         ),
         key_line("space", "stage / unstage selected file"),
         key_line("A", "toggle stage all files"),
+        key_line("1 / 2 / 3", "resolve conflict as current / incoming / both"),
         key_line("d", "discard selected file"),
         key_line("c", "commit staged changes"),
         Line::default(),

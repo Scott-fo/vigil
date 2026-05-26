@@ -66,10 +66,10 @@ Measured on the generated 106 KiB merge-conflict fixture:
 
 | Case | Implementation | Mean | Throughput |
 | --- | --- | ---: | ---: |
-| conflict line classification | Pierre `getMergeConflictLineTypes` | 0.218 ms | 463.75 MiB/s |
+| conflict line classification | Pierre `getMergeConflictLineTypes` | 0.228 ms | 444.28 MiB/s |
 | conflict line classification | Rust `get_merge_conflict_line_types` | 14.69 us | 41.59 GiB/s |
-| conflict parser | Pierre `parseMergeConflictDiffFromFile` | 0.286 ms | 354.29 MiB/s |
-| conflict parser | Rust `parse_merge_conflict_diff_from_file` | 1.019 ms | 614.28 MiB/s |
+| conflict parser | Pierre `parseMergeConflictDiffFromFile` | 0.303 ms | 333.75 MiB/s |
+| conflict parser | Rust `parse_merge_conflict_diff_from_file` | 0.256 ms | 2.390 GiB/s |
 
 The direct `parseDiffFromFile` JS comparison requires Pierre's already-installed
 workspace dependencies. Do not install packages just for this benchmark unless
@@ -83,9 +83,9 @@ Pierre implementation rebuilds arrays of JS string references.
 case. The fixture is small enough that the Pierre baseline rounds to `0.000 ms`,
 so it is not used as a headline speedup claim.
 
-`parse_merge_conflict_diff_from_file` currently prioritizes parity for the
-small two-way and diff3 conflict cases. Its benchmark is included to make the
-remaining optimization gap explicit.
+`parse_merge_conflict_diff_from_file` follows Pierre's direct marker scanner
+shape, builds resolved current/incoming contents during the scan, and caches
+per-hunk unified line offsets while assembling marker rows.
 
 # Tree Benchmarks
 

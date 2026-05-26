@@ -43,7 +43,7 @@ pub use diff::{
     load_diff_preview_for_working_tree, load_diff_view, load_diff_view_for_branch_compare,
     load_diff_view_for_commit_compare, load_diff_view_for_working_tree, parse_diff_from_file,
     parse_line_type, parse_merge_conflict_diff_from_file, parse_patch_files, process_file,
-    process_patch, resolve_conflict, trim_patch_context,
+    process_patch, resolve_conflict, resolve_merge_conflict_contents, trim_patch_context,
 };
 pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_highlight_registry};
 pub use repo::{

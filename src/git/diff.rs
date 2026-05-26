@@ -348,6 +348,31 @@ impl DiffView {
         }
     }
 
+    pub fn selected_conflict_index(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        index: usize,
+    ) -> Option<usize> {
+        self.ensure_display_cache(mode, width);
+        let row_refs = self
+            .display_cache
+            .entry(mode)
+            .row_refs
+            .get(index)
+            .copied()?;
+        row_refs
+            .left
+            .and_then(|row_index| self.rows.get(row_index))
+            .and_then(|row| row.conflict_index)
+            .or_else(|| {
+                row_refs
+                    .right
+                    .and_then(|row_index| self.rows.get(row_index))
+                    .and_then(|row| row.conflict_index)
+            })
+    }
+
     pub fn display_line_count(&mut self, mode: DiffViewMode, width: usize) -> usize {
         self.nav_targets(mode, width).len()
     }
@@ -824,6 +849,7 @@ impl DiffView {
             if row.kind != other_row.kind
                 || row.old_line != other_row.old_line
                 || row.new_line != other_row.new_line
+                || row.conflict_index != other_row.conflict_index
                 || row.text != other_row.text
             {
                 return;
@@ -1178,6 +1204,7 @@ struct DiffRow {
     kind: DiffLineKind,
     old_line: Option<usize>,
     new_line: Option<usize>,
+    conflict_index: Option<usize>,
     text: String,
     syntax: DiffRowSyntax,
 }
@@ -2864,6 +2891,14 @@ enum MergeConflictContentRole {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MergeConflictMarkerType {
+    Start,
+    Base,
+    Separator,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextFlushMode {
     Leading,
     BeforeChange,
@@ -2924,6 +2959,8 @@ struct SyntheticConflictActionBuilder {
 struct SyntheticConflictParseState {
     deletion_lines: Vec<String>,
     addition_lines: Vec<String>,
+    current_contents: String,
+    incoming_contents: String,
     conflict_stack: Vec<SyntheticConflictFrame>,
     conflict_builders: Vec<Option<SyntheticConflictActionBuilder>>,
     actions: Vec<Option<MergeConflictDiffAction>>,
@@ -3273,6 +3310,8 @@ fn emit_synthetic_conflict_context_line(
 
     state.addition_lines.push(line.to_string());
     state.deletion_lines.push(line.to_string());
+    state.incoming_contents.push_str(line);
+    state.current_contents.push_str(line);
     if let Some(conflict_index) = base_conflict_index {
         hunk.context_buffer_base_conflicts
             .push((hunk.context_buffer_count, conflict_index));
@@ -3311,9 +3350,11 @@ fn emit_synthetic_conflict_change_line(
     let deletion_line_index = state.deletion_lines.len();
     if addition {
         state.addition_lines.push(line.to_string());
+        state.incoming_contents.push_str(line);
     }
     if deletion {
         state.deletion_lines.push(line.to_string());
+        state.current_contents.push_str(line);
     }
 
     let content_index = {
@@ -3506,12 +3547,21 @@ pub fn build_merge_conflict_marker_rows(
     actions: &[Option<MergeConflictDiffAction>],
 ) -> Vec<MergeConflictMarkerRow> {
     let mut marker_rows = Vec::new();
+    let mut cached_hunk_index = usize::MAX;
+    let mut cached_unified_starts = Vec::new();
     for action in actions.iter().flatten() {
         let Some(hunk) = file_diff.hunks.get(action.conflict_data.hunk_index) else {
             continue;
         };
-        let action_line_index =
-            get_unified_line_start_for_content(hunk, action.conflict_data.start_content_index);
+        if cached_hunk_index != action.conflict_data.hunk_index {
+            cached_hunk_index = action.conflict_data.hunk_index;
+            cached_unified_starts = build_unified_line_starts_for_hunk(hunk);
+        }
+
+        let action_line_index = unified_line_start_from_cache(
+            &cached_unified_starts,
+            action.conflict_data.start_content_index,
+        );
         marker_rows.push(create_merge_conflict_marker_row(
             action,
             MergeConflictMarkerRowType::MarkerStart,
@@ -3545,8 +3595,10 @@ pub fn build_merge_conflict_marker_rows(
                 continue;
             }
 
-            let current_start = get_unified_line_start_for_content(hunk, current_content_index);
-            let incoming_start = get_unified_line_start_for_content(hunk, incoming_content_index);
+            let current_start =
+                unified_line_start_from_cache(&cached_unified_starts, current_content_index);
+            let incoming_start =
+                unified_line_start_from_cache(&cached_unified_starts, incoming_content_index);
             marker_rows.push(create_merge_conflict_marker_row(
                 action,
                 MergeConflictMarkerRowType::MarkerBase,
@@ -3566,8 +3618,8 @@ pub fn build_merge_conflict_marker_rows(
                 MergeConflictMarkerRowType::MarkerEnd,
                 action.conflict_data.end_marker_content_index,
                 action.marker_lines.end.clone(),
-                get_unified_line_end_for_content(
-                    hunk,
+                unified_line_end_from_cache(
+                    &cached_unified_starts,
                     action.conflict_data.end_marker_content_index,
                 ),
             ));
@@ -3582,7 +3634,8 @@ pub fn build_merge_conflict_marker_rows(
         else {
             continue;
         };
-        let content_start = get_unified_line_start_for_content(hunk, current_content_index);
+        let content_start =
+            unified_line_start_from_cache(&cached_unified_starts, current_content_index);
         let separator_line_index = if *deletions > 0 {
             content_start + deletions
         } else {
@@ -3600,7 +3653,10 @@ pub fn build_merge_conflict_marker_rows(
             MergeConflictMarkerRowType::MarkerEnd,
             action.conflict_data.end_marker_content_index,
             action.marker_lines.end.clone(),
-            get_unified_line_end_for_content(hunk, action.conflict_data.end_marker_content_index),
+            unified_line_end_from_cache(
+                &cached_unified_starts,
+                action.conflict_data.end_marker_content_index,
+            ),
         ));
     }
     marker_rows
@@ -3637,6 +3693,38 @@ fn create_merge_conflict_marker_row(
     }
 }
 
+fn build_unified_line_starts_for_hunk(hunk: &Hunk) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(hunk.hunk_content.len() + 1);
+    let mut line_index = hunk.unified_line_start;
+    starts.push(line_index);
+    for content in &hunk.hunk_content {
+        line_index += match content {
+            HunkContent::Context { lines, .. } => *lines,
+            HunkContent::Change {
+                deletions,
+                additions,
+                ..
+            } => deletions + additions,
+        };
+        starts.push(line_index);
+    }
+    starts
+}
+
+fn unified_line_start_from_cache(starts: &[usize], content_index: usize) -> usize {
+    starts
+        .get(content_index)
+        .copied()
+        .or_else(|| starts.last().copied())
+        .unwrap_or(0)
+}
+
+fn unified_line_end_from_cache(starts: &[usize], content_index: usize) -> usize {
+    let start = unified_line_start_from_cache(starts, content_index);
+    let end_exclusive = unified_line_start_from_cache(starts, content_index.saturating_add(1));
+    start.max(end_exclusive.saturating_sub(1))
+}
+
 fn get_unified_line_start_for_content(hunk: &Hunk, content_index: usize) -> usize {
     let mut line_index = hunk.unified_line_start;
     for content in hunk.hunk_content.iter().take(content_index) {
@@ -3652,10 +3740,54 @@ fn get_unified_line_start_for_content(hunk: &Hunk, content_index: usize) -> usiz
     line_index
 }
 
-fn get_unified_line_end_for_content(hunk: &Hunk, content_index: usize) -> usize {
-    let start = get_unified_line_start_for_content(hunk, content_index);
-    let end_exclusive = get_unified_line_start_for_content(hunk, content_index.saturating_add(1));
-    start.max(end_exclusive.saturating_sub(1))
+fn get_synthetic_conflict_marker_type(line: &str) -> Option<MergeConflictMarkerType> {
+    let bytes = line.as_bytes();
+    if bytes.len() < 7 {
+        return None;
+    }
+
+    let marker = bytes[0];
+    if !matches!(marker, b'<' | b'|' | b'=' | b'>') {
+        return None;
+    }
+
+    let mut content_end = bytes.len();
+    if content_end > 0 && bytes[content_end - 1] == b'\n' {
+        content_end -= 1;
+    }
+    if content_end > 0 && bytes[content_end - 1] == b'\r' {
+        content_end -= 1;
+    }
+    if content_end < 7 {
+        return None;
+    }
+
+    let mut marker_len = 1usize;
+    while marker_len < content_end && bytes[marker_len] == marker {
+        marker_len += 1;
+    }
+    if marker_len < 7 {
+        return None;
+    }
+
+    if marker == b'=' {
+        return (marker_len == content_end).then_some(MergeConflictMarkerType::Separator);
+    }
+
+    if marker_len != content_end && !is_merge_conflict_marker_whitespace(bytes[marker_len]) {
+        return None;
+    }
+
+    match marker {
+        b'<' => Some(MergeConflictMarkerType::Start),
+        b'|' => Some(MergeConflictMarkerType::Base),
+        b'>' => Some(MergeConflictMarkerType::End),
+        _ => None,
+    }
+}
+
+fn is_merge_conflict_marker_whitespace(byte: u8) -> bool {
+    matches!(byte, b'\t' | b'\n' | 0x0b | 0x0c | b'\r' | b' ')
 }
 
 pub fn get_singular_patch(patch: &str) -> color_eyre::Result<FileDiffMetadata> {
@@ -3822,14 +3954,91 @@ pub fn resolve_conflict(
     )
 }
 
+pub fn resolve_merge_conflict_contents(
+    contents: &str,
+    conflict: &MergeConflictRegion,
+    resolution: MergeConflictResolution,
+) -> String {
+    let lines = split_file_contents_preserving_endings(contents);
+    let current_end = conflict
+        .base_marker_line_index
+        .unwrap_or(conflict.separator_line_index);
+    let incoming_start = conflict.separator_line_index.saturating_add(1);
+
+    let mut resolved = String::with_capacity(contents.len());
+    for line in lines.iter().take(conflict.start_line_index) {
+        resolved.push_str(line);
+    }
+
+    match resolution {
+        MergeConflictResolution::Current => {
+            for line in lines
+                .iter()
+                .take(current_end)
+                .skip(conflict.start_line_index.saturating_add(1))
+            {
+                resolved.push_str(line);
+            }
+        }
+        MergeConflictResolution::Incoming => {
+            for line in lines
+                .iter()
+                .take(conflict.end_line_index)
+                .skip(incoming_start)
+            {
+                resolved.push_str(line);
+            }
+        }
+        MergeConflictResolution::Both => {
+            for line in lines
+                .iter()
+                .take(current_end)
+                .skip(conflict.start_line_index.saturating_add(1))
+            {
+                resolved.push_str(line);
+            }
+            for line in lines
+                .iter()
+                .take(conflict.end_line_index)
+                .skip(incoming_start)
+            {
+                resolved.push_str(line);
+            }
+        }
+    }
+
+    for line in lines.iter().skip(conflict.end_line_index.saturating_add(1)) {
+        resolved.push_str(line);
+    }
+    resolved
+}
+
+fn split_file_contents_preserving_endings(contents: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut line_start = 0usize;
+    while line_start < contents.len() {
+        let Some(relative_newline_index) = contents[line_start..].find('\n') else {
+            lines.push(&contents[line_start..]);
+            break;
+        };
+        let line_end = line_start + relative_newline_index + 1;
+        lines.push(&contents[line_start..line_end]);
+        line_start = line_end;
+    }
+    lines
+}
+
 pub fn parse_merge_conflict_diff_from_file(
     file: &FileContents,
     max_context_lines: usize,
 ) -> color_eyre::Result<ParseMergeConflictDiffFromFileResult> {
     let max_context_lines = max_context_lines.max(1);
+    let estimated_line_count = file.contents.len().saturating_div(32).saturating_add(1);
     let mut state = SyntheticConflictParseState {
-        deletion_lines: Vec::new(),
-        addition_lines: Vec::new(),
+        deletion_lines: Vec::with_capacity(estimated_line_count),
+        addition_lines: Vec::with_capacity(estimated_line_count),
+        current_contents: String::with_capacity(file.contents.len()),
+        incoming_contents: String::with_capacity(file.contents.len()),
         conflict_stack: Vec::new(),
         conflict_builders: Vec::new(),
         actions: Vec::new(),
@@ -3851,9 +4060,10 @@ pub fn parse_merge_conflict_diff_from_file(
             .map(|index| line_start + index + 1)
             .unwrap_or(file.contents.len());
         let line = &file.contents[line_start..line_end];
-        let marker_line = trim_line_ending_for_conflict_marker(line);
         if state.conflict_stack.is_empty() {
-            if is_merge_conflict_start_marker(marker_line) {
+            if line.as_bytes().first() == Some(&b'<')
+                && get_synthetic_conflict_marker_type(line) == Some(MergeConflictMarkerType::Start)
+            {
                 handle_synthetic_conflict_start_marker(&mut state, line, line_index);
                 line_start = line_end;
                 line_index += 1;
@@ -3865,45 +4075,45 @@ pub fn parse_merge_conflict_diff_from_file(
             continue;
         }
 
-        if is_merge_conflict_start_marker(marker_line) {
-            handle_synthetic_conflict_start_marker(&mut state, line, line_index);
-            line_start = line_end;
-            line_index += 1;
-            continue;
-        }
-
-        if is_merge_conflict_base_marker(marker_line) {
-            let frame = state.conflict_stack.last_mut().ok_or_else(|| {
-                eyre!("parseMergeConflictDiffFromFile: base marker outside conflict")
-            })?;
-            frame.stage = MergeConflictScanStage::Base;
-            frame.base_marker_line_index = Some(line_index);
-            frame.marker_base = Some(line.to_string());
-            line_start = line_end;
-            line_index += 1;
-            continue;
-        }
-
-        if is_merge_conflict_separator_marker(marker_line) {
-            let frame = state.conflict_stack.last_mut().ok_or_else(|| {
-                eyre!("parseMergeConflictDiffFromFile: separator marker outside conflict")
-            })?;
-            frame.stage = MergeConflictScanStage::Incoming;
-            frame.separator_line_index = Some(line_index);
-            frame.marker_separator = Some(line.to_string());
-            line_start = line_end;
-            line_index += 1;
-            continue;
-        }
-
-        if is_merge_conflict_end_marker(marker_line) {
-            let frame = state.conflict_stack.pop().ok_or_else(|| {
-                eyre!("parseMergeConflictDiffFromFile: end marker outside conflict")
-            })?;
-            finalize_synthetic_conflict(&mut state, frame, line_index, line)?;
-            line_start = line_end;
-            line_index += 1;
-            continue;
+        match get_synthetic_conflict_marker_type(line) {
+            Some(MergeConflictMarkerType::Start) => {
+                handle_synthetic_conflict_start_marker(&mut state, line, line_index);
+                line_start = line_end;
+                line_index += 1;
+                continue;
+            }
+            Some(MergeConflictMarkerType::Base) => {
+                let frame = state.conflict_stack.last_mut().ok_or_else(|| {
+                    eyre!("parseMergeConflictDiffFromFile: base marker outside conflict")
+                })?;
+                frame.stage = MergeConflictScanStage::Base;
+                frame.base_marker_line_index = Some(line_index);
+                frame.marker_base = Some(line.to_string());
+                line_start = line_end;
+                line_index += 1;
+                continue;
+            }
+            Some(MergeConflictMarkerType::Separator) => {
+                let frame = state.conflict_stack.last_mut().ok_or_else(|| {
+                    eyre!("parseMergeConflictDiffFromFile: separator marker outside conflict")
+                })?;
+                frame.stage = MergeConflictScanStage::Incoming;
+                frame.separator_line_index = Some(line_index);
+                frame.marker_separator = Some(line.to_string());
+                line_start = line_end;
+                line_index += 1;
+                continue;
+            }
+            Some(MergeConflictMarkerType::End) => {
+                let frame = state.conflict_stack.pop().ok_or_else(|| {
+                    eyre!("parseMergeConflictDiffFromFile: end marker outside conflict")
+                })?;
+                finalize_synthetic_conflict(&mut state, frame, line_index, line)?;
+                line_start = line_end;
+                line_index += 1;
+                continue;
+            }
+            None => {}
         }
 
         let (stage, conflict_index) = state
@@ -3980,8 +4190,8 @@ pub fn parse_merge_conflict_diff_from_file(
         state.unified_line_count += collapsed_after;
     }
 
-    let current_contents = state.deletion_lines.concat();
-    let incoming_contents = state.addition_lines.concat();
+    let current_contents = state.current_contents;
+    let incoming_contents = state.incoming_contents;
     let current_file = create_resolved_conflict_file(file, "current", current_contents);
     let incoming_file = create_resolved_conflict_file(file, "incoming", incoming_contents);
     let change_type = if incoming_file.contents.is_empty() {
@@ -4447,6 +4657,15 @@ pub fn build_diff_view_from_preview_data(
     file: &FileEntry,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
+    if let Some(merge_conflict) = &preview.merge_conflict {
+        let mut diff_view =
+            build_merge_conflict_diff_view(merge_conflict, file.filetype, preview.note.clone());
+        if let Some(registry) = highlight_registry {
+            diff_view.apply_syntax_highlighting(file.filetype, registry);
+        }
+        return Ok(diff_view);
+    }
+
     if preview.diff.trim().is_empty() {
         let message = preview
             .note
@@ -4475,6 +4694,35 @@ pub fn build_diff_view_from_preview_data(
     }
 
     Ok(diff_view)
+}
+
+pub fn build_merge_conflict_diff_view(
+    merge_conflict: &ParseMergeConflictDiffFromFileResult,
+    _filetype: Option<&'static str>,
+    note: Option<String>,
+) -> DiffView {
+    let mut rows = Vec::new();
+    let mut hunks = Vec::new();
+    append_file_diff_rows_with_conflicts(
+        &merge_conflict.file_diff,
+        &merge_conflict.actions,
+        &mut rows,
+        &mut hunks,
+    );
+
+    DiffView {
+        rows,
+        note,
+        hunks,
+        gaps: Vec::new(),
+        gap_expansions: HashMap::new(),
+        old_file_source: None,
+        old_exact_highlighted_lines: None,
+        new_file_lines: None,
+        new_file_source: None,
+        new_exact_highlighted_lines: None,
+        display_cache: DiffDisplayCache::default(),
+    }
 }
 
 #[inline]
@@ -4518,6 +4766,7 @@ pub struct DiffPreviewData {
     old_file_source: Option<Arc<str>>,
     new_file_lines: Option<Vec<String>>,
     new_file_source: Option<Arc<str>>,
+    merge_conflict: Option<ParseMergeConflictDiffFromFileResult>,
 }
 
 impl DiffPreviewData {
@@ -4535,6 +4784,18 @@ impl DiffPreviewData {
             old_file_source,
             new_file_lines,
             new_file_source,
+            merge_conflict: None,
+        }
+    }
+
+    fn from_merge_conflict(merge_conflict: ParseMergeConflictDiffFromFileResult) -> Self {
+        Self {
+            diff: String::new(),
+            note: Some("Merge conflict: use 1 current, 2 incoming, 3 both.".to_string()),
+            old_file_source: None,
+            new_file_lines: None,
+            new_file_source: None,
+            merge_conflict: Some(merge_conflict),
         }
     }
 }
@@ -4550,11 +4811,60 @@ async fn load_file_preview(
     file: &FileEntry,
     include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
+    if is_unmerged_file_status(&file.status)
+        && let Some(preview) = load_merge_conflict_preview(repo_root, file).await?
+    {
+        return Ok(preview);
+    }
+
     if file.status == "??" {
         load_untracked_preview(repo_root, &file.path, include_exact_context).await
     } else {
         load_tracked_preview(repo_root, &file.path, include_exact_context).await
     }
+}
+
+fn is_unmerged_file_status(status: &str) -> bool {
+    let status = status.trim();
+    matches!(status, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") || status.contains('U')
+}
+
+async fn load_merge_conflict_preview(
+    repo_root: &Path,
+    file: &FileEntry,
+) -> color_eyre::Result<Option<DiffPreviewData>> {
+    let full_path = repo_root.join(&file.path);
+    let bytes = match fs::read(full_path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(None),
+    };
+    if bytes.contains(&0) {
+        return Ok(None);
+    }
+    let contents = String::from_utf8_lossy(&bytes).into_owned();
+    if !(contents.contains("<<<<<<<")
+        && contents.contains("=======")
+        && contents.contains(">>>>>>>"))
+    {
+        return Ok(None);
+    }
+
+    let parsed = parse_merge_conflict_diff_from_file(
+        &FileContents {
+            name: file.path.clone(),
+            contents,
+            lang: file.filetype.map(str::to_string),
+            header: None,
+            cache_key: Some(format!("{}:{}:merge-conflict", file.path, file.status)),
+        },
+        6,
+    )?;
+
+    if parsed.actions.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+
+    Ok(Some(DiffPreviewData::from_merge_conflict(parsed)))
 }
 
 async fn load_commit_preview(
@@ -4747,6 +5057,7 @@ async fn load_untracked_preview(
             old_file_source: None,
             new_file_lines: Some(split_lines_for_context(&content)),
             new_file_source: Some(normalized_content),
+            merge_conflict: None,
         }
     } else {
         DiffPreviewData {
@@ -4755,6 +5066,7 @@ async fn load_untracked_preview(
             old_file_source: None,
             new_file_lines,
             new_file_source,
+            merge_conflict: None,
         }
     })
 }
@@ -6956,12 +7268,24 @@ fn append_file_diff_rows(
     rows: &mut Vec<DiffRow>,
     hunks: &mut Vec<DiffHunkBlock>,
 ) {
+    append_file_diff_rows_with_conflicts(file, &[], rows, hunks);
+}
+
+fn append_file_diff_rows_with_conflicts(
+    file: &FileDiffMetadata,
+    actions: &[Option<MergeConflictDiffAction>],
+    rows: &mut Vec<DiffRow>,
+    hunks: &mut Vec<DiffHunkBlock>,
+) {
     for hunk in &file.hunks {
+        let hunk_index = hunks.len();
         let row_start = rows.len();
         let mut old_line = hunk.deletion_start;
         let mut new_line = hunk.addition_start;
 
-        for content in &hunk.hunk_content {
+        for (content_index, content) in hunk.hunk_content.iter().enumerate() {
+            let conflict_index =
+                conflict_index_for_hunk_content(actions, hunk_index, content_index);
             match content {
                 HunkContent::Context {
                     lines,
@@ -6979,6 +7303,7 @@ fn append_file_diff_rows(
                             Some(new_line),
                             text,
                             DiffLineKind::Context,
+                            conflict_index,
                         ));
                         old_line += 1;
                         new_line += 1;
@@ -7001,6 +7326,7 @@ fn append_file_diff_rows(
                             None,
                             text,
                             DiffLineKind::Removed,
+                            conflict_index,
                         ));
                         old_line += 1;
                     }
@@ -7015,6 +7341,7 @@ fn append_file_diff_rows(
                             Some(new_line),
                             text,
                             DiffLineKind::Added,
+                            conflict_index,
                         ));
                         new_line += 1;
                     }
@@ -7031,17 +7358,32 @@ fn append_file_diff_rows(
     }
 }
 
+fn conflict_index_for_hunk_content(
+    actions: &[Option<MergeConflictDiffAction>],
+    hunk_index: usize,
+    content_index: usize,
+) -> Option<usize> {
+    actions.iter().flatten().find_map(|action| {
+        (action.conflict_data.hunk_index == hunk_index
+            && content_index >= action.conflict_data.start_content_index
+            && content_index <= action.conflict_data.end_content_index)
+            .then_some(action.conflict_index)
+    })
+}
+
 #[inline]
 fn render_diff_row(
     old_line: Option<usize>,
     new_line: Option<usize>,
     content: &str,
     kind: DiffLineKind,
+    conflict_index: Option<usize>,
 ) -> DiffRow {
     DiffRow {
         kind,
         old_line,
         new_line,
+        conflict_index,
         text: content.to_string(),
         syntax: DiffRowSyntax::default(),
     }
@@ -7272,6 +7614,7 @@ fn render_expanded_context_lines(
         kind: DiffLineKind::Context,
         old_line: Some(line_number),
         new_line: Some(line_number),
+        conflict_index: None,
         text: text.to_string(),
         syntax: DiffRowSyntax {
             left: highlighted_content.clone(),
@@ -9341,6 +9684,95 @@ similarity index 100%\n"
         assert_eq!(both.hunks[0].deletion_count, 2);
         assert_eq!(both.hunks[0].addition_count, 2);
         verify_file_hunk_values(&both).unwrap();
+    }
+
+    #[test]
+    fn resolve_merge_conflict_contents_replaces_only_selected_marker_block() {
+        let contents = [
+            "before\n",
+            "<<<<<<< HEAD\n",
+            "ours\n",
+            "||||||| base\n",
+            "base\n",
+            "=======\n",
+            "theirs\n",
+            ">>>>>>> feature\n",
+            "middle\n",
+            "<<<<<<< HEAD\n",
+            "second ours\n",
+            "=======\n",
+            "second theirs\n",
+            ">>>>>>> feature\n",
+            "after\n",
+        ]
+        .concat();
+        let parsed = parse_merge_conflict_diff_from_file(
+            &FileContents {
+                name: "conflict.txt".to_string(),
+                contents: contents.clone(),
+                lang: None,
+                header: None,
+                cache_key: None,
+            },
+            6,
+        )
+        .unwrap();
+        let first = parsed.actions[0].as_ref().unwrap();
+        let incoming = resolve_merge_conflict_contents(
+            &contents,
+            &first.conflict,
+            MergeConflictResolution::Incoming,
+        );
+
+        assert_eq!(
+            incoming,
+            [
+                "before\n",
+                "theirs\n",
+                "middle\n",
+                "<<<<<<< HEAD\n",
+                "second ours\n",
+                "=======\n",
+                "second theirs\n",
+                ">>>>>>> feature\n",
+                "after\n",
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn merge_conflict_diff_view_maps_selected_rows_to_conflict_index() {
+        let parsed = parse_merge_conflict_diff_from_file(
+            &FileContents {
+                name: "conflict.txt".to_string(),
+                contents: [
+                    "before\n",
+                    "<<<<<<< HEAD\n",
+                    "ours\n",
+                    "=======\n",
+                    "theirs\n",
+                    ">>>>>>> feature\n",
+                    "after\n",
+                ]
+                .concat(),
+                lang: None,
+                header: None,
+                cache_key: None,
+            },
+            6,
+        )
+        .unwrap();
+        let mut view = build_merge_conflict_diff_view(&parsed, None, None);
+
+        assert_eq!(
+            view.selected_conflict_index(DiffViewMode::Unified, 120, 1),
+            Some(0)
+        );
+        assert_eq!(
+            view.selected_conflict_index(DiffViewMode::Unified, 120, 2),
+            Some(0)
+        );
     }
 
     #[test]
