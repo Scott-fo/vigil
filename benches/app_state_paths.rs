@@ -30,7 +30,7 @@ fn build_fixture() -> AppStateFixture {
         .expect("git init should run");
     assert!(status.success(), "git init should succeed");
 
-    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches/test_fixture.rs.txt");
+    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/git/diff.rs");
     let content = fs::read_to_string(&source_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()))
         .replace("\r\n", "\n");
@@ -106,7 +106,7 @@ fn bench_app_state_paths(c: &mut Criterion) {
     let mut theme_filter_app = build_benchmark_app(fixture);
     let rendered_line_count = viewport_app
         .diff_view
-        .display_line_count(DiffViewMode::Split);
+        .display_line_count(DiffViewMode::Split, 160);
     let mut diff_cursor = 0usize;
     let mut sidebar_cursor = rendered_line_count / 3;
 

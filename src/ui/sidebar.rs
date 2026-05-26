@@ -49,18 +49,31 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
                 label,
                 depth,
                 collapsed,
+                contains_change,
+                matches_search,
                 ..
             } => {
                 let indent = "  ".repeat(*depth);
                 let arrow = if *collapsed { "▸ " } else { "▾ " };
+                let marker = if *contains_change { "● " } else { "  " };
+                let label_style = if *matches_search {
+                    Style::new().fg(text_color()).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(text_muted_color())
+                };
                 ListItem::new(Line::from(vec![
                     Span::styled(indent, Style::new().fg(text_muted_color())),
                     Span::styled(arrow, Style::new().fg(border_active_color())),
-                    Span::styled(label.clone(), Style::new().fg(text_muted_color())),
+                    Span::styled(marker, Style::new().fg(primary_color())),
+                    Span::styled(label.clone(), label_style),
                 ]))
             }
             SidebarItem::File {
-                file, label, depth, ..
+                file,
+                label,
+                depth,
+                matches_search,
+                ..
             } => {
                 let indent = "  ".repeat(*depth);
                 let staged = git::is_file_staged(&file.status);
@@ -77,8 +90,12 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
                     ),
                     Span::styled(
                         label.clone(),
-                        if staged {
-                            Style::new().fg(text_color())
+                        if *matches_search || staged {
+                            Style::new().fg(text_color()).add_modifier(
+                                (*matches_search)
+                                    .then_some(Modifier::BOLD)
+                                    .unwrap_or(Modifier::empty()),
+                            )
                         } else {
                             Style::new().fg(text_muted_color())
                         },
@@ -99,11 +116,8 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_symbol("");
 
-    let selected_row = app.files.get(app.selected_file_index).and_then(|selected_file| {
-        app.sidebar_items.iter().position(
-            |item| matches!(item, SidebarItem::File { file, .. } if file.path == selected_file.path),
-        )
-    });
+    let selected_row =
+        (app.selected_sidebar_row < app.sidebar_items.len()).then_some(app.selected_sidebar_row);
     let mut list_state = ListState::default();
     list_state.select(selected_row.and_then(|row| {
         row.checked_sub(visible_start)

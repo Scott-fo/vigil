@@ -74,3 +74,7 @@ harness = false
 [[bench]]
 name = "highlight_registry_init"
 harness = false
+
+[[bench]]
+name = "tree_performance"
+harness = false

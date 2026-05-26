@@ -135,6 +135,7 @@ pub struct App {
     pub sidebar_scroll: usize,
     pub sidebar_viewport_height: usize,
     pub sidebar_hidden: bool,
+    pub selected_sidebar_row: usize,
     pub selected_file_index: usize,
     pub diff_view: DiffView,
     pub diff_view_mode: DiffViewMode,
@@ -230,6 +231,7 @@ impl App {
             sidebar_scroll: 0,
             sidebar_viewport_height: 0,
             sidebar_hidden: false,
+            selected_sidebar_row: 0,
             selected_file_index: 0,
             diff_view: DiffView::default(),
             diff_view_mode,
@@ -863,14 +865,14 @@ impl App {
                 self.page_or_scroll_diff(-12);
             }
             KeyCode::Down | KeyCode::Char('j') => match self.active_pane {
-                ActivePane::Sidebar => self.select_next_file().await?,
+                ActivePane::Sidebar => self.select_next_sidebar_row().await?,
                 ActivePane::Diff => {
                     self.clear_diff_text_selection();
                     self.move_diff_selection(1);
                 }
             },
             KeyCode::Up | KeyCode::Char('k') => match self.active_pane {
-                ActivePane::Sidebar => self.select_previous_file().await?,
+                ActivePane::Sidebar => self.select_previous_sidebar_row().await?,
                 ActivePane::Diff => {
                     self.clear_diff_text_selection();
                     self.move_diff_selection(-1);
@@ -878,7 +880,19 @@ impl App {
             },
             KeyCode::Char(' ') => {
                 if self.active_pane == ActivePane::Sidebar {
-                    self.toggle_selected_file_stage().await?;
+                    if !self.toggle_focused_sidebar_directory() {
+                        self.toggle_selected_file_stage().await?;
+                    }
+                }
+            }
+            KeyCode::Right => {
+                if self.active_pane == ActivePane::Sidebar {
+                    self.expand_focused_sidebar_directory();
+                }
+            }
+            KeyCode::Left => {
+                if self.active_pane == ActivePane::Sidebar {
+                    self.collapse_focused_sidebar_directory_or_focus_parent();
                 }
             }
             KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('e') => {
@@ -929,29 +943,34 @@ impl App {
                     }
 
                     if self.active_pane == ActivePane::Sidebar {
+                        if self.toggle_focused_sidebar_directory() {
+                            return Ok(None);
+                        }
                         return Ok(Some(AppCommand::OpenFileInEditor(file_path)));
                     }
+                } else if self.active_pane == ActivePane::Sidebar {
+                    let _ = self.toggle_focused_sidebar_directory();
                 }
             }
             KeyCode::Char('d') => {
                 self.open_discard_modal();
             }
             KeyCode::PageDown => match self.active_pane {
-                ActivePane::Sidebar => self.page_files_down().await?,
+                ActivePane::Sidebar => self.page_sidebar_down().await?,
                 ActivePane::Diff => {
                     self.clear_diff_text_selection();
                     self.page_diff(12);
                 }
             },
             KeyCode::PageUp => match self.active_pane {
-                ActivePane::Sidebar => self.page_files_up().await?,
+                ActivePane::Sidebar => self.page_sidebar_up().await?,
                 ActivePane::Diff => {
                     self.clear_diff_text_selection();
                     self.page_diff(-12);
                 }
             },
             KeyCode::Home => match self.active_pane {
-                ActivePane::Sidebar => self.select_file_at(0).await?,
+                ActivePane::Sidebar => self.select_sidebar_row(0).await?,
                 ActivePane::Diff => {
                     self.clear_diff_text_selection();
                     self.selected_diff_line_index = self.diff_view.first_selectable_index(
@@ -963,8 +982,8 @@ impl App {
             },
             KeyCode::End => match self.active_pane {
                 ActivePane::Sidebar => {
-                    if let Some(last_index) = self.files.len().checked_sub(1) {
-                        self.select_file_at(last_index).await?;
+                    if let Some(last_index) = self.sidebar_items.len().checked_sub(1) {
+                        self.select_sidebar_row(last_index).await?;
                     }
                 }
                 ActivePane::Diff => {
@@ -1067,10 +1086,16 @@ impl App {
                     return Ok(());
                 }
 
-                if let Some(path) =
-                    ui::sidebar_file_at(self, mouse_event.column, mouse_event.row, width, height)
-                {
-                    self.select_file_by_path(&path).await?;
+                if let Some(row_index) = ui::sidebar_item_index_at(
+                    self,
+                    mouse_event.column,
+                    mouse_event.row,
+                    width,
+                    height,
+                ) {
+                    self.active_pane = ActivePane::Sidebar;
+                    self.select_sidebar_row(row_index).await?;
+                    let _ = self.toggle_focused_sidebar_directory();
                 }
             }
             MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
@@ -1763,50 +1788,160 @@ impl App {
         Ok(())
     }
 
-    async fn select_next_file(&mut self) -> color_eyre::Result<()> {
-        let visible_file_paths = self.visible_file_paths();
-        if visible_file_paths.is_empty() {
+    async fn select_sidebar_row(&mut self, index: usize) -> color_eyre::Result<()> {
+        if self.sidebar_items.is_empty() {
+            self.selected_sidebar_row = 0;
+            self.sidebar_state.select(None);
             return Ok(());
         }
-        let current_visible_index = self.selected_visible_file_index().unwrap_or(0);
-        let next_visible_index = (current_visible_index + 1).min(visible_file_paths.len() - 1);
-        self.select_file_by_path(&visible_file_paths[next_visible_index])
+
+        let bounded_index = index.min(self.sidebar_items.len().saturating_sub(1));
+        self.selected_sidebar_row = bounded_index;
+        self.sidebar_state.select(Some(bounded_index));
+        self.ensure_selected_sidebar_item_visible(Some(bounded_index));
+
+        let selected_file_path = self
+            .sidebar_items
+            .get(bounded_index)
+            .and_then(SidebarItem::file)
+            .map(|file| file.path.clone());
+        if let Some(path) = selected_file_path
+            && let Some(file_index) = self.file_index_by_path(&path)
+            && file_index != self.selected_file_index
+        {
+            self.selected_file_index = file_index;
+            self.queue_selected_diff_load(true, true);
+        }
+
+        Ok(())
+    }
+
+    async fn select_next_sidebar_row(&mut self) -> color_eyre::Result<()> {
+        if self.sidebar_items.is_empty() {
+            return Ok(());
+        }
+        let next_index = self
+            .selected_sidebar_row
+            .saturating_add(1)
+            .min(self.sidebar_items.len().saturating_sub(1));
+        self.select_sidebar_row(next_index).await
+    }
+
+    async fn select_previous_sidebar_row(&mut self) -> color_eyre::Result<()> {
+        if self.sidebar_items.is_empty() {
+            return Ok(());
+        }
+        self.select_sidebar_row(self.selected_sidebar_row.saturating_sub(1))
             .await
     }
 
-    async fn select_previous_file(&mut self) -> color_eyre::Result<()> {
-        let visible_file_paths = self.visible_file_paths();
-        if visible_file_paths.is_empty() {
+    async fn page_sidebar_down(&mut self) -> color_eyre::Result<()> {
+        if self.sidebar_items.is_empty() {
             return Ok(());
         }
-        let current_visible_index = self.selected_visible_file_index().unwrap_or(0);
-        let previous_visible_index = current_visible_index.saturating_sub(1);
-        self.select_file_by_path(&visible_file_paths[previous_visible_index])
-            .await
-    }
-
-    async fn page_files_down(&mut self) -> color_eyre::Result<()> {
-        let visible_file_paths = self.visible_file_paths();
-        if visible_file_paths.is_empty() {
-            return Ok(());
-        }
-        let current_visible_index = self.selected_visible_file_index().unwrap_or(0);
-        let next_visible_index = current_visible_index
+        let next_index = self
+            .selected_sidebar_row
             .saturating_add(10)
-            .min(visible_file_paths.len() - 1);
-        self.select_file_by_path(&visible_file_paths[next_visible_index])
+            .min(self.sidebar_items.len().saturating_sub(1));
+        self.select_sidebar_row(next_index).await
+    }
+
+    async fn page_sidebar_up(&mut self) -> color_eyre::Result<()> {
+        if self.sidebar_items.is_empty() {
+            return Ok(());
+        }
+        self.select_sidebar_row(self.selected_sidebar_row.saturating_sub(10))
             .await
     }
 
-    async fn page_files_up(&mut self) -> color_eyre::Result<()> {
-        let visible_file_paths = self.visible_file_paths();
-        if visible_file_paths.is_empty() {
-            return Ok(());
+    fn focused_sidebar_item(&self) -> Option<&SidebarItem> {
+        self.sidebar_items.get(self.selected_sidebar_row)
+    }
+
+    fn toggle_focused_sidebar_directory(&mut self) -> bool {
+        let Some(path) = self.focused_sidebar_item().and_then(|item| {
+            item.is_directory()
+                .then(|| sidebar::canonical_directory_path(item.path()))
+        }) else {
+            return false;
+        };
+
+        if !self.collapsed_directories.insert(path.clone()) {
+            self.collapsed_directories.remove(&path);
         }
-        let current_visible_index = self.selected_visible_file_index().unwrap_or(0);
-        let previous_visible_index = current_visible_index.saturating_sub(10);
-        self.select_file_by_path(&visible_file_paths[previous_visible_index])
-            .await
+        self.rebuild_sidebar_items();
+        self.focus_sidebar_path_or_nearest(&path);
+        true
+    }
+
+    fn expand_focused_sidebar_directory(&mut self) {
+        let Some(path) = self.focused_sidebar_item().and_then(|item| {
+            item.is_directory()
+                .then(|| sidebar::canonical_directory_path(item.path()))
+        }) else {
+            return;
+        };
+        if self.collapsed_directories.remove(&path) {
+            self.rebuild_sidebar_items();
+            self.focus_sidebar_path_or_nearest(&path);
+        }
+    }
+
+    fn collapse_focused_sidebar_directory_or_focus_parent(&mut self) {
+        let Some(item_path) = self
+            .focused_sidebar_item()
+            .map(|item| item.path().to_string())
+        else {
+            return;
+        };
+
+        if self
+            .focused_sidebar_item()
+            .is_some_and(|item| item.is_directory())
+        {
+            let path = sidebar::canonical_directory_path(&item_path);
+            if self.collapsed_directories.insert(path.clone()) {
+                self.rebuild_sidebar_items();
+                self.focus_sidebar_path_or_nearest(&path);
+            }
+            return;
+        }
+
+        if let Some(parent_path) = sidebar::get_ancestor_directory_paths(&item_path).pop() {
+            self.focus_sidebar_path_or_nearest(&parent_path);
+        }
+    }
+
+    fn focus_sidebar_path_or_nearest(&mut self, path: &str) {
+        if self.sidebar_items.is_empty() {
+            self.selected_sidebar_row = 0;
+            self.sidebar_state.select(None);
+            return;
+        }
+
+        let canonical_path = if path.ends_with('/') {
+            path.to_string()
+        } else {
+            path.to_string()
+        };
+        let row = self
+            .sidebar_items
+            .iter()
+            .position(|item| item.path() == canonical_path)
+            .or_else(|| {
+                sidebar::get_ancestor_directory_paths(&canonical_path)
+                    .into_iter()
+                    .rev()
+                    .find_map(|ancestor| {
+                        self.sidebar_items
+                            .iter()
+                            .position(|item| item.path() == ancestor)
+                    })
+            })
+            .unwrap_or_else(|| self.selected_sidebar_row.min(self.sidebar_items.len() - 1));
+        self.selected_sidebar_row = row;
+        self.sidebar_state.select(Some(row));
+        self.ensure_selected_sidebar_item_visible(Some(row));
     }
 
     fn sync_sidebar_state(&mut self) {
@@ -1816,6 +1951,11 @@ impl App {
                 |item| matches!(item, SidebarItem::File { file, .. } if file.path == path),
             )
         });
+        self.selected_sidebar_row = selected_row.unwrap_or_else(|| {
+            self.selected_sidebar_row
+                .min(self.sidebar_items.len().saturating_sub(1))
+        });
+        let selected_row = (!self.sidebar_items.is_empty()).then_some(self.selected_sidebar_row);
         self.sidebar_state.select(selected_row);
         self.ensure_selected_sidebar_item_visible(selected_row);
     }
@@ -2168,6 +2308,65 @@ mod tests {
 
         assert!(!app.sidebar_hidden);
         assert_eq!(app.active_pane, ActivePane::Diff);
+    }
+
+    #[tokio::test]
+    async fn sidebar_focus_can_toggle_flattened_directories_and_select_files() {
+        let mut app = build_test_app();
+        app.files = vec![
+            FileEntry {
+                status: "M ".to_string(),
+                path: "src/components/Button.tsx".to_string(),
+                label: "Button.tsx".to_string(),
+                filetype: Some("tsx"),
+            },
+            FileEntry {
+                status: "M ".to_string(),
+                path: "src/index.ts".to_string(),
+                label: "index.ts".to_string(),
+                filetype: Some("typescript"),
+            },
+            FileEntry {
+                status: "M ".to_string(),
+                path: "README.md".to_string(),
+                label: "README.md".to_string(),
+                filetype: Some("markdown"),
+            },
+        ];
+        app.rebuild_sidebar_items();
+        app.sync_sidebar_state();
+
+        assert_eq!(app.sidebar_items[0].path(), "src/");
+        app.select_sidebar_row(0).await.unwrap();
+        assert!(app.toggle_focused_sidebar_directory());
+        assert!(app.collapsed_directories.contains("src/"));
+        assert_eq!(
+            app.sidebar_items
+                .iter()
+                .map(SidebarItem::path)
+                .collect::<Vec<_>>(),
+            vec!["src/", "README.md"]
+        );
+        assert_eq!(app.selected_sidebar_row, 0);
+
+        assert!(app.toggle_focused_sidebar_directory());
+        assert!(!app.collapsed_directories.contains("src/"));
+        assert!(
+            app.sidebar_items
+                .iter()
+                .any(|item| item.path() == "src/components/Button.tsx")
+        );
+
+        let readme_row = app
+            .sidebar_items
+            .iter()
+            .position(|item| item.path() == "README.md")
+            .unwrap();
+        app.select_sidebar_row(readme_row).await.unwrap();
+        assert_eq!(
+            app.selected_file().map(|file| file.path.as_str()),
+            Some("README.md")
+        );
     }
 }
 

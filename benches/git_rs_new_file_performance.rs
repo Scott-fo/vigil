@@ -21,7 +21,7 @@ struct GitRsNewFileFixture {
 static GIT_RS_NEW_FILE_FIXTURE: LazyLock<GitRsNewFileFixture> = LazyLock::new(build_fixture);
 
 fn build_fixture() -> GitRsNewFileFixture {
-    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches/test_fixture.rs.txt");
+    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/git/diff.rs");
     let content = fs::read_to_string(&source_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()))
         .replace("\r\n", "\n");
@@ -66,7 +66,9 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
         None,
         Some(fixture.new_file_lines.clone()),
     );
-    let display_line_count = plain_view.clone().display_line_count(DiffViewMode::Split);
+    let display_line_count = plain_view
+        .clone()
+        .display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
     let scrolled_viewport_start = display_line_count / 2;
     let scrolled_viewport_end = (scrolled_viewport_start + VIEWPORT_HEIGHT).min(display_line_count);
 
@@ -93,7 +95,7 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
                     FILETYPE,
                     &registry,
                 );
-                black_box(view.display_line_count(DiffViewMode::Split));
+                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
             },
             BatchSize::LargeInput,
         );
@@ -111,7 +113,7 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
                     FILETYPE,
                     &registry,
                 );
-                black_box(view.display_line_count(DiffViewMode::Split));
+                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
             },
             BatchSize::LargeInput,
         );
@@ -122,7 +124,7 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
             || exact_context_view.clone(),
             |mut view| {
                 view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-                black_box(view.display_line_count(DiffViewMode::Split));
+                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
             },
             BatchSize::LargeInput,
         );
@@ -136,7 +138,7 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
             },
             |mut view| {
                 view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-                black_box(view.display_line_count(DiffViewMode::Split));
+                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
             },
             BatchSize::LargeInput,
         );
