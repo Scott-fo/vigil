@@ -115,14 +115,15 @@ Measured against 643 Pierre snapshot paths and 92,914 Linux fixture paths:
 
 | Case | Implementation | Mean |
 | --- | --- | ---: |
-| Pierre snapshot, open tree | Pierre `PathStore` | 0.621 ms |
-| Pierre snapshot, open tree | Rust sidebar tree | 0.428 ms |
-| Linux tree, open tree | Pierre `PathStore` | 66.625 ms |
-| Linux tree, open tree | Rust sidebar tree | 83.371 ms |
-| Linux tree, 32 collapsed roots | Pierre `PathStore` | 56.789 ms |
-| Linux tree, 32 collapsed roots | Rust sidebar tree | 38.133 ms |
-| Linux tree, search hide non-matches | Rust sidebar tree | 84.456 ms |
-| viewport range math | Rust sidebar tree | 1.903 ns |
+| Pierre snapshot, open tree | Pierre `PathStore` | 0.634 ms |
+| Pierre snapshot, open tree | Rust sidebar tree | 0.269 ms |
+| Linux tree, open tree | Pierre `PathStore` | 67.851 ms |
+| Linux tree, open tree | Rust sidebar tree | 46.950 ms |
+| Linux tree, 32 collapsed roots | Pierre `PathStore` | 59.416 ms |
+| Linux tree, 32 collapsed roots | Rust sidebar tree | 32.833 ms |
+| Linux tree, search hide non-matches | Rust sidebar tree | 43.576 ms |
+| viewport range math | Rust sidebar tree | 1.910 ns |
 
-The Rust open Linux case is not yet a speedup claim; it remains benchmarked so
-future tree optimizations have a concrete target.
+The Rust tree builder caches Pierre-style segment sort keys on nodes and files,
+tracks directory change state during insertion, and uses allocation-free ASCII
+search matching for common repository paths.

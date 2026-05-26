@@ -65,6 +65,8 @@ pub struct FileTreeViewportMetrics {
 struct FileTreeNode {
     name: String,
     path: String,
+    sort_key: SegmentSortKey,
+    contains_change: bool,
     directories: HashMap<String, FileTreeNode>,
     files: Vec<FileTreeFile>,
 }
@@ -73,6 +75,7 @@ struct FileTreeNode {
 struct FileTreeFile {
     file: FileEntry,
     label: String,
+    sort_key: SegmentSortKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,7 +258,7 @@ pub fn build_sidebar_items_with_options(
         .search
         .as_ref()
         .map(|search| resolve_search_state(&root, search));
-    let mut items = Vec::new();
+    let mut items = Vec::with_capacity(files.len());
     visit_directory(&root, 0, options, search_state.as_ref(), &mut items);
     items
 }
@@ -264,52 +267,86 @@ fn build_file_tree(files: &[FileEntry]) -> FileTreeNode {
     let mut root = create_tree_node(String::new(), String::new());
 
     for file in files {
-        let parts = file
+        let leaf_name = file
+            .path
+            .rsplit('/')
+            .find(|part| !part.is_empty())
+            .unwrap_or(file.path.as_str());
+        let sidebar_label = sidebar_file_label(file, leaf_name);
+        let file_has_change = file_has_change(file);
+
+        if file_has_change {
+            root.contains_change = true;
+        }
+
+        let mut parts = file
             .path
             .split('/')
             .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
-        let leaf_name = parts.last().copied().unwrap_or(file.path.as_str());
-        let sidebar_label = sidebar_file_label(file, leaf_name);
+            .peekable();
+        let Some(first_part) = parts.next() else {
+            root.files.push(create_tree_file(file, sidebar_label));
+            continue;
+        };
 
-        if parts.len() <= 1 {
-            root.files.push(FileTreeFile {
-                file: file.clone(),
-                label: sidebar_label,
-            });
+        if parts.peek().is_none() {
+            root.files.push(create_tree_file(file, sidebar_label));
             continue;
         }
 
         let mut current = &mut root;
-        let mut current_path = String::new();
-        for part in &parts[..parts.len() - 1] {
-            if !current_path.is_empty() {
-                current_path.push('/');
-            }
-            current_path.push_str(part);
-            let directory_path = canonical_directory_path(&current_path);
+        let mut directory_path = String::new();
+        let mut part = first_part;
+        loop {
+            directory_path.push_str(part);
+            directory_path.push('/');
             current = current
                 .directories
-                .entry((*part).to_string())
-                .or_insert_with(|| create_tree_node((*part).to_string(), directory_path));
+                .entry(part.to_string())
+                .or_insert_with(|| create_tree_node(part.to_string(), directory_path.clone()));
+
+            if file_has_change {
+                current.contains_change = true;
+            }
+
+            let Some(next_part) = parts.next() else {
+                break;
+            };
+            if parts.peek().is_none() {
+                break;
+            }
+            part = next_part;
         }
 
-        current.files.push(FileTreeFile {
-            file: file.clone(),
-            label: sidebar_label,
-        });
+        current.files.push(create_tree_file(file, sidebar_label));
     }
 
     root
 }
 
 fn create_tree_node(name: String, path: String) -> FileTreeNode {
+    let sort_key = create_segment_sort_key(&name);
     FileTreeNode {
         name,
         path,
+        sort_key,
+        contains_change: false,
         directories: HashMap::new(),
         files: Vec::new(),
     }
+}
+
+fn create_tree_file(file: &FileEntry, label: String) -> FileTreeFile {
+    let sort_key = create_segment_sort_key(&label);
+    FileTreeFile {
+        file: file.clone(),
+        label,
+        sort_key,
+    }
+}
+
+fn file_has_change(file: &FileEntry) -> bool {
+    !file.status.trim().is_empty()
 }
 
 fn display_name_from_path(path: &str) -> String {
@@ -361,7 +398,7 @@ fn visit_directory(
             flattened_segments,
             pos_in_set: directory_index,
             set_size: child_count,
-            contains_change: directory_contains_change(terminal),
+            contains_change: terminal.contains_change,
             matches_search: search_state
                 .is_some_and(|state| state.matching_paths.contains(&terminal.path)),
         });
@@ -391,13 +428,17 @@ fn visit_directory(
 
 fn sorted_directories(node: &FileTreeNode) -> Vec<&FileTreeNode> {
     let mut directories = node.directories.values().collect::<Vec<_>>();
-    directories.sort_by(|a, b| compare_segment_values(&a.name, &b.name));
+    directories.sort_by(|a, b| {
+        compare_segment_sort_keys(&a.sort_key, &b.sort_key).then_with(|| a.name.cmp(&b.name))
+    });
     directories
 }
 
 fn sorted_files(node: &FileTreeNode) -> Vec<&FileTreeFile> {
     let mut files = node.files.iter().collect::<Vec<_>>();
-    files.sort_by(|a, b| compare_segment_values(&a.label, &b.label));
+    files.sort_by(|a, b| {
+        compare_segment_sort_keys(&a.sort_key, &b.sort_key).then_with(|| a.label.cmp(&b.label))
+    });
     files
 }
 
@@ -450,17 +491,6 @@ fn is_directory_expanded(
     }
 }
 
-fn directory_contains_change(directory: &FileTreeNode) -> bool {
-    directory
-        .files
-        .iter()
-        .any(|file| !file.file.status.trim().is_empty())
-        || directory
-            .directories
-            .values()
-            .any(directory_contains_change)
-}
-
 #[derive(Debug, Clone)]
 struct SearchState {
     matching_paths: HashSet<String>,
@@ -480,7 +510,7 @@ fn resolve_search_state(root: &FileTreeNode, search: &FileTreeSearch) -> SearchS
     let known_paths = collect_known_paths(root);
     let matching_paths = known_paths
         .iter()
-        .filter(|path| path.to_lowercase().contains(&query))
+        .filter(|path| contains_case_insensitive(path, &query))
         .cloned()
         .collect::<HashSet<_>>();
 
@@ -521,17 +551,18 @@ fn collect_known_paths_from_directory(directory: &FileTreeNode, paths: &mut Vec<
     }
 }
 
-fn compare_segment_values(left: &str, right: &str) -> Ordering {
-    let left_key = create_segment_sort_key(left);
-    let right_key = create_segment_sort_key(right);
+fn compare_segment_sort_keys(left_key: &SegmentSortKey, right_key: &SegmentSortKey) -> Ordering {
+    if let ([NaturalToken::Text(left)], [NaturalToken::Text(right)]) =
+        (left_key.tokens.as_slice(), right_key.tokens.as_slice())
+    {
+        return left.cmp(right);
+    }
+
     let token_order = compare_natural_tokens(&left_key.tokens, &right_key.tokens);
     if token_order != Ordering::Equal {
         return token_order;
     }
-    left_key
-        .lower_value
-        .cmp(&right_key.lower_value)
-        .then_with(|| left.cmp(right))
+    left_key.lower_value.cmp(&right_key.lower_value)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -587,6 +618,30 @@ fn split_into_natural_tokens(value: &str) -> Vec<NaturalToken> {
         tokens.push(NaturalToken::Text(value[token_start..].to_string()));
     }
     tokens
+}
+
+fn contains_case_insensitive(value: &str, query: &str) -> bool {
+    if value.is_ascii() && query.is_ascii() {
+        contains_case_insensitive_ascii(value.as_bytes(), query.as_bytes())
+    } else {
+        value.to_lowercase().contains(query)
+    }
+}
+
+fn contains_case_insensitive_ascii(value: &[u8], query: &[u8]) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    if query.len() > value.len() {
+        return false;
+    }
+
+    value.windows(query.len()).any(|window| {
+        window
+            .iter()
+            .zip(query)
+            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+    })
 }
 
 fn compare_natural_tokens(left: &[NaturalToken], right: &[NaturalToken]) -> Ordering {
