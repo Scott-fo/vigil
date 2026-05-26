@@ -355,6 +355,12 @@ impl DiffView {
         index: usize,
     ) -> Option<usize> {
         self.ensure_display_cache(mode, width);
+        if let Some(Some(DisplayNavTarget::Conflict(conflict_index))) =
+            self.display_cache.entry(mode).nav.get(index).copied()
+        {
+            return Some(conflict_index);
+        }
+
         let row_refs = self
             .display_cache
             .entry(mode)
@@ -490,6 +496,7 @@ impl DiffView {
                 let line_number = match row.kind {
                     DiffLineKind::Added | DiffLineKind::Context => row.new_line,
                     DiffLineKind::Removed => row.old_line,
+                    DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => None,
                 };
                 let display_row_refs = match row.kind {
                     DiffLineKind::Removed => DisplayRowRefs {
@@ -500,10 +507,26 @@ impl DiffView {
                         left: None,
                         right: Some(row_index),
                     },
+                    DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => {
+                        DisplayRowRefs {
+                            left: Some(row_index),
+                            right: Some(row_index),
+                        }
+                    }
                 };
                 for rendered_line in render_unified_code_lines(row, width) {
                     lines.push(rendered_line.line);
-                    nav.push(line_number.map(DisplayNavTarget::Line));
+                    nav.push(
+                        row.conflict_index
+                            .filter(|_| {
+                                matches!(
+                                    row.kind,
+                                    DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_)
+                                )
+                            })
+                            .map(DisplayNavTarget::Conflict)
+                            .or_else(|| line_number.map(DisplayNavTarget::Line)),
+                    );
                     row_refs.push(display_row_refs);
                     selection.push(rendered_line.selection);
                 }
@@ -549,7 +572,7 @@ impl DiffView {
                 side_width,
             ) {
                 lines.push(line);
-                nav.push(target_line.map(DisplayNavTarget::Line));
+                nav.push(target_line);
                 row_refs.push(refs);
                 selection.push(line_selection);
             }
@@ -1157,6 +1180,7 @@ impl DisplaySelectionSegment {
 #[derive(Debug, Clone, Copy)]
 enum DisplayNavTarget {
     Line(usize),
+    Conflict(usize),
     Gap(usize, GapExpandDirection),
 }
 
@@ -1171,24 +1195,41 @@ impl DisplayRowRefs {
         match mode {
             DiffViewMode::Unified => self
                 .left
-                .map(|row_index| rows[row_index].syntax.left.is_some())
+                .map(|row_index| is_row_side_highlighted(rows, row_index, HighlightSide::Left))
                 .or_else(|| {
-                    self.right
-                        .map(|row_index| rows[row_index].syntax.right.is_some())
+                    self.right.map(|row_index| {
+                        is_row_side_highlighted(rows, row_index, HighlightSide::Right)
+                    })
                 })
                 .unwrap_or(true),
             DiffViewMode::Split => {
                 let left_ready = self
                     .left
-                    .map(|row_index| rows[row_index].syntax.left.is_some())
+                    .map(|row_index| is_row_side_highlighted(rows, row_index, HighlightSide::Left))
                     .unwrap_or(true);
                 let right_ready = self
                     .right
-                    .map(|row_index| rows[row_index].syntax.right.is_some())
+                    .map(|row_index| is_row_side_highlighted(rows, row_index, HighlightSide::Right))
                     .unwrap_or(true);
                 left_ready && right_ready
             }
         }
+    }
+}
+
+fn is_row_side_highlighted(rows: &[DiffRow], row_index: usize, side: HighlightSide) -> bool {
+    let Some(row) = rows.get(row_index) else {
+        return true;
+    };
+    if matches!(
+        row.kind,
+        DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_)
+    ) {
+        return true;
+    }
+    match side {
+        HighlightSide::Left => row.syntax.left.is_some(),
+        HighlightSide::Right => row.syntax.right.is_some(),
     }
 }
 
@@ -1197,6 +1238,8 @@ enum DiffLineKind {
     Context,
     Added,
     Removed,
+    ConflictAction,
+    ConflictMarker(MergeConflictMarkerRowType),
 }
 
 #[derive(Debug, Clone)]
@@ -1220,6 +1263,7 @@ impl DiffRow {
         match self.kind {
             DiffLineKind::Removed => self.syntax.left.as_deref(),
             DiffLineKind::Added | DiffLineKind::Context => self.syntax.right.as_deref(),
+            DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => None,
         }
     }
 
@@ -4706,6 +4750,7 @@ pub fn build_merge_conflict_diff_view(
     append_file_diff_rows_with_conflicts(
         &merge_conflict.file_diff,
         &merge_conflict.actions,
+        &merge_conflict.marker_rows,
         &mut rows,
         &mut hunks,
     );
@@ -4811,9 +4856,7 @@ async fn load_file_preview(
     file: &FileEntry,
     include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
-    if is_unmerged_file_status(&file.status)
-        && let Some(preview) = load_merge_conflict_preview(repo_root, file).await?
-    {
+    if let Some(preview) = load_merge_conflict_preview(repo_root, file).await? {
         return Ok(preview);
     }
 
@@ -4822,11 +4865,6 @@ async fn load_file_preview(
     } else {
         load_tracked_preview(repo_root, &file.path, include_exact_context).await
     }
-}
-
-fn is_unmerged_file_status(status: &str) -> bool {
-    let status = status.trim();
-    matches!(status, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") || status.contains('U')
 }
 
 async fn load_merge_conflict_preview(
@@ -7268,22 +7306,25 @@ fn append_file_diff_rows(
     rows: &mut Vec<DiffRow>,
     hunks: &mut Vec<DiffHunkBlock>,
 ) {
-    append_file_diff_rows_with_conflicts(file, &[], rows, hunks);
+    append_file_diff_rows_with_conflicts(file, &[], &[], rows, hunks);
 }
 
 fn append_file_diff_rows_with_conflicts(
     file: &FileDiffMetadata,
     actions: &[Option<MergeConflictDiffAction>],
+    marker_rows: &[MergeConflictMarkerRow],
     rows: &mut Vec<DiffRow>,
     hunks: &mut Vec<DiffHunkBlock>,
 ) {
     for hunk in &file.hunks {
         let hunk_index = hunks.len();
+        let chrome = build_conflict_chrome_rows(actions, marker_rows, hunk_index);
         let row_start = rows.len();
         let mut old_line = hunk.deletion_start;
         let mut new_line = hunk.addition_start;
 
         for (content_index, content) in hunk.hunk_content.iter().enumerate() {
+            append_chrome_rows(rows, chrome.before.get(&content_index));
             let conflict_index =
                 conflict_index_for_hunk_content(actions, hunk_index, content_index);
             match content {
@@ -7330,6 +7371,7 @@ fn append_file_diff_rows_with_conflicts(
                         ));
                         old_line += 1;
                     }
+                    append_chrome_rows(rows, chrome.between_change_sides.get(&content_index));
                     for offset in 0..*additions {
                         let text = file
                             .addition_lines
@@ -7347,6 +7389,7 @@ fn append_file_diff_rows_with_conflicts(
                     }
                 }
             }
+            append_chrome_rows(rows, chrome.after.get(&content_index));
         }
 
         hunks.push(DiffHunkBlock {
@@ -7356,6 +7399,137 @@ fn append_file_diff_rows_with_conflicts(
             row_end: rows.len(),
         });
     }
+}
+
+#[derive(Debug, Default)]
+struct ConflictChromeRows {
+    before: HashMap<usize, Vec<DiffRow>>,
+    between_change_sides: HashMap<usize, Vec<DiffRow>>,
+    after: HashMap<usize, Vec<DiffRow>>,
+}
+
+fn build_conflict_chrome_rows(
+    actions: &[Option<MergeConflictDiffAction>],
+    _marker_rows: &[MergeConflictMarkerRow],
+    hunk_index: usize,
+) -> ConflictChromeRows {
+    let mut chrome = ConflictChromeRows::default();
+    for action in actions.iter().flatten() {
+        if action.conflict_data.hunk_index != hunk_index {
+            continue;
+        }
+
+        push_chrome_row(
+            &mut chrome.before,
+            action.conflict_data.start_content_index,
+            render_conflict_action_row(action.conflict_index),
+        );
+        push_chrome_row(
+            &mut chrome.before,
+            action.conflict_data.start_content_index,
+            render_conflict_marker_row(
+                action.conflict_index,
+                MergeConflictMarkerRowType::MarkerStart,
+                action.marker_lines.start.as_str(),
+            ),
+        );
+
+        if let (Some(base_content_index), Some(base_marker)) = (
+            action.conflict_data.base_content_index,
+            action.marker_lines.base.as_deref(),
+        ) {
+            push_chrome_row(
+                &mut chrome.before,
+                base_content_index,
+                render_conflict_marker_row(
+                    action.conflict_index,
+                    MergeConflictMarkerRowType::MarkerBase,
+                    base_marker,
+                ),
+            );
+            push_chrome_row(
+                &mut chrome.after,
+                base_content_index,
+                render_conflict_marker_row(
+                    action.conflict_index,
+                    MergeConflictMarkerRowType::MarkerSeparator,
+                    action.marker_lines.separator.as_str(),
+                ),
+            );
+        } else {
+            let separator_content_index = action
+                .conflict_data
+                .current_content_index
+                .unwrap_or(action.conflict_data.start_content_index);
+            push_chrome_row(
+                &mut chrome.between_change_sides,
+                separator_content_index,
+                render_conflict_marker_row(
+                    action.conflict_index,
+                    MergeConflictMarkerRowType::MarkerSeparator,
+                    action.marker_lines.separator.as_str(),
+                ),
+            );
+        }
+
+        push_chrome_row(
+            &mut chrome.after,
+            action.conflict_data.end_marker_content_index,
+            render_conflict_marker_row(
+                action.conflict_index,
+                MergeConflictMarkerRowType::MarkerEnd,
+                action.marker_lines.end.as_str(),
+            ),
+        );
+    }
+
+    chrome
+}
+
+fn push_chrome_row(map: &mut HashMap<usize, Vec<DiffRow>>, content_index: usize, row: DiffRow) {
+    map.entry(content_index).or_default().push(row);
+}
+
+fn append_chrome_rows(rows: &mut Vec<DiffRow>, chrome_rows: Option<&Vec<DiffRow>>) {
+    if let Some(chrome_rows) = chrome_rows {
+        rows.extend(chrome_rows.iter().cloned());
+    }
+}
+
+fn render_conflict_action_row(conflict_index: usize) -> DiffRow {
+    render_diff_row(
+        None,
+        None,
+        "1 Accept current change | 2 Accept incoming change | 3 Accept both",
+        DiffLineKind::ConflictAction,
+        Some(conflict_index),
+    )
+}
+
+fn render_conflict_marker_row(
+    conflict_index: usize,
+    row_type: MergeConflictMarkerRowType,
+    line: &str,
+) -> DiffRow {
+    let label = match row_type {
+        MergeConflictMarkerRowType::MarkerStart => "Current Change",
+        MergeConflictMarkerRowType::MarkerBase => "Base",
+        MergeConflictMarkerRowType::MarkerSeparator => "Incoming Change",
+        MergeConflictMarkerRowType::MarkerEnd => "",
+    };
+    let line = line_without_ending(line);
+    let text = if label.is_empty() {
+        line.to_string()
+    } else {
+        format!("{line} ({label})")
+    };
+    render_diff_row(
+        None,
+        None,
+        &text,
+        DiffLineKind::ConflictMarker(row_type),
+        Some(conflict_index),
+    )
 }
 
 fn conflict_index_for_hunk_content(
@@ -7414,15 +7588,19 @@ fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<RenderedDisplay
         DiffLineKind::Context => ui::context_sign_style(),
         DiffLineKind::Added => ui::added_sign_style(),
         DiffLineKind::Removed => ui::removed_sign_style(),
+        DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => ui::diff_hunk_style(),
     };
     let marker = match row.kind {
         DiffLineKind::Context => ' ',
         DiffLineKind::Added => '+',
         DiffLineKind::Removed => '-',
+        DiffLineKind::ConflictAction => ' ',
+        DiffLineKind::ConflictMarker(_) => '!',
     };
     let unified_line_number = match row.kind {
         DiffLineKind::Added | DiffLineKind::Context => row.new_line,
         DiffLineKind::Removed => row.old_line,
+        DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => None,
     };
 
     let prefix = vec![
@@ -7507,7 +7685,7 @@ fn render_split_hunk_rows(
     side_width: usize,
 ) -> Vec<(
     Line<'static>,
-    Option<usize>,
+    Option<DisplayNavTarget>,
     DisplayRowRefs,
     DisplaySelectionLine,
 )> {
@@ -7517,7 +7695,7 @@ fn render_split_hunk_rows(
 
     let flush_pending = |rendered: &mut Vec<(
         Line<'static>,
-        Option<usize>,
+        Option<DisplayNavTarget>,
         DisplayRowRefs,
         DisplaySelectionLine,
     )>,
@@ -7540,7 +7718,7 @@ fn render_split_hunk_rows(
             ) {
                 rendered.push((
                     rendered_line.line,
-                    target_line,
+                    target_line.map(DisplayNavTarget::Line),
                     row_refs,
                     rendered_line.selection,
                 ));
@@ -7565,7 +7743,22 @@ fn render_split_hunk_rows(
                 for rendered_line in render_split_pair_lines(Some(row), Some(row), side_width) {
                     rendered.push((
                         rendered_line.line,
-                        target_line,
+                        target_line.map(DisplayNavTarget::Line),
+                        row_refs,
+                        rendered_line.selection,
+                    ));
+                }
+            }
+            DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => {
+                flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
+                let row_refs = DisplayRowRefs {
+                    left: Some(row_index),
+                    right: Some(row_index),
+                };
+                for rendered_line in render_unified_code_lines(row, side_width * 2 + 3) {
+                    rendered.push((
+                        rendered_line.line,
+                        row.conflict_index.map(DisplayNavTarget::Conflict),
                         row_refs,
                         rendered_line.selection,
                     ));
@@ -8017,6 +8210,15 @@ fn base_style(kind: DiffLineKind) -> Style {
         DiffLineKind::Context => ui::diff_context_style(),
         DiffLineKind::Added => ui::diff_added_style(),
         DiffLineKind::Removed => ui::diff_removed_style(),
+        DiffLineKind::ConflictAction => ui::diff_hunk_style(),
+        DiffLineKind::ConflictMarker(MergeConflictMarkerRowType::MarkerStart)
+        | DiffLineKind::ConflictMarker(MergeConflictMarkerRowType::MarkerBase) => {
+            ui::diff_removed_style()
+        }
+        DiffLineKind::ConflictMarker(MergeConflictMarkerRowType::MarkerSeparator)
+        | DiffLineKind::ConflictMarker(MergeConflictMarkerRowType::MarkerEnd) => {
+            ui::diff_added_style()
+        }
     }
 }
 
@@ -9764,13 +9966,22 @@ similarity index 100%\n"
         )
         .unwrap();
         let mut view = build_merge_conflict_diff_view(&parsed, None, None);
+        let rendered = view.rendered_lines(DiffViewMode::Unified, 120).to_vec();
+        let rows = render_lines_to_strings(rendered, 120);
 
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("1 Accept current change"))
+        );
+        assert!(rows.iter().any(|row| row.contains("<<<<<<< HEAD")));
+        assert!(rows.iter().any(|row| row.contains("Current Change")));
+        assert!(rows.iter().any(|row| row.contains("Incoming Change")));
         assert_eq!(
-            view.selected_conflict_index(DiffViewMode::Unified, 120, 1),
+            view.selected_conflict_index(DiffViewMode::Unified, 120, 2),
             Some(0)
         );
         assert_eq!(
-            view.selected_conflict_index(DiffViewMode::Unified, 120, 2),
+            view.selected_conflict_index(DiffViewMode::Unified, 120, 4),
             Some(0)
         );
     }
