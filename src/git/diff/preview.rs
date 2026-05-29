@@ -11,13 +11,15 @@ use color_eyre::eyre::{WrapErr, eyre};
 use tokio::fs;
 
 use super::{
-    DiffPreviewData, DiffView, FileContents, build_diff_view_from_preview_data,
+    DiffPreviewData, DiffView, FileContents, MergeConflictLabels,
+    ParseMergeConflictDiffFromFileResult, build_diff_view_from_preview_data,
     parse_merge_conflict_diff_from_file,
 };
 use crate::git::{
     BranchCompareSelection, CommitCompareSelection, FileEntry, HighlightRegistry,
     command::{git_output, git_output_raw},
     parse::build_branch_diff_range,
+    refs::resolve_current_branch_ref,
 };
 
 pub async fn load_diff_view(
@@ -140,7 +142,50 @@ async fn load_merge_conflict_preview(
         return Ok(None);
     }
 
-    Ok(Some(DiffPreviewData::from_merge_conflict(parsed)))
+    let labels = resolve_merge_conflict_labels(repo_root, &parsed).await;
+
+    Ok(Some(DiffPreviewData::from_merge_conflict(parsed, labels)))
+}
+
+async fn resolve_merge_conflict_labels(
+    repo_root: &Path,
+    parsed: &ParseMergeConflictDiffFromFileResult,
+) -> MergeConflictLabels {
+    let current_ref = resolve_current_branch_ref(repo_root).await.ok().flatten();
+    merge_conflict_labels_from_markers(parsed, current_ref.as_deref())
+}
+
+fn merge_conflict_labels_from_markers(
+    parsed: &ParseMergeConflictDiffFromFileResult,
+    current_ref: Option<&str>,
+) -> MergeConflictLabels {
+    let marker_current = parsed
+        .actions
+        .iter()
+        .flatten()
+        .find_map(|action| marker_label(action.marker_lines.start.as_str(), "<<<<<<<"));
+    let incoming = parsed
+        .actions
+        .iter()
+        .flatten()
+        .find_map(|action| marker_label(action.marker_lines.end.as_str(), ">>>>>>>"))
+        .unwrap_or_else(|| "incoming".to_string());
+
+    let current = match marker_current.as_deref() {
+        Some("HEAD") => current_ref.unwrap_or("HEAD").to_string(),
+        Some(label) => label.to_string(),
+        None => current_ref.unwrap_or("current").to_string(),
+    };
+
+    MergeConflictLabels { current, incoming }
+}
+
+fn marker_label(line: &str, marker: &str) -> Option<String> {
+    let label = line
+        .trim_end_matches(['\r', '\n'])
+        .strip_prefix(marker)?
+        .trim();
+    (!label.is_empty()).then(|| label.to_string())
 }
 
 async fn load_commit_preview(
@@ -334,6 +379,7 @@ async fn load_untracked_preview(
             new_file_lines: Some(split_lines_for_context(&content)),
             new_file_source: Some(normalized_content),
             merge_conflict: None,
+            merge_conflict_labels: None,
         }
     } else {
         DiffPreviewData {
@@ -343,6 +389,7 @@ async fn load_untracked_preview(
             new_file_lines,
             new_file_source,
             merge_conflict: None,
+            merge_conflict_labels: None,
         }
     })
 }

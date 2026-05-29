@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 use super::{
     DiffHunkBlock, DiffHunkGap, DiffLineKind, DiffRow, DiffRowSyntax, FileDiffMetadata,
-    HunkContent, MergeConflictDiffAction, MergeConflictMarkerRow, MergeConflictMarkerRowType,
-    line_without_ending, parse_patch_files, process_file,
+    HunkContent, MergeConflictDiffAction, MergeConflictLabels, MergeConflictMarkerRow,
+    MergeConflictMarkerRowType, line_without_ending, parse_patch_files, process_file,
 };
+
+const CONFLICT_SIDE_LABEL_WIDTH: usize = 32;
 
 #[inline]
 pub(super) fn build_diff_rows(
@@ -51,19 +55,27 @@ fn append_file_diff_rows(
     rows: &mut Vec<DiffRow>,
     hunks: &mut Vec<DiffHunkBlock>,
 ) {
-    append_file_diff_rows_with_conflicts(file, &[], &[], rows, hunks);
+    append_file_diff_rows_with_conflicts(
+        file,
+        &[],
+        &[],
+        &MergeConflictLabels::default(),
+        rows,
+        hunks,
+    );
 }
 
 pub(super) fn append_file_diff_rows_with_conflicts(
     file: &FileDiffMetadata,
     actions: &[Option<MergeConflictDiffAction>],
     marker_rows: &[MergeConflictMarkerRow],
+    labels: &MergeConflictLabels,
     rows: &mut Vec<DiffRow>,
     hunks: &mut Vec<DiffHunkBlock>,
 ) {
     for hunk in &file.hunks {
         let hunk_index = hunks.len();
-        let chrome = build_conflict_chrome_rows(actions, marker_rows, hunk_index);
+        let chrome = build_conflict_chrome_rows(actions, marker_rows, labels, hunk_index);
         let row_start = rows.len();
         let mut old_line = hunk.deletion_start;
         let mut new_line = hunk.addition_start;
@@ -156,6 +168,7 @@ struct ConflictChromeRows {
 fn build_conflict_chrome_rows(
     actions: &[Option<MergeConflictDiffAction>],
     _marker_rows: &[MergeConflictMarkerRow],
+    labels: &MergeConflictLabels,
     hunk_index: usize,
 ) -> ConflictChromeRows {
     let mut chrome = ConflictChromeRows::default();
@@ -167,7 +180,7 @@ fn build_conflict_chrome_rows(
         push_chrome_row(
             &mut chrome.before,
             action.conflict_data.start_content_index,
-            render_conflict_action_row(action.conflict_index),
+            render_conflict_action_row(action.conflict_index, labels),
         );
         push_chrome_row(
             &mut chrome.before,
@@ -176,6 +189,7 @@ fn build_conflict_chrome_rows(
                 action.conflict_index,
                 MergeConflictMarkerRowType::MarkerStart,
                 action.marker_lines.start.as_str(),
+                labels,
             ),
         );
 
@@ -190,6 +204,7 @@ fn build_conflict_chrome_rows(
                     action.conflict_index,
                     MergeConflictMarkerRowType::MarkerBase,
                     base_marker,
+                    labels,
                 ),
             );
             push_chrome_row(
@@ -199,6 +214,7 @@ fn build_conflict_chrome_rows(
                     action.conflict_index,
                     MergeConflictMarkerRowType::MarkerSeparator,
                     action.marker_lines.separator.as_str(),
+                    labels,
                 ),
             );
         } else {
@@ -213,6 +229,7 @@ fn build_conflict_chrome_rows(
                     action.conflict_index,
                     MergeConflictMarkerRowType::MarkerSeparator,
                     action.marker_lines.separator.as_str(),
+                    labels,
                 ),
             );
         }
@@ -224,6 +241,7 @@ fn build_conflict_chrome_rows(
                 action.conflict_index,
                 MergeConflictMarkerRowType::MarkerEnd,
                 action.marker_lines.end.as_str(),
+                labels,
             ),
         );
     }
@@ -241,11 +259,13 @@ fn append_chrome_rows(rows: &mut Vec<DiffRow>, chrome_rows: Option<&Vec<DiffRow>
     }
 }
 
-fn render_conflict_action_row(conflict_index: usize) -> DiffRow {
+fn render_conflict_action_row(conflict_index: usize, labels: &MergeConflictLabels) -> DiffRow {
+    let current = truncate_conflict_side_label(&labels.current);
+    let incoming = truncate_conflict_side_label(&labels.incoming);
     render_diff_row(
         None,
         None,
-        "1 Accept current change | 2 Accept incoming change | 3 Accept both",
+        &format!("1 Accept {current} | 2 Accept {incoming} | 3 Accept both"),
         DiffLineKind::ConflictAction,
         Some(conflict_index),
     )
@@ -255,18 +275,18 @@ fn render_conflict_marker_row(
     conflict_index: usize,
     row_type: MergeConflictMarkerRowType,
     line: &str,
+    labels: &MergeConflictLabels,
 ) -> DiffRow {
-    let label = match row_type {
-        MergeConflictMarkerRowType::MarkerStart => "Current Change",
-        MergeConflictMarkerRowType::MarkerBase => "Base",
-        MergeConflictMarkerRowType::MarkerSeparator => "Incoming Change",
-        MergeConflictMarkerRowType::MarkerEnd => "",
+    let side_label = match row_type {
+        MergeConflictMarkerRowType::MarkerStart => Some(labels.current.as_str()),
+        MergeConflictMarkerRowType::MarkerBase => Some("Base"),
+        MergeConflictMarkerRowType::MarkerSeparator => Some(labels.incoming.as_str()),
+        MergeConflictMarkerRowType::MarkerEnd => None,
     };
     let line = line_without_ending(line);
-    let text = if label.is_empty() {
-        line.to_string()
-    } else {
-        format!("{line} ({label})")
+    let text = match side_label {
+        Some(label) => format!("{line} ({})", truncate_conflict_side_label(label)),
+        None => line.to_string(),
     };
     render_diff_row(
         None,
@@ -288,6 +308,58 @@ fn conflict_index_for_hunk_content(
             && content_index <= action.conflict_data.end_content_index)
             .then_some(action.conflict_index)
     })
+}
+
+fn truncate_conflict_side_label(label: &str) -> String {
+    truncate_middle(label.trim(), CONFLICT_SIDE_LABEL_WIDTH)
+}
+
+fn truncate_middle(value: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(value) <= max_width {
+        return value.to_string();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let marker = "...";
+    let side_width = (max_width - marker.len()) / 2;
+    let tail_width = max_width - marker.len() - side_width;
+    let head = take_width(value, side_width);
+    let tail = take_width_reversed(value, tail_width);
+    format!("{head}{marker}{tail}")
+}
+
+fn take_width(value: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut result = String::new();
+    for ch in value.chars() {
+        let Some(ch_width) = UnicodeWidthChar::width(ch) else {
+            continue;
+        };
+        if width + ch_width > max_width {
+            break;
+        }
+        result.push(ch);
+        width += ch_width;
+    }
+    result
+}
+
+fn take_width_reversed(value: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut result = Vec::new();
+    for ch in value.chars().rev() {
+        let Some(ch_width) = UnicodeWidthChar::width(ch) else {
+            continue;
+        };
+        if width + ch_width > max_width {
+            break;
+        }
+        result.push(ch);
+        width += ch_width;
+    }
+    result.into_iter().rev().collect()
 }
 
 #[inline]

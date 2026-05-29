@@ -1,7 +1,30 @@
 use super::*;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn build_test_app() -> App {
     App::new_for_benchmarks(PathBuf::from("/tmp/vigil-app-tests"))
+}
+
+#[tokio::test]
+async fn global_shortcuts_use_f_for_file_search_and_p_for_pull() {
+    let mut app = build_test_app();
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(app.file_search_modal_open);
+    assert!(app.remote_sync.is_none());
+
+    app.file_search_modal_open = false;
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(!app.file_search_modal_open);
+    assert_eq!(app.remote_sync, Some(RemoteSyncDirection::Pull));
+
+    app.abort_background_tasks();
 }
 
 #[tokio::test]
