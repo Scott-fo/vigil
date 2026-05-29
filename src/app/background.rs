@@ -1,36 +1,9 @@
-use std::collections::HashSet;
-
 use tokio::task;
 
 use super::{App, SnackbarNotice, SnackbarVariant};
 use crate::{event::Event, git};
 
 impl App {
-    pub(super) fn spawn_highlight_prewarm(&mut self) {
-        let Some(registry) = self.highlight_registry.clone() else {
-            return;
-        };
-        let selected_filetype = self.selected_file().and_then(|file| file.filetype);
-        let mut warmed_filetypes = HashSet::new();
-        let filetypes = self
-            .files
-            .iter()
-            .filter_map(|file| file.filetype)
-            .filter(|filetype| Some(*filetype) != selected_filetype)
-            .filter(|filetype| warmed_filetypes.insert(*filetype))
-            .collect::<Vec<_>>();
-        if filetypes.is_empty() {
-            return;
-        }
-
-        self.track_background_task(task::spawn(async move {
-            let _ = task::spawn_blocking(move || {
-                let _ = git::prewarm_highlight_registry(registry.as_ref(), filetypes);
-            })
-            .await;
-        }));
-    }
-
     pub(super) fn show_snackbar(&mut self, message: String, variant: SnackbarVariant) {
         self.snackbar_generation = self.snackbar_generation.saturating_add(1);
         let generation = self.snackbar_generation;

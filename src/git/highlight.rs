@@ -271,4 +271,33 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn tsx_highlighting_keeps_javascript_typescript_and_jsx_captures() {
+        let registry =
+            HighlightRegistry::new_for_filetypes(["tsx"]).expect("tsx registry should initialize");
+        let names = highlight_source_lines(
+            &registry,
+            "tsx",
+            "type Card = { id: string };\nconst view = <section data-id={card.id}>{card.id}</section>;",
+        )
+        .expect("tsx highlighting should succeed")
+        .into_iter()
+        .flatten()
+        .filter_map(|token| token.highlight_name)
+        .collect::<Vec<_>>();
+
+        for expected in [
+            "keyword",
+            "type",
+            "type.builtin",
+            "tag.builtin",
+            "tag.attribute",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "expected {expected} capture in tsx highlight names: {names:?}"
+            );
+        }
+    }
 }

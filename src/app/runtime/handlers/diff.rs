@@ -10,8 +10,7 @@ impl App {
         match result {
             Ok(registry) => {
                 self.highlight_registry = Some(registry);
-                self.spawn_highlight_prewarm();
-                self.queue_selected_diff_load(false, false);
+                self.diff_highlight_complete = false;
                 self.status_message = Some(self.current_status_message());
             }
             Err(error) => {
@@ -73,6 +72,7 @@ impl App {
                 if complete {
                     self.diff_view = diff_view;
                     self.diff_highlight_complete = true;
+                    self.spawn_diff_prefetch();
                 } else {
                     self.diff_view.merge_highlighting_from(&diff_view);
                 }
@@ -91,6 +91,7 @@ impl App {
             key,
             plain,
             highlighted,
+            highlight_complete,
         } = prefetched;
         if generation != self.diff_cache_generation {
             return;
@@ -99,7 +100,7 @@ impl App {
         self.diff_view_cache.insert_plain(key.clone(), plain);
         if let Some(highlighted_view) = highlighted {
             self.diff_view_cache
-                .insert_highlighted(key, highlighted_view, false);
+                .insert_highlighted(key, highlighted_view, highlight_complete);
         }
     }
 }

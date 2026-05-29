@@ -28,6 +28,9 @@ impl App {
             self.diff_highlight_complete = true;
             return;
         };
+        if self.diff_load_task.is_some() {
+            return;
+        }
         let Some(cache_key) = self.pending_diff_cache_key.clone() else {
             return;
         };

@@ -12,18 +12,11 @@ use self::selection::refreshed_file_index;
 impl App {
     pub(super) async fn refresh(&mut self) -> color_eyre::Result<()> {
         let previously_selected = self.selected_file().map(|file| file.path.clone());
-        if self.is_working_tree_mode()
-            && let Err(error) = self.sync_repo_state().await
-        {
-            self.enter_repo_error_state(error.to_string()).await?;
-            return Ok(());
-        }
-
         let files = match &self.review_mode {
-            ReviewMode::WorkingTree => match git::load_files_with_status(&self.repo_root).await {
-                Ok(files) => {
-                    self.repo_error = None;
-                    files
+            ReviewMode::WorkingTree => match git::load_working_tree_status(&self.repo_root).await {
+                Ok(status) => {
+                    self.apply_working_tree_status_root(status.repo_root);
+                    status.files
                 }
                 Err(error) => {
                     self.enter_repo_error_state(error.to_string()).await?;
@@ -83,8 +76,7 @@ impl App {
         Ok(())
     }
 
-    async fn sync_repo_state(&mut self) -> color_eyre::Result<()> {
-        let resolved_root = git::resolve_repo_root_from(&self.repo_root).await?;
+    fn apply_working_tree_status_root(&mut self, resolved_root: std::path::PathBuf) {
         let watcher_needs_restart = self.repo_error.is_some()
             || (!self.repo_watcher_loading && self.repo_watcher.is_none())
             || self.repo_root != resolved_root;
@@ -95,8 +87,6 @@ impl App {
         if watcher_needs_restart {
             self.restart_repo_watcher();
         }
-
-        Ok(())
     }
 
     async fn enter_repo_error_state(&mut self, error: String) -> color_eyre::Result<()> {

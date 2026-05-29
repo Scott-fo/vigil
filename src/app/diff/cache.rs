@@ -26,8 +26,14 @@ pub(crate) struct DiffViewCache {
 }
 
 impl DiffViewCache {
-    pub(crate) fn contains(&self, key: &DiffCacheKey) -> bool {
+    pub(crate) fn has_plain(&self, key: &DiffCacheKey) -> bool {
         self.entries.iter().any(|entry| &entry.key == key)
+    }
+
+    pub(crate) fn has_complete_highlight(&self, key: &DiffCacheKey) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| &entry.key == key && entry.highlight_complete)
     }
 
     pub(crate) fn get_plain(&mut self, key: &DiffCacheKey) -> Option<DiffView> {

@@ -553,6 +553,17 @@ async fn init_repo_root_resolution_commit_messages_and_empty_untracked_previews_
     repo.write("empty.md", "");
     let statuses = git::load_files_with_status(&repo.root).await?;
     let empty_file = find_file(&statuses, "empty.md");
+    let nested_status = git::load_working_tree_status(&repo.path("nested/deeper")).await?;
+    assert_eq!(
+        fs::canonicalize(&nested_status.repo_root)?,
+        fs::canonicalize(&repo.root)?
+    );
+    assert!(
+        nested_status
+            .files
+            .iter()
+            .any(|file| file.path == "empty.md")
+    );
     let mut diff_view = git::load_diff_view_for_working_tree(&repo.root, &empty_file, None).await?;
     let rendered = rendered_lines(&mut diff_view, DiffViewMode::Unified, 120).join("\n");
     assert!(rendered.contains("Untracked empty file; no textual hunk to preview."));

@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::event::DiffPrefetchedEvent;
+
 use super::*;
 
 fn build_test_app() -> App {
@@ -26,6 +28,47 @@ fn build_diff_view(line_count: usize) -> DiffView {
         diff.push_str(&format!("+fn line_{index}() {{}}\n"));
     }
     git::build_diff_view_from_diff_text(&diff, Some("rust"))
+}
+
+#[tokio::test]
+async fn registry_ready_does_not_restart_inflight_diff_load() {
+    let mut app = build_test_app();
+    app.diff_request_id = 7;
+    app.pending_diff_cache_key = Some(build_cache_key(0));
+    app.diff_load_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    let registry =
+        git::HighlightRegistry::new_for_filetypes([]).expect("empty registry should initialize");
+    app.handle_highlight_registry_ready(Ok(registry.into()));
+
+    assert_eq!(app.diff_request_id, 7);
+    assert!(app.diff_load_task.is_some());
+
+    app.cancel_inflight_diff_load();
+}
+
+#[test]
+fn prefetched_complete_highlight_is_cached_as_complete() {
+    let mut app = build_test_app();
+    let key = build_cache_key(1);
+    let plain = build_diff_view(3);
+    let highlighted = build_diff_view(3);
+
+    app.handle_diff_prefetched(DiffPrefetchedEvent {
+        generation: app.diff_cache_generation,
+        key: key.clone(),
+        plain,
+        highlighted: Some(highlighted),
+        highlight_complete: true,
+    });
+
+    let (_, complete) = app
+        .diff_view_cache
+        .get_highlighted(&key)
+        .expect("prefetched highlighted view should be cached");
+    assert!(complete);
 }
 
 #[test]

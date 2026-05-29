@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use color_eyre::eyre::WrapErr;
 use tree_sitter::Query;
 
@@ -110,43 +108,23 @@ pub(super) struct QueryHighlightConfig {
 pub(super) fn build_highlight_config(
     filetype: &'static str,
 ) -> color_eyre::Result<Option<QueryHighlightConfig>> {
-    let mut configs = HashMap::new();
+    let mut config = None;
     let ecma_highlights = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/vendor/nvim-treesitter/ecma/highlights.scm"
-    ));
-    let ecma_locals = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/ecma/locals.scm"
-    ));
-    let ecma_injections = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/ecma/injections.scm"
     ));
     let jsx_nvim_highlights = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/vendor/nvim-treesitter/jsx/highlights.scm"
     ));
-    let jsx_nvim_injections = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/jsx/injections.scm"
-    ));
     let typescript_highlights_query = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/vendor/nvim-treesitter/typescript/highlights.scm"
     ));
-    let typescript_locals_query = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/typescript/locals.scm"
-    ));
-    let typescript_injections_query = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/vendor/nvim-treesitter/typescript/injections.scm"
-    ));
 
     match filetype {
         "rust" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "rust",
             tree_sitter_rust::LANGUAGE.into(),
             "rust",
@@ -161,7 +139,7 @@ pub(super) fn build_highlight_config(
             )),
         )?,
         "javascript" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "javascript",
             tree_sitter_javascript::LANGUAGE.into(),
             "javascript",
@@ -176,7 +154,7 @@ pub(super) fn build_highlight_config(
                 tree_sitter_javascript::JSX_HIGHLIGHT_QUERY
             );
             register_highlight_config(
-                &mut configs,
+                &mut config,
                 "jsx",
                 tree_sitter_javascript::LANGUAGE.into(),
                 "javascript",
@@ -187,36 +165,31 @@ pub(super) fn build_highlight_config(
         }
         "typescript" => {
             let typescript_highlights = format!("{ecma_highlights}\n{typescript_highlights_query}");
-            let typescript_locals = format!("{ecma_locals}\n{typescript_locals_query}");
-            let typescript_injections = format!("{ecma_injections}\n{typescript_injections_query}");
             register_highlight_config(
-                &mut configs,
+                &mut config,
                 "typescript",
                 tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                 "typescript",
                 &typescript_highlights,
-                &typescript_injections,
-                &typescript_locals,
+                "",
+                "",
             )?;
         }
         "tsx" => {
-            let typescript_locals = format!("{ecma_locals}\n{typescript_locals_query}");
             let tsx_highlights =
                 format!("{ecma_highlights}\n{typescript_highlights_query}\n{jsx_nvim_highlights}");
-            let tsx_injections =
-                format!("{ecma_injections}\n{typescript_injections_query}\n{jsx_nvim_injections}");
             register_highlight_config(
-                &mut configs,
+                &mut config,
                 "tsx",
                 tree_sitter_typescript::LANGUAGE_TSX.into(),
                 "tsx",
                 &tsx_highlights,
-                &tsx_injections,
-                &typescript_locals,
+                "",
+                "",
             )?;
         }
         "python" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "python",
             tree_sitter_python::LANGUAGE.into(),
             "python",
@@ -225,7 +198,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "go" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "go",
             tree_sitter_go::LANGUAGE.into(),
             "go",
@@ -240,7 +213,7 @@ pub(super) fn build_highlight_config(
             )),
         )?,
         "c" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "c",
             tree_sitter_c::LANGUAGE.into(),
             "c",
@@ -249,7 +222,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "cpp" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "cpp",
             tree_sitter_cpp::LANGUAGE.into(),
             "cpp",
@@ -258,7 +231,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "csharp" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "csharp",
             tree_sitter_c_sharp::LANGUAGE.into(),
             "c_sharp",
@@ -270,7 +243,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "bash" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "bash",
             tree_sitter_bash::LANGUAGE.into(),
             "bash",
@@ -279,7 +252,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "java" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "java",
             tree_sitter_java::LANGUAGE.into(),
             "java",
@@ -288,7 +261,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "ruby" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "ruby",
             tree_sitter_ruby::LANGUAGE.into(),
             "ruby",
@@ -297,7 +270,7 @@ pub(super) fn build_highlight_config(
             tree_sitter_ruby::LOCALS_QUERY,
         )?,
         "php" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "php",
             tree_sitter_php::LANGUAGE_PHP.into(),
             "php",
@@ -306,7 +279,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "scala" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "scala",
             tree_sitter_scala::LANGUAGE.into(),
             "scala",
@@ -315,7 +288,7 @@ pub(super) fn build_highlight_config(
             tree_sitter_scala::LOCALS_QUERY,
         )?,
         "html" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "html",
             tree_sitter_html::LANGUAGE.into(),
             "html",
@@ -324,7 +297,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "json" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "json",
             tree_sitter_json::LANGUAGE.into(),
             "json",
@@ -333,7 +306,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "yaml" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "yaml",
             tree_sitter_yaml::LANGUAGE.into(),
             "yaml",
@@ -342,7 +315,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "haskell" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "haskell",
             tree_sitter_haskell::LANGUAGE.into(),
             "haskell",
@@ -351,7 +324,7 @@ pub(super) fn build_highlight_config(
             tree_sitter_haskell::LOCALS_QUERY,
         )?,
         "css" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "css",
             tree_sitter_css::LANGUAGE.into(),
             "css",
@@ -360,7 +333,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "nix" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "nix",
             tree_sitter_nix::LANGUAGE.into(),
             "nix",
@@ -369,7 +342,7 @@ pub(super) fn build_highlight_config(
             "",
         )?,
         "zig" => register_highlight_config(
-            &mut configs,
+            &mut config,
             "zig",
             tree_sitter_zig::LANGUAGE.into(),
             "zig",
@@ -380,11 +353,11 @@ pub(super) fn build_highlight_config(
         _ => return Ok(None),
     }
 
-    Ok(configs.remove(filetype))
+    Ok(config)
 }
 
 fn register_highlight_config(
-    configs: &mut HashMap<&'static str, QueryHighlightConfig>,
+    config: &mut Option<QueryHighlightConfig>,
     key: &'static str,
     language: tree_sitter::Language,
     _language_name: &'static str,
@@ -399,14 +372,11 @@ fn register_highlight_config(
         .iter()
         .map(|name| resolve_highlight_name(name))
         .collect();
-    configs.insert(
-        key,
-        QueryHighlightConfig {
-            language,
-            query,
-            capture_highlight_names,
-        },
-    );
+    *config = Some(QueryHighlightConfig {
+        language,
+        query,
+        capture_highlight_names,
+    });
     Ok(())
 }
 

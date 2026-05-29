@@ -26,7 +26,7 @@ impl App {
         Self::build_diff_cache_key(&self.review_mode, file)
     }
 
-    fn spawn_diff_prefetch(&mut self) {
+    pub(in crate::app) fn spawn_diff_prefetch(&mut self) {
         let Some(selected_visible_index) = self.selected_visible_file_index() else {
             return;
         };
@@ -53,10 +53,13 @@ impl App {
                 };
                 let file = self.files[file_index].clone();
                 let cache_key = self.diff_cache_key(&file);
-                if self.diff_view_cache.contains(&cache_key) {
+                let should_prefetch_highlight = self.highlight_registry.is_some()
+                    && file.filetype.is_some()
+                    && !self.diff_view_cache.has_complete_highlight(&cache_key);
+                if !should_prefetch_highlight && self.diff_view_cache.has_plain(&cache_key) {
                     continue;
                 }
-                prefetch_files.push((cache_key, file));
+                prefetch_files.push((cache_key, file, should_prefetch_highlight));
             }
         }
 
@@ -67,23 +70,36 @@ impl App {
         let generation = self.diff_cache_generation;
         let review_mode = self.review_mode.clone();
         let repo_root = self.repo_root.clone();
+        let highlight_registry = self.highlight_registry.clone();
         let sender = self.events.sender();
 
         self.track_background_task(task::spawn(async move {
-            for (cache_key, file) in prefetch_files {
+            for (cache_key, file, should_prefetch_highlight) in prefetch_files {
+                let include_exact_context = should_prefetch_highlight;
                 let preview_result = match &review_mode {
                     ReviewMode::WorkingTree => {
-                        git::load_diff_preview_for_working_tree(&repo_root, &file, false).await
+                        git::load_diff_preview_for_working_tree(
+                            &repo_root,
+                            &file,
+                            include_exact_context,
+                        )
+                        .await
                     }
                     ReviewMode::CommitCompare(selection) => {
                         git::load_diff_preview_for_commit_compare(
-                            &repo_root, &file, selection, false,
+                            &repo_root,
+                            &file,
+                            selection,
+                            include_exact_context,
                         )
                         .await
                     }
                     ReviewMode::BranchCompare(selection) => {
                         git::load_diff_preview_for_branch_compare(
-                            &repo_root, &file, selection, false,
+                            &repo_root,
+                            &file,
+                            selection,
+                            include_exact_context,
                         )
                         .await
                     }
@@ -93,21 +109,34 @@ impl App {
                     continue;
                 };
 
-                let plain_file = file.clone();
-                let plain_result = task::spawn_blocking(move || {
-                    git::build_diff_view_from_preview_data(&preview, &plain_file, None)
+                let registry = highlight_registry.clone();
+                let build_result = task::spawn_blocking(move || {
+                    let plain = git::build_diff_view_from_preview_data(&preview, &file, None)?;
+                    let highlighted = if should_prefetch_highlight {
+                        registry.map(|registry| {
+                            let mut highlighted = plain.clone();
+                            highlighted
+                                .apply_exact_syntax_highlighting(file.filetype, registry.as_ref());
+                            highlighted
+                        })
+                    } else {
+                        None
+                    };
+                    Ok::<_, color_eyre::Report>((plain, highlighted))
                 })
                 .await;
 
-                let Ok(Ok(plain_view)) = plain_result else {
+                let Ok(Ok((plain_view, highlighted_view))) = build_result else {
                     continue;
                 };
+                let highlight_complete = highlighted_view.is_some();
 
                 let _ = sender.send(Event::DiffPrefetched(Box::new(DiffPrefetchedEvent {
                     generation,
                     key: cache_key,
                     plain: plain_view,
-                    highlighted: None,
+                    highlighted: highlighted_view,
+                    highlight_complete,
                 })));
             }
         }));

@@ -13,7 +13,9 @@ mod stage;
 
 pub use self::{
     display::status_color,
-    load::{load_files_with_status, load_status_for_path},
+    load::{
+        WorkingTreeStatus, load_files_with_status, load_status_for_path, load_working_tree_status,
+    },
     refresh::should_refresh_for_paths,
     stage::{
         discard_file_changes, is_file_fully_staged, is_file_staged, stage_all_changes,

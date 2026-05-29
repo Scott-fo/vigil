@@ -22,6 +22,7 @@ pub struct DiffPrefetchedEvent {
     pub key: DiffCacheKey,
     pub plain: DiffView,
     pub highlighted: Option<DiffView>,
+    pub highlight_complete: bool,
 }
 
 #[derive(Debug)]

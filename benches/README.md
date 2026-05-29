@@ -44,6 +44,8 @@ cargo bench --bench diff_performance get_merge_conflict_line_types
 cargo bench --bench diff_performance parse_merge_conflict_diff_from_file
 cargo bench --bench diff_performance resolve_conflict
 cargo bench --bench diff_performance collect_diff_lines
+cargo bench --bench highlight_registry_init -- --noplot
+cargo bench --bench startup_paths -- --noplot
 ```
 
 ## Latest local results
@@ -86,6 +88,31 @@ so it is not used as a headline speedup claim.
 `parse_merge_conflict_diff_from_file` follows Pierre's direct marker scanner
 shape, builds resolved current/incoming contents during the scan, and caches
 per-hunk unified line offsets while assembling marker rows.
+
+# Startup Benchmarks
+
+`startup_paths` measures the launch-adjacent work that blocks or competes with
+the first usable diff view.
+
+## Latest local startup results
+
+Measured against a one-file dirty TSX repository:
+
+| Case | Mean |
+| --- | ---: |
+| baseline `resolve_repo_root` + `load_working_tree_status` | 16.03 ms |
+| current `load_status_with_repo_root` | 8.79 ms |
+| selected TSX highlight registry | 41.75 ms |
+
+Measured with nvim Tree-sitter highlight queries:
+
+| Case | Mean |
+| --- | ---: |
+| eager prewarm, many changed filetypes | 284.94 ms |
+| nearby prewarm equivalent | 92.63 ms |
+
+Vigil no longer performs eager parser prewarm when the registry becomes ready;
+adjacent highlighted diffs are primed after the selected diff has completed.
 
 # Tree Benchmarks
 

@@ -63,9 +63,10 @@ pub use repo::{
     resolve_repo_root_from, revision_matches_head,
 };
 pub use status::{
-    discard_file_changes, is_file_fully_staged, is_file_staged, load_files_with_status,
-    load_status_for_path, should_refresh_for_paths, stage_all_changes, status_color,
-    toggle_file_stage, unstage_all_changes,
+    WorkingTreeStatus, discard_file_changes, is_file_fully_staged, is_file_staged,
+    load_files_with_status, load_status_for_path, load_working_tree_status,
+    should_refresh_for_paths, stage_all_changes, status_color, toggle_file_stage,
+    unstage_all_changes,
 };
 pub use types::{
     BlameCommitDetails, BlameTarget, BranchCompareRefs, BranchCompareSelection,
