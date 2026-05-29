@@ -31,6 +31,10 @@ impl App {
             return Ok(true);
         }
 
+        if self.handle_branch_merge_key(key_event) {
+            return Ok(true);
+        }
+
         if self.handle_worktree_key(key_event).await? {
             return Ok(true);
         }

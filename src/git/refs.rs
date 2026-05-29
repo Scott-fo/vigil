@@ -75,7 +75,9 @@ pub async fn load_files_with_branch_diff(
     .await
 }
 
-async fn resolve_current_branch_ref(repo_root: &Path) -> color_eyre::Result<Option<String>> {
+pub(crate) async fn resolve_current_branch_ref(
+    repo_root: &Path,
+) -> color_eyre::Result<Option<String>> {
     let output = git_output_raw(repo_root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
         .await
         .wrap_err("failed to resolve current branch")?;

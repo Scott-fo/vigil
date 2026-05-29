@@ -8,6 +8,7 @@ use tokio::task;
 mod background;
 mod blame_modal;
 mod branch_compare;
+mod branch_merge;
 mod clipboard;
 mod commit_modal;
 mod commit_search;
@@ -180,6 +181,9 @@ pub struct App {
     pub branch_compare_selected_source_index: usize,
     pub branch_compare_selected_destination_index: usize,
     pub branch_compare_matcher: Matcher,
+    pub branch_merge_target: Option<git::BranchMergeRequest>,
+    pub branch_merge_loading: bool,
+    pub branch_merge_error: Option<String>,
     pub worktree_modal_open: bool,
     pub worktree_loading: bool,
     pub worktree_error: Option<String>,

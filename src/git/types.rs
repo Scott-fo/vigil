@@ -49,6 +49,28 @@ pub struct BranchCompareSelection {
     pub destination_ref: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchMergeRequest {
+    pub source_ref: String,
+    pub destination_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchMergeOutcome {
+    Prepared {
+        source_ref: String,
+        destination_ref: String,
+    },
+    Conflicted {
+        source_ref: String,
+        destination_ref: String,
+    },
+    AlreadyUpToDate {
+        source_ref: String,
+        destination_ref: String,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct BranchCompareRefs {
     pub refs: Vec<String>,

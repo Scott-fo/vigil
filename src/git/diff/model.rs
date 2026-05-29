@@ -366,6 +366,21 @@ pub struct MergeConflictMarkerRow {
     pub line_index: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeConflictLabels {
+    pub current: String,
+    pub incoming: String,
+}
+
+impl Default for MergeConflictLabels {
+    fn default() -> Self {
+        Self {
+            current: "current".to_string(),
+            incoming: "incoming".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseMergeConflictDiffFromFileResult {
     #[serde(rename = "fileDiff")]

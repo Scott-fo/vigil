@@ -44,6 +44,7 @@ impl App {
             || self.theme_modal_open
             || self.commit_search_modal_open
             || self.branch_compare_modal_open
+            || self.branch_merge_target.is_some()
             || self.worktree_modal_open
     }
 

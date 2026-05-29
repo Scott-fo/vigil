@@ -59,6 +59,10 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
+            Event::BranchMergeFinished(result) => {
+                self.handle_branch_merge_finished(result).await?;
+                self.redraw_if_running(terminal)?;
+            }
             Event::WorktreesLoaded(result) => {
                 self.handle_worktrees_loaded(result);
                 if self.worktree_modal_open {
