@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::*;
+use super::super::{App, FileEntry};
 
 fn build_test_app() -> App {
     let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-app-tests"));
