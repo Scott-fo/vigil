@@ -5,8 +5,9 @@ use crossterm::event::Event as CrosstermEvent;
 use crate::{
     app::DiffCacheKey,
     git::{
-        BlameCommitDetails, BranchCompareRefs, BranchMergeOutcome, CommitSearchEntry, DiffView,
-        SharedHighlightRegistry, WorkingTreeStatus, WorktreeEntry,
+        BlameCommitDetails, BranchCompareRefs, BranchMergeOutcome, CommitSearchEntry,
+        DiffSearchIndex, DiffSearchResults, DiffView, SharedHighlightRegistry, WorkingTreeStatus,
+        WorktreeEntry,
     },
     watcher::RepoWatcher,
 };
@@ -48,6 +49,14 @@ pub enum Event {
         result: Result<BlameCommitDetails, String>,
     },
     CommitSearchLoaded(Result<Vec<CommitSearchEntry>, String>),
+    DiffSearchIndexLoaded {
+        request_id: u64,
+        result: Result<DiffSearchIndex, String>,
+    },
+    DiffSearchResultsLoaded {
+        request_id: u64,
+        result: Result<DiffSearchResults, String>,
+    },
     BranchCompareLoaded(Result<BranchCompareRefs, String>),
     BranchMergeFinished(Result<BranchMergeOutcome, String>),
     WorktreesLoaded(Result<Vec<WorktreeEntry>, String>),

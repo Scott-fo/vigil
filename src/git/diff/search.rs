@@ -11,15 +11,27 @@ use std::{
     cmp::{Ordering, Reverse},
     collections::BinaryHeap,
     ops::Range,
+    path::Path,
 };
 
+use color_eyre::eyre::WrapErr;
 use nucleo_matcher::{
     Config, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
 };
+use tokio::task;
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{FileDiffMetadata, Hunk, HunkContent, ParsedPatch, line_without_ending};
+use super::super::{
+    BranchCompareSelection, CommitCompareSelection, FileEntry,
+    command::git_output,
+    highlight::{HighlightRegistry, highlight_source_lines},
+    parse::{build_branch_diff_range, resolve_diff_filetype},
+};
+use super::{
+    DiffPreviewData, FileDiffMetadata, Hunk, HunkContent, ParsedPatch, line_without_ending,
+    preview::load_diff_preview_for_working_tree,
+};
 
 #[derive(Debug, Default, Clone)]
 pub struct DiffSearchIndex {
@@ -30,6 +42,7 @@ pub struct DiffSearchIndex {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IndexedDiffFile {
     path: Box<str>,
+    filetype: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +81,7 @@ pub struct DiffSearchResults {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffSearchResult {
     pub file_path: String,
+    pub filetype: Option<&'static str>,
     pub hunk_index: usize,
     pub hunk_old_start: usize,
     pub hunk_new_start: usize,
@@ -76,7 +90,15 @@ pub struct DiffSearchResult {
     pub new_line: Option<usize>,
     pub line: String,
     pub match_ranges: Vec<Range<usize>>,
+    pub syntax_ranges: Vec<DiffSearchSyntaxRange>,
     pub score: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffSearchSyntaxRange {
+    pub start: usize,
+    pub end: usize,
+    pub highlight_name: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,8 +147,9 @@ impl PartialOrd for RankedLine {
 
 impl DiffSearchIndex {
     pub fn from_diff_text(diff: &str) -> color_eyre::Result<Self> {
-        let patches = super::parse_patch_files(diff, None, false)?;
-        Ok(Self::from_patches(&patches))
+        let mut index = Self::default();
+        index.append_diff_text(diff)?;
+        Ok(index)
     }
 
     pub fn from_patches(patches: &[ParsedPatch]) -> Self {
@@ -137,6 +160,26 @@ impl DiffSearchIndex {
             }
         }
         index
+    }
+
+    pub fn append_preview_data(&mut self, preview: &DiffPreviewData) -> color_eyre::Result<()> {
+        if let Some(merge_conflict) = &preview.merge_conflict {
+            self.push_file(&merge_conflict.file_diff);
+            return Ok(());
+        }
+
+        self.append_diff_text(&preview.diff)
+    }
+
+    pub fn append_diff_text(&mut self, diff: &str) -> color_eyre::Result<()> {
+        let patches = super::parse_patch_files(diff, None, false)?;
+        for patch in patches {
+            for file in patch.files {
+                self.push_file(&file);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn file_count(&self) -> usize {
@@ -217,11 +260,21 @@ impl DiffSearchIndex {
         let file_index = self.files.len();
         self.files.push(IndexedDiffFile {
             path: file.name.clone().into_boxed_str(),
+            filetype: resolve_diff_filetype(&file.name),
         });
 
         for (hunk_index, hunk) in file.hunks.iter().enumerate() {
             self.push_hunk(file_index, hunk_index, hunk, file);
         }
+    }
+
+    fn append_index(&mut self, mut other: DiffSearchIndex) {
+        let file_index_offset = self.files.len();
+        for line in &mut other.lines {
+            line.file_index += file_index_offset;
+        }
+        self.files.extend(other.files);
+        self.lines.extend(other.lines);
     }
 
     fn push_hunk(
@@ -342,6 +395,7 @@ impl DiffSearchIndex {
 
         DiffSearchResult {
             file_path: self.files[line.file_index].path.to_string(),
+            filetype: self.files[line.file_index].filetype,
             hunk_index: line.hunk_index,
             hunk_old_start: line.hunk_old_start,
             hunk_new_start: line.hunk_new_start,
@@ -350,9 +404,121 @@ impl DiffSearchIndex {
             new_line: line.new_line,
             line: line.text.to_string(),
             match_ranges: char_indices_to_byte_ranges(&line.text, &matcher.indices),
+            syntax_ranges: Vec::new(),
             score: ranked.score,
         }
     }
+}
+
+impl DiffSearchResults {
+    pub fn apply_syntax_highlighting(&mut self, registry: &HighlightRegistry) {
+        for item in &mut self.items {
+            item.apply_syntax_highlighting(registry);
+        }
+    }
+}
+
+impl DiffSearchResult {
+    fn apply_syntax_highlighting(&mut self, registry: &HighlightRegistry) {
+        let Some(filetype) = self.filetype else {
+            return;
+        };
+
+        let Some(highlighted_lines) = highlight_source_lines(registry, filetype, &self.line) else {
+            return;
+        };
+        let Some(tokens) = highlighted_lines.into_iter().next() else {
+            return;
+        };
+
+        self.syntax_ranges = tokens
+            .into_iter()
+            .map(|token| DiffSearchSyntaxRange {
+                start: token.start,
+                end: token.end,
+                highlight_name: token.highlight_name,
+            })
+            .collect();
+    }
+}
+
+pub async fn load_diff_search_index_for_working_tree(
+    repo_root: &Path,
+    files: &[FileEntry],
+) -> color_eyre::Result<DiffSearchIndex> {
+    if files.iter().any(|file| is_unmerged_status(&file.status)) {
+        return load_working_tree_index_file_by_file(repo_root, files).await;
+    }
+
+    let mut index = DiffSearchIndex::default();
+    if files.iter().any(|file| file.status != "??") {
+        let diff = git_output(
+            repo_root,
+            &["diff", "--no-color", "--find-renames", "HEAD", "--"],
+        )
+        .await?;
+        index.append_index(index_from_diff_text(diff).await?);
+    }
+
+    for file in files.iter().filter(|file| file.status == "??") {
+        let preview = load_diff_preview_for_working_tree(repo_root, file, false).await?;
+        index.append_preview_data(&preview)?;
+    }
+
+    Ok(index)
+}
+
+pub async fn load_diff_search_index_for_commit_compare(
+    repo_root: &Path,
+    selection: &CommitCompareSelection,
+) -> color_eyre::Result<DiffSearchIndex> {
+    let diff = git_output(
+        repo_root,
+        &[
+            "diff",
+            "--no-color",
+            "--find-renames",
+            selection.base_ref.as_str(),
+            selection.commit_hash.as_str(),
+        ],
+    )
+    .await?;
+    index_from_diff_text(diff).await
+}
+
+pub async fn load_diff_search_index_for_branch_compare(
+    repo_root: &Path,
+    selection: &BranchCompareSelection,
+) -> color_eyre::Result<DiffSearchIndex> {
+    let diff_range = build_branch_diff_range(selection);
+    let diff = git_output(
+        repo_root,
+        &["diff", "--no-color", "--find-renames", diff_range.as_str()],
+    )
+    .await?;
+    index_from_diff_text(diff).await
+}
+
+async fn load_working_tree_index_file_by_file(
+    repo_root: &Path,
+    files: &[FileEntry],
+) -> color_eyre::Result<DiffSearchIndex> {
+    let mut index = DiffSearchIndex::default();
+    for file in files {
+        let preview = load_diff_preview_for_working_tree(repo_root, file, false).await?;
+        index.append_preview_data(&preview)?;
+    }
+    Ok(index)
+}
+
+fn is_unmerged_status(status: &str) -> bool {
+    status.contains('U')
+}
+
+async fn index_from_diff_text(diff: String) -> color_eyre::Result<DiffSearchIndex> {
+    task::spawn_blocking(move || DiffSearchIndex::from_diff_text(&diff))
+        .await
+        .wrap_err("diff search index parse task failed")?
 }
 
 fn char_indices_to_byte_ranges(text: &str, indices: &[u32]) -> Vec<Range<usize>> {
@@ -551,6 +717,33 @@ mod tests {
             &result.line[result.match_ranges[0].clone()],
             "e\u{301}",
             "ranges should not split a matched grapheme cluster"
+        );
+    }
+
+    #[test]
+    fn search_results_can_attach_syntax_highlighting() {
+        let mut results = search(
+            concat!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n",
+                "--- a/src/lib.rs\n",
+                "+++ b/src/lib.rs\n",
+                "@@ -0,0 +1,1 @@\n",
+                "+fn highlighted_target() {}\n",
+            ),
+            "'highlighted",
+        );
+        let registry =
+            crate::git::HighlightRegistry::new_for_filetypes(["rust"]).expect("registry");
+
+        results.apply_syntax_highlighting(&registry);
+
+        assert!(
+            results.items[0]
+                .syntax_ranges
+                .iter()
+                .any(|range| range.highlight_name.is_some()),
+            "expected syntax ranges for rust result: {:?}",
+            results.items[0].syntax_ranges
         );
     }
 }

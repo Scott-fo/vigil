@@ -157,6 +157,16 @@ fn rendered_lines(view: &mut DiffView, mode: DiffViewMode, width: usize) -> Vec<
         .collect()
 }
 
+fn diff_search_paths(index: &git::DiffSearchIndex, query: &str) -> Vec<String> {
+    let mut matcher = git::DiffSearchMatcher::default();
+    index
+        .search(query, git::DiffSearchOptions::default(), &mut matcher)
+        .items
+        .into_iter()
+        .map(|result| result.file_path)
+        .collect()
+}
+
 fn selection_from_commit(file_commit: &vigil::git::CommitSearchEntry) -> CommitCompareSelection {
     CommitCompareSelection {
         base_ref: git::resolve_commit_base_ref(file_commit),
@@ -277,6 +287,10 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
         git::load_diff_view_for_working_tree(&repo.root, &untracked, None).await?;
     let rendered = rendered_lines(&mut new_file_view, DiffViewMode::Unified, 160).join("\n");
     assert!(rendered.contains("fn added() {}"));
+
+    let search_index = git::load_diff_search_index_for_working_tree(&repo.root, &files).await?;
+    assert!(diff_search_paths(&search_index, "'changed").contains(&"src/lib.rs".to_string()));
+    assert!(diff_search_paths(&search_index, "'added").contains(&"new/script.rs".to_string()));
 
     git::toggle_file_stage(&repo.root, &modified).await?;
     let staged_status = git::load_status_for_path(&repo.root, "src/lib.rs").await?;
@@ -424,6 +438,10 @@ async fn commit_search_blame_and_commit_compare_report_expected_metadata() -> Re
     assert!(rendered.contains("println!(\"two\")"));
     assert!(rendered.contains("println!(\"three\")"));
 
+    let search_index =
+        git::load_diff_search_index_for_commit_compare(&repo.root, &selection).await?;
+    assert!(diff_search_paths(&search_index, "'three").contains(&"src/main.rs".to_string()));
+
     repo.write(
         "src/main.rs",
         "fn main() {\n    println!(\"two\");\n    println!(\"three\");\n    println!(\"working tree\");\n}\n",
@@ -478,6 +496,10 @@ async fn branch_compare_and_ref_listing_cover_diverged_history() -> Result<()> {
         git::load_diff_view_for_branch_compare(&repo.root, &feature_file, &selection, None).await?;
     let rendered = rendered_lines(&mut diff_view, DiffViewMode::Unified, 200).join("\n");
     assert!(rendered.contains("pub fn feature() {}"));
+
+    let search_index =
+        git::load_diff_search_index_for_branch_compare(&repo.root, &selection).await?;
+    assert!(diff_search_paths(&search_index, "'feature").contains(&"feature.rs".to_string()));
 
     Ok(())
 }

@@ -10,6 +10,10 @@ impl App {
         &mut self,
         key_event: KeyEvent,
     ) -> color_eyre::Result<Option<KeyOutcome>> {
+        if self.find_prefix_pending {
+            return self.handle_find_prefix_key(key_event).await;
+        }
+
         match key_event.code {
             KeyCode::Esc if self.diff_text_selection.is_some() => {
                 self.clear_diff_text_selection();
@@ -67,8 +71,9 @@ impl App {
                 self.start_push();
                 handled()
             }
-            KeyCode::Char('f') => {
-                self.open_file_search_modal().await?;
+            KeyCode::Char('f') if key_event.modifiers == KeyModifiers::NONE => {
+                self.find_prefix_pending = true;
+                self.status_message = Some("f: f files, g diff search".to_string());
                 handled()
             }
             KeyCode::Char('c') => {
@@ -115,6 +120,25 @@ impl App {
                 handled()
             }
             _ => Ok(None),
+        }
+    }
+
+    async fn handle_find_prefix_key(
+        &mut self,
+        key_event: KeyEvent,
+    ) -> color_eyre::Result<Option<KeyOutcome>> {
+        self.find_prefix_pending = false;
+        match key_event.code {
+            KeyCode::Esc => handled(),
+            KeyCode::Char('f') if key_event.modifiers == KeyModifiers::NONE => {
+                self.open_file_search_modal().await?;
+                handled()
+            }
+            KeyCode::Char('g') if key_event.modifiers == KeyModifiers::NONE => {
+                self.open_diff_search_modal();
+                handled()
+            }
+            _ => handled(),
         }
     }
 

@@ -27,6 +27,10 @@ impl App {
             return Ok(true);
         }
 
+        if self.handle_diff_search_key(key_event).await? {
+            return Ok(true);
+        }
+
         if self.handle_branch_compare_key(key_event).await? {
             return Ok(true);
         }

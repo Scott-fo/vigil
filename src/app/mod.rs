@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use nucleo_matcher::Matcher;
 use ratatui::widgets::ListState;
@@ -13,6 +13,7 @@ mod clipboard;
 mod commit_modal;
 mod commit_search;
 mod diff;
+mod diff_search;
 mod discard_modal;
 mod editor;
 mod file_search;
@@ -31,13 +32,14 @@ mod worktree;
 
 pub use self::diff::{DiffCacheKey, PreparedDiffViewport};
 use self::diff::{DiffHighlightJob, DiffViewCache, DiffViewport};
+use self::diff_search::DiffSearchNavigationTarget;
 pub use self::launch::AppLaunchOptions;
 use crate::{
     event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{
         self, BlameCommitDetails, BlameTarget, BranchCompareSelection, CommitCompareSelection,
-        CommitSearchEntry, DiffSelectionPoint, DiffView, FileEntry, SharedHighlightRegistry,
-        WorktreeEntry,
+        CommitSearchEntry, DiffSearchIndex, DiffSearchResults, DiffSelectionPoint, DiffView,
+        FileEntry, SharedHighlightRegistry, WorktreeEntry,
     },
     sidebar::SidebarItem,
     theme::ThemeMode,
@@ -162,6 +164,19 @@ pub struct App {
     pub file_search_selected_index: usize,
     pub file_search_initial_path: Option<String>,
     pub file_search_matcher: Matcher,
+    find_prefix_pending: bool,
+    pub diff_search_modal_open: bool,
+    pub diff_search_query: String,
+    pub diff_search_loading: bool,
+    pub diff_search_error: Option<String>,
+    pub diff_search_results: DiffSearchResults,
+    pub diff_search_selected_index: usize,
+    diff_search_index: Option<Arc<DiffSearchIndex>>,
+    diff_search_index_request_id: u64,
+    diff_search_query_request_id: u64,
+    diff_search_load_task: Option<task::JoinHandle<()>>,
+    diff_search_query_task: Option<task::JoinHandle<()>>,
+    pending_diff_search_target: Option<DiffSearchNavigationTarget>,
     pub commit_search_modal_open: bool,
     pub commit_search_query: String,
     pub commit_search_entries: Vec<CommitSearchEntry>,
