@@ -10,7 +10,8 @@ use crate::watcher::RepoWatcher;
 use crate::{
     app::DiffCacheKey,
     git::{
-        BlameCommitDetails, BranchCompareRefs, CommitSearchEntry, DiffView, SharedHighlightRegistry,
+        BlameCommitDetails, BranchCompareRefs, CommitSearchEntry, DiffView,
+        SharedHighlightRegistry, WorktreeEntry,
     },
 };
 
@@ -42,6 +43,7 @@ pub enum Event {
     },
     CommitSearchLoaded(Result<Vec<CommitSearchEntry>, String>),
     BranchCompareLoaded(Result<BranchCompareRefs, String>),
+    WorktreesLoaded(Result<Vec<WorktreeEntry>, String>),
     RepoWatcherReady(PathBuf, Result<RepoWatcher, String>),
     RepoChanged(Vec<PathBuf>),
     RemoteSyncFinished(Result<String, String>),

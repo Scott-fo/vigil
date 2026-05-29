@@ -70,6 +70,10 @@ fn warning_color() -> Color {
     palette().warning
 }
 
+fn success_color() -> Color {
+    palette().success
+}
+
 fn diff_context_color() -> Color {
     palette().diff_context
 }

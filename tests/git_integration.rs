@@ -158,6 +158,59 @@ fn selection_from_commit(file_commit: &vigil::git::CommitSearchEntry) -> CommitC
 }
 
 #[tokio::test]
+async fn worktree_listing_reports_current_branch_and_dirty_state() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("README.md", "hello\n");
+    repo.commit_all("initial state", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    let linked_root = repo.root.with_file_name(format!(
+        "{}-linked",
+        repo.root
+            .file_name()
+            .expect("test repo has a file name")
+            .to_string_lossy()
+    ));
+    if linked_root.exists() {
+        let _ = fs::remove_dir_all(&linked_root);
+    }
+    let linked_root_arg = linked_root.to_string_lossy().to_string();
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature/worktree",
+        &linked_root_arg,
+    ]);
+    fs::write(linked_root.join("feature.txt"), "dirty\n")?;
+
+    let worktrees = git::list_worktrees(&repo.root).await?;
+    let canonical_root = fs::canonicalize(&repo.root)?;
+    let canonical_linked_root = fs::canonicalize(&linked_root)?;
+    let current = worktrees
+        .iter()
+        .find(|entry| entry.path == canonical_root)
+        .expect("current worktree should be listed");
+    let linked = worktrees
+        .iter()
+        .find(|entry| entry.path == canonical_linked_root)
+        .expect("linked worktree should be listed");
+
+    assert_eq!(
+        worktrees.first().map(|entry| &entry.path),
+        Some(&canonical_root)
+    );
+    assert_eq!(current.branch.as_deref(), Some("main"));
+    assert!(!current.dirty);
+    assert_eq!(linked.branch.as_deref(), Some("feature/worktree"));
+    assert!(linked.dirty);
+    assert_eq!(linked.change_count, 1);
+
+    repo.git(&["worktree", "remove", "--force", &linked_root_arg]);
+    Ok(())
+}
+
+#[tokio::test]
 async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()> {
     let repo = TestRepo::init().await?;
     repo.write(".gitignore", "ignored.log\n");

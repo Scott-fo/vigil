@@ -28,6 +28,7 @@ mod branch_compare;
 mod commit_search;
 mod diff;
 mod file_search;
+mod worktree;
 
 pub use self::diff::{DiffCacheKey, PreparedDiffViewport};
 use self::diff::{DiffHighlightJob, DiffViewCache, DiffViewport};
@@ -38,6 +39,7 @@ use crate::{
     git::{
         self, BlameCommitDetails, BlameTarget, BranchCompareSelection, CommitCompareSelection,
         CommitSearchEntry, DiffSelectionPoint, DiffView, FileEntry, SharedHighlightRegistry,
+        WorktreeEntry,
     },
     sidebar::{self, SidebarItem},
     theme::{self, ThemeMode},
@@ -197,6 +199,13 @@ pub struct App {
     pub branch_compare_selected_source_index: usize,
     pub branch_compare_selected_destination_index: usize,
     pub branch_compare_matcher: Matcher,
+    pub worktree_modal_open: bool,
+    pub worktree_loading: bool,
+    pub worktree_error: Option<String>,
+    pub worktree_query: String,
+    pub worktree_entries: Vec<WorktreeEntry>,
+    pub worktree_selected_index: usize,
+    pub worktree_matcher: Matcher,
     pub commit_modal_open: bool,
     pub commit_message: String,
     pub commit_error: Option<String>,
@@ -293,6 +302,13 @@ impl App {
             branch_compare_selected_source_index: 0,
             branch_compare_selected_destination_index: 0,
             branch_compare_matcher: Matcher::new(MatcherConfig::DEFAULT),
+            worktree_modal_open: false,
+            worktree_loading: false,
+            worktree_error: None,
+            worktree_query: String::new(),
+            worktree_entries: Vec::new(),
+            worktree_selected_index: 0,
+            worktree_matcher: Matcher::new(MatcherConfig::DEFAULT),
             commit_modal_open: false,
             commit_message: String::new(),
             commit_error: None,
@@ -524,6 +540,13 @@ impl App {
                         self.redraw(&mut terminal)?;
                     }
                 }
+                Event::WorktreesLoaded(result) => {
+                    self.handle_worktrees_loaded(result);
+
+                    if self.running && self.worktree_modal_open {
+                        self.redraw(&mut terminal)?;
+                    }
+                }
                 Event::RepoWatcherReady(repo_root, result) => {
                     if repo_root == self.repo_root {
                         self.repo_watcher_loading = false;
@@ -746,6 +769,30 @@ impl App {
             return Ok(None);
         }
 
+        if self.worktree_modal_open {
+            match key_event.code {
+                KeyCode::Esc => self.close_worktree_modal(),
+                KeyCode::Enter => {
+                    self.confirm_worktree_selection().await?;
+                }
+                KeyCode::Down | KeyCode::Char('j') => self.move_worktree_selection(1),
+                KeyCode::Up | KeyCode::Char('k') => self.move_worktree_selection(-1),
+                KeyCode::Backspace => {
+                    self.worktree_query.pop();
+                    self.clamp_worktree_selection();
+                }
+                KeyCode::Char(ch)
+                    if !key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key_event.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.worktree_query.push(ch);
+                    self.clamp_worktree_selection();
+                }
+                _ => {}
+            }
+            return Ok(None);
+        }
+
         if self.commit_modal_open {
             match key_event.code {
                 KeyCode::Esc => {
@@ -849,6 +896,9 @@ impl App {
             }
             KeyCode::Char('b') => {
                 self.open_branch_compare_modal();
+            }
+            KeyCode::Char('w') => {
+                self.open_worktree_modal();
             }
             KeyCode::Char('g') => {
                 self.open_commit_search_modal();
@@ -1039,6 +1089,10 @@ impl App {
         }
 
         if self.branch_compare_modal_open {
+            return Ok(());
+        }
+
+        if self.worktree_modal_open {
             return Ok(());
         }
 

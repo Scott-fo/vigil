@@ -6,6 +6,7 @@ mod discard;
 mod file_search;
 mod help;
 mod theme;
+mod worktree;
 
 use ratatui::Frame;
 
@@ -15,7 +16,7 @@ use self::{
     blame::render_blame_modal, branch_compare::render_branch_compare_modal,
     commit::render_commit_modal, commit_search::render_commit_search_modal,
     discard::render_discard_modal, file_search::render_file_search_modal, help::render_help_modal,
-    theme::render_theme_modal,
+    theme::render_theme_modal, worktree::render_worktree_modal,
 };
 
 pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
@@ -41,6 +42,10 @@ pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
 
     if app.branch_compare_modal_open {
         render_branch_compare_modal(frame, app);
+    }
+
+    if app.worktree_modal_open {
+        render_worktree_modal(frame, app);
     }
 
     if app.blame_modal_open {

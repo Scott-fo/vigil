@@ -48,16 +48,16 @@ pub use diff::{
 pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_highlight_registry};
 pub use repo::{
     commit_staged_changes, discard_file_changes, git_output, init_repo, is_file_fully_staged,
-    is_file_staged, list_comparable_refs, list_searchable_commits, load_blame_commit_details,
-    load_branch_compare_refs, load_files_with_branch_diff, load_files_with_commit_diff,
-    load_files_with_status, load_revision_file_bytes, load_status_for_path, pull_from_remote,
-    push_to_remote, resolve_commit_base_ref, resolve_repo_root, resolve_repo_root_from,
-    revision_matches_head, should_refresh_for_paths, stage_all_changes, status_color,
-    toggle_file_stage, unstage_all_changes,
+    is_file_staged, list_comparable_refs, list_searchable_commits, list_worktrees,
+    load_blame_commit_details, load_branch_compare_refs, load_files_with_branch_diff,
+    load_files_with_commit_diff, load_files_with_status, load_revision_file_bytes,
+    load_status_for_path, pull_from_remote, push_to_remote, resolve_commit_base_ref,
+    resolve_repo_root, resolve_repo_root_from, revision_matches_head, should_refresh_for_paths,
+    stage_all_changes, status_color, toggle_file_stage, unstage_all_changes,
 };
 pub use types::{
     BlameCommitDetails, BlameTarget, BranchCompareRefs, BranchCompareSelection,
-    CommitCompareSelection, CommitSearchEntry, FileEntry,
+    CommitCompareSelection, CommitSearchEntry, FileEntry, WorktreeEntry,
 };
 
 pub type SharedHighlightRegistry = Arc<HighlightRegistry>;

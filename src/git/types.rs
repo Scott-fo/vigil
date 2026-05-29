@@ -54,3 +54,15 @@ pub struct BranchCompareRefs {
     pub refs: Vec<String>,
     pub current_ref: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeEntry {
+    pub path: std::path::PathBuf,
+    pub head: Option<String>,
+    pub branch: Option<String>,
+    pub detached: bool,
+    pub bare: bool,
+    pub prunable: bool,
+    pub dirty: bool,
+    pub change_count: usize,
+}

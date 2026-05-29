@@ -11,11 +11,11 @@ use crate::theme;
 
 use super::{
     BlameCommitDetails, BlameTarget, BranchCompareRefs, BranchCompareSelection,
-    CommitCompareSelection, CommitSearchEntry, EMPTY_TREE_HASH, FileEntry,
+    CommitCompareSelection, CommitSearchEntry, EMPTY_TREE_HASH, FileEntry, WorktreeEntry,
     parse::{
         build_branch_diff_range, is_uncommitted_blame_hash, parse_blame_porcelain_header,
         parse_commit_log_entries, parse_commit_show_output, parse_diff_name_status_entries,
-        parse_status_entries, to_file_entry,
+        parse_status_entries, parse_worktree_entries, to_file_entry,
     },
 };
 
@@ -49,6 +49,9 @@ pub fn status_color(status: &str) -> ratatui::style::Color {
     }
     if status.contains('R') || status.contains('C') {
         return palette.secondary;
+    }
+    if status.contains('A') {
+        return palette.success;
     }
     if status.contains('M') {
         return palette.warning;
@@ -307,6 +310,42 @@ pub async fn load_branch_compare_refs(repo_root: &Path) -> color_eyre::Result<Br
         refs: list_comparable_refs(repo_root).await?,
         current_ref: resolve_current_branch_ref(repo_root).await?,
     })
+}
+
+pub async fn list_worktrees(repo_root: &Path) -> color_eyre::Result<Vec<WorktreeEntry>> {
+    let output = git_output(repo_root, &["worktree", "list", "--porcelain", "-z"]).await?;
+    let mut entries = parse_worktree_entries(&output);
+    let current_root = fs::canonicalize(repo_root)
+        .await
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+
+    for entry in &mut entries {
+        if entry.bare || entry.prunable {
+            continue;
+        }
+
+        let status_output = git_output(
+            &entry.path,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .await?;
+        entry.change_count = parse_status_entries(&status_output)
+            .into_iter()
+            .filter(|status| status.status != "!!")
+            .count();
+        entry.dirty = entry.change_count > 0;
+    }
+
+    entries.sort_by(|a, b| {
+        let a_current = a.path == repo_root || a.path == current_root;
+        let b_current = b.path == repo_root || b.path == current_root;
+        b_current
+            .cmp(&a_current)
+            .then_with(|| a.branch.cmp(&b.branch))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
+    Ok(entries)
 }
 
 pub async fn load_files_with_branch_diff(
@@ -580,4 +619,15 @@ async fn git_check_ignored(
         .filter(|path| !path.is_empty())
         .map(ToOwned::to_owned)
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_color_treats_added_files_as_success() {
+        assert_eq!(status_color("A "), theme::active_palette().success);
+        assert_eq!(status_color("??"), theme::active_palette().success);
+    }
 }
