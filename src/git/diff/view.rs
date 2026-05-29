@@ -5,7 +5,8 @@ use super::super::{
     highlight::{HighlightRegistry, SyntaxToken},
 };
 use super::{
-    DiffDisplayCache, MergeConflictMarkerRowType, ParseMergeConflictDiffFromFileResult,
+    DiffDisplayCache, MergeConflictLabels, MergeConflictMarkerRowType,
+    ParseMergeConflictDiffFromFileResult,
     rows::{append_file_diff_rows_with_conflicts, build_diff_rows},
 };
 
@@ -125,8 +126,12 @@ pub fn build_diff_view_from_preview_data(
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
     if let Some(merge_conflict) = &preview.merge_conflict {
-        let mut diff_view =
-            build_merge_conflict_diff_view(merge_conflict, file.filetype, preview.note.clone());
+        let mut diff_view = build_merge_conflict_diff_view(
+            merge_conflict,
+            file.filetype,
+            preview.merge_conflict_labels.as_ref(),
+            preview.note.clone(),
+        );
         if let Some(registry) = highlight_registry {
             diff_view.apply_syntax_highlighting(file.filetype, registry);
         }
@@ -166,14 +171,24 @@ pub fn build_diff_view_from_preview_data(
 pub fn build_merge_conflict_diff_view(
     merge_conflict: &ParseMergeConflictDiffFromFileResult,
     _filetype: Option<&'static str>,
+    labels: Option<&MergeConflictLabels>,
     note: Option<String>,
 ) -> DiffView {
     let mut rows = Vec::new();
     let mut hunks = Vec::new();
+    let default_labels;
+    let labels = match labels {
+        Some(labels) => labels,
+        None => {
+            default_labels = MergeConflictLabels::default();
+            &default_labels
+        }
+    };
     append_file_diff_rows_with_conflicts(
         &merge_conflict.file_diff,
         &merge_conflict.actions,
         &merge_conflict.marker_rows,
+        labels,
         &mut rows,
         &mut hunks,
     );
@@ -235,6 +250,7 @@ pub struct DiffPreviewData {
     pub(super) new_file_lines: Option<Vec<String>>,
     pub(super) new_file_source: Option<Arc<str>>,
     pub(super) merge_conflict: Option<ParseMergeConflictDiffFromFileResult>,
+    pub(super) merge_conflict_labels: Option<MergeConflictLabels>,
 }
 
 impl DiffPreviewData {
@@ -253,19 +269,22 @@ impl DiffPreviewData {
             new_file_lines,
             new_file_source,
             merge_conflict: None,
+            merge_conflict_labels: None,
         }
     }
 
     pub(super) fn from_merge_conflict(
         merge_conflict: ParseMergeConflictDiffFromFileResult,
+        labels: MergeConflictLabels,
     ) -> Self {
         Self {
             diff: String::new(),
-            note: Some("Merge conflict: use 1 current, 2 incoming, 3 both.".to_string()),
+            note: None,
             old_file_source: None,
             new_file_lines: None,
             new_file_source: None,
             merge_conflict: Some(merge_conflict),
+            merge_conflict_labels: Some(labels),
         }
     }
 }

@@ -59,16 +59,16 @@ impl App {
                 self.reset_to_working_tree().await?;
                 handled()
             }
-            KeyCode::Char('p') if key_event.modifiers == KeyModifiers::CONTROL => {
-                self.start_pull();
-                handled()
-            }
             KeyCode::Char('p') => {
-                self.open_file_search_modal().await?;
+                self.start_pull();
                 handled()
             }
             KeyCode::Char('P') => {
                 self.start_push();
+                handled()
+            }
+            KeyCode::Char('f') => {
+                self.open_file_search_modal().await?;
                 handled()
             }
             KeyCode::Char('c') => {
@@ -96,6 +96,10 @@ impl App {
             }
             KeyCode::Char('b') => {
                 self.open_branch_compare_modal();
+                handled()
+            }
+            KeyCode::Char('m') => {
+                self.open_branch_merge_modal();
                 handled()
             }
             KeyCode::Char('w') => {

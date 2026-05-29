@@ -5,6 +5,7 @@ mod command;
 mod commit;
 mod diff;
 mod highlight;
+mod merge;
 mod parse;
 mod refs;
 mod repo;
@@ -59,6 +60,7 @@ pub use diff::{
     process_patch, resolve_conflict, resolve_merge_conflict_contents, trim_patch_context,
 };
 pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_highlight_registry};
+pub use merge::prepare_branch_merge;
 pub use refs::{list_comparable_refs, load_branch_compare_refs, load_files_with_branch_diff};
 pub use repo::{
     init_repo, load_revision_file_bytes, pull_from_remote, push_to_remote, resolve_repo_root,
@@ -71,8 +73,8 @@ pub use status::{
     unstage_all_changes,
 };
 pub use types::{
-    BlameCommitDetails, BlameTarget, BranchCompareRefs, BranchCompareSelection,
-    CommitCompareSelection, CommitSearchEntry, FileEntry, WorktreeEntry,
+    BlameCommitDetails, BlameTarget, BranchCompareRefs, BranchCompareSelection, BranchMergeOutcome,
+    BranchMergeRequest, CommitCompareSelection, CommitSearchEntry, FileEntry, WorktreeEntry,
 };
 pub use worktree::list_worktrees;
 

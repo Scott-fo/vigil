@@ -1,5 +1,6 @@
 mod blame;
 mod branch_compare;
+mod branch_merge;
 mod commit;
 mod commit_search;
 mod discard;
@@ -16,9 +17,10 @@ use crate::app::App;
 
 use self::{
     blame::render_blame_modal, branch_compare::render_branch_compare_modal,
-    commit::render_commit_modal, commit_search::render_commit_search_modal,
-    discard::render_discard_modal, file_search::render_file_search_modal, help::render_help_modal,
-    theme::render_theme_modal, worktree::render_worktree_modal,
+    branch_merge::render_branch_merge_modal, commit::render_commit_modal,
+    commit_search::render_commit_search_modal, discard::render_discard_modal,
+    file_search::render_file_search_modal, help::render_help_modal, theme::render_theme_modal,
+    worktree::render_worktree_modal,
 };
 
 pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
@@ -44,6 +46,10 @@ pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
 
     if app.branch_compare_modal_open {
         render_branch_compare_modal(frame, app);
+    }
+
+    if app.branch_merge_target.is_some() {
+        render_branch_merge_modal(frame, app);
     }
 
     if app.worktree_modal_open {

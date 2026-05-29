@@ -1705,17 +1705,14 @@ fn merge_conflict_diff_view_maps_selected_rows_to_conflict_index() {
         6,
     )
     .unwrap();
-    let mut view = build_merge_conflict_diff_view(&parsed, None, None);
+    let mut view = build_merge_conflict_diff_view(&parsed, None, None, None);
     let rendered = view.rendered_lines(DiffViewMode::Unified, 120).to_vec();
     let rows = render_lines_to_strings(rendered, 120);
 
-    assert!(
-        rows.iter()
-            .any(|row| row.contains("1 Accept current change"))
-    );
+    assert!(rows.iter().any(|row| row.contains("1 Accept current")));
     assert!(rows.iter().any(|row| row.contains("<<<<<<< HEAD")));
-    assert!(rows.iter().any(|row| row.contains("Current Change")));
-    assert!(rows.iter().any(|row| row.contains("Incoming Change")));
+    assert!(rows.iter().any(|row| row.contains("(current)")));
+    assert!(rows.iter().any(|row| row.contains("(incoming)")));
     assert_eq!(
         view.selected_conflict_index(DiffViewMode::Unified, 120, 2),
         Some(0)
@@ -1723,6 +1720,49 @@ fn merge_conflict_diff_view_maps_selected_rows_to_conflict_index() {
     assert_eq!(
         view.selected_conflict_index(DiffViewMode::Unified, 120, 4),
         Some(0)
+    );
+}
+
+#[test]
+fn merge_conflict_diff_view_uses_branch_labels_for_resolution_rows() {
+    let parsed = parse_merge_conflict_diff_from_file(
+        &FileContents {
+            name: "conflict.txt".to_string(),
+            contents: [
+                "before\n",
+                "<<<<<<< HEAD\n",
+                "ours\n",
+                "=======\n",
+                "theirs\n",
+                ">>>>>>> feature/really-long-branch-name-for-review-ui\n",
+                "after\n",
+            ]
+            .concat(),
+            lang: None,
+            header: None,
+            cache_key: None,
+        },
+        6,
+    )
+    .unwrap();
+    let labels = MergeConflictLabels {
+        current: "main".to_string(),
+        incoming: "feature/really-long-branch-name-for-review-ui".to_string(),
+    };
+    let mut view = build_merge_conflict_diff_view(&parsed, None, Some(&labels), None);
+    let rendered = view.rendered_lines(DiffViewMode::Unified, 120).to_vec();
+    let rows = render_lines_to_strings(rendered, 120);
+
+    assert!(rows.iter().any(|row| row.contains("1 Accept main")));
+    assert!(rows.iter().any(|row| row.contains("<<<<<<< HEAD (main)")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("feature/really...e-for-review-ui"))
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("feature/really-long-branch-name-for-review-ui)"))
     );
 }
 

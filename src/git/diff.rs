@@ -61,7 +61,7 @@ pub use self::model::{
     FileIterationOptions, FileLine, GapExpandDirection, Hunk, HunkContent, HunkData,
     HunkDataExpandable, HunkLineType, HunkSeparatorKind, LineAnnotation, LineAnnotationName,
     LineDiffType, LineEndingType, MergeConflictActionAnchor, MergeConflictActionSlotInput,
-    MergeConflictDiffAction, MergeConflictLineType, MergeConflictMarkerLines,
+    MergeConflictDiffAction, MergeConflictLabels, MergeConflictLineType, MergeConflictMarkerLines,
     MergeConflictMarkerRow, MergeConflictMarkerRowType, MergeConflictParseResult,
     MergeConflictRegion, MergeConflictResolution, ParseDiffOptions,
     ParseMergeConflictDiffFromFileResult, ParsedLine, ParsedPatch, PreNodeType,
