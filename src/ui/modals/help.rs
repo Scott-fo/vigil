@@ -32,6 +32,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         key_line("r", "refresh"),
         key_line("g", "open commit search"),
         key_line("b", "open branch compare"),
+        key_line("m", "merge compared branches"),
         key_line("w", "open worktree picker"),
         key_line("t", "open theme picker"),
         key_line("Ctrl-L", "reset compare mode"),

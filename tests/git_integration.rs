@@ -9,8 +9,8 @@ use color_eyre::Result;
 use vigil::{
     app::DiffViewMode,
     git::{
-        self, BlameTarget, BranchCompareSelection, CommitCompareSelection, DiffView,
-        EMPTY_TREE_HASH, FileEntry,
+        self, BlameTarget, BranchCompareSelection, BranchMergeOutcome, BranchMergeRequest,
+        CommitCompareSelection, DiffView, EMPTY_TREE_HASH, FileEntry,
     },
 };
 
@@ -74,6 +74,15 @@ impl TestRepo {
 
     fn git(&self, args: &[&str]) -> String {
         self.git_with_env(args, &[])
+    }
+
+    fn try_git(&self, args: &[&str]) -> std::process::Output {
+        Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(args)
+            .output()
+            .unwrap_or_else(|error| panic!("failed to run git {args:?}: {error}"))
     }
 
     fn git_with_env(&self, args: &[&str], envs: &[(&str, &str)]) -> String {
@@ -523,6 +532,121 @@ async fn branch_compare_exact_highlighting_uses_merge_base_and_source_content() 
     assert!(
         split.contains(feature_line),
         "exact highlighting should preserve the feature-side text in split mode:\n{split}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn branch_merge_prepares_clean_merge_on_destination_branch() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("shared.txt", "base\n");
+    repo.commit_all("base", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    repo.checkout_new_branch("feature");
+    repo.write("feature.txt", "feature work\n");
+    repo.commit_all("feature work", "2024-01-02T00:00:00+0000");
+
+    let request = BranchMergeRequest {
+        source_ref: "feature".to_string(),
+        destination_ref: "main".to_string(),
+    };
+    let outcome = git::prepare_branch_merge(&repo.root, &request).await?;
+
+    assert_eq!(
+        outcome,
+        BranchMergeOutcome::Prepared {
+            source_ref: "feature".to_string(),
+            destination_ref: "main".to_string(),
+        }
+    );
+    assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "main");
+    assert!(
+        !repo
+            .git(&["rev-parse", "--verify", "MERGE_HEAD"])
+            .is_empty()
+    );
+
+    let status = git::load_working_tree_status(&repo.root).await?;
+    let feature_file = find_file(&status.files, "feature.txt");
+    assert_eq!(feature_file.status, "A ");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn branch_merge_conflicts_render_source_and_destination_names() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("shared.txt", "base\n");
+    repo.commit_all("base", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    repo.checkout_new_branch("feature");
+    repo.write("shared.txt", "feature\n");
+    repo.commit_all("feature work", "2024-01-02T00:00:00+0000");
+
+    repo.checkout("main");
+    repo.write("shared.txt", "main\n");
+    repo.commit_all("main work", "2024-01-03T00:00:00+0000");
+
+    let request = BranchMergeRequest {
+        source_ref: "feature".to_string(),
+        destination_ref: "main".to_string(),
+    };
+    let outcome = git::prepare_branch_merge(&repo.root, &request).await?;
+
+    assert_eq!(
+        outcome,
+        BranchMergeOutcome::Conflicted {
+            source_ref: "feature".to_string(),
+            destination_ref: "main".to_string(),
+        }
+    );
+
+    let status = git::load_working_tree_status(&repo.root).await?;
+    let conflicted_file = find_file(&status.files, "shared.txt");
+    assert_eq!(conflicted_file.status, "UU");
+
+    let mut diff_view =
+        git::load_diff_view_for_working_tree(&repo.root, &conflicted_file, None).await?;
+    let rendered = rendered_lines(&mut diff_view, DiffViewMode::Unified, 200).join("\n");
+    assert!(rendered.contains("1 Accept main"));
+    assert!(rendered.contains("2 Accept feature"));
+    assert!(rendered.contains("<<<<<<< HEAD (main)"));
+    assert!(rendered.contains(">>>>>>> feature"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn branch_merge_refuses_dirty_working_tree() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("shared.txt", "base\n");
+    repo.commit_all("base", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    repo.checkout_new_branch("feature");
+    repo.write("feature.txt", "feature work\n");
+    repo.commit_all("feature work", "2024-01-02T00:00:00+0000");
+
+    repo.checkout("main");
+    repo.write("dirty.txt", "uncommitted\n");
+
+    let request = BranchMergeRequest {
+        source_ref: "feature".to_string(),
+        destination_ref: "main".to_string(),
+    };
+    let error = git::prepare_branch_merge(&repo.root, &request)
+        .await
+        .expect_err("dirty working tree should prevent merge");
+
+    assert!(error.to_string().contains("working tree must be clean"));
+    assert!(
+        !repo
+            .try_git(&["rev-parse", "--verify", "MERGE_HEAD"])
+            .status
+            .success()
     );
 
     Ok(())

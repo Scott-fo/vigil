@@ -98,6 +98,10 @@ impl App {
                 self.open_branch_compare_modal();
                 handled()
             }
+            KeyCode::Char('m') => {
+                self.open_branch_merge_modal();
+                handled()
+            }
             KeyCode::Char('w') => {
                 self.open_worktree_modal();
                 handled()

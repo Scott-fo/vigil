@@ -28,6 +28,32 @@ async fn global_shortcuts_use_f_for_file_search_and_p_for_pull() {
 }
 
 #[tokio::test]
+async fn global_merge_shortcut_opens_branch_merge_confirmation() {
+    let mut app = build_test_app();
+    app.review_mode = ReviewMode::BranchCompare(BranchCompareSelection {
+        source_ref: "feature/login".to_string(),
+        destination_ref: "main".to_string(),
+    });
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    let target = app
+        .branch_merge_target
+        .as_ref()
+        .expect("merge target should be selected from branch compare mode");
+    assert_eq!(target.source_ref, "feature/login");
+    assert_eq!(target.destination_ref, "main");
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(app.branch_merge_target.is_none());
+}
+
+#[tokio::test]
 async fn launch_returns_with_empty_first_paint_state() {
     let mut app = App::new(AppLaunchOptions {
         repo_root: Some(PathBuf::from("/tmp/vigil-app-tests")),
