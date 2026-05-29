@@ -1,5 +1,9 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use tokio::task;
 
+use super::input::is_plain_text_key;
+use super::navigation::{clamp_index, move_index};
 use super::*;
 
 struct CommitSearchCandidate {
@@ -14,6 +18,46 @@ impl AsRef<str> for CommitSearchCandidate {
 }
 
 impl App {
+    pub(super) async fn handle_commit_search_key(
+        &mut self,
+        key_event: KeyEvent,
+    ) -> color_eyre::Result<bool> {
+        if !self.commit_search_modal_open {
+            return Ok(false);
+        }
+
+        match key_event.code {
+            KeyCode::Esc => {
+                self.close_commit_search_modal();
+            }
+            KeyCode::Enter => {
+                if let Some(commit) = self.selected_commit_search_entry() {
+                    self.enter_commit_compare(commit).await?;
+                }
+                self.close_commit_search_modal();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_commit_search_selection(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_commit_search_selection(-1);
+            }
+            KeyCode::Backspace => {
+                self.commit_search_query.pop();
+                self.clamp_commit_search_selection();
+                self.commit_search_error = None;
+            }
+            KeyCode::Char(ch) if is_plain_text_key(key_event) => {
+                self.commit_search_query.push(ch);
+                self.clamp_commit_search_selection();
+                self.commit_search_error = None;
+            }
+            _ => {}
+        }
+
+        Ok(true)
+    }
+
     pub(super) fn handle_commit_search_loaded(
         &mut self,
         result: Result<Vec<CommitSearchEntry>, String>,
@@ -92,26 +136,14 @@ impl App {
 
     pub(super) fn clamp_commit_search_selection(&mut self) {
         let filtered_len = self.filtered_commit_search_indices().len();
-        self.commit_search_selected_index = self
-            .commit_search_selected_index
-            .min(filtered_len.saturating_sub(1));
+        self.commit_search_selected_index =
+            clamp_index(self.commit_search_selected_index, filtered_len);
     }
 
     pub(super) fn move_commit_search_selection(&mut self, delta: i32) {
         let filtered_len = self.filtered_commit_search_indices().len();
-        if filtered_len == 0 {
-            self.commit_search_selected_index = 0;
-            return;
-        }
-
-        let current = self.commit_search_selected_index.min(filtered_len - 1);
-        let next = if delta.is_negative() {
-            current.saturating_sub(delta.unsigned_abs() as usize)
-        } else {
-            current.saturating_add(delta as usize)
-        }
-        .min(filtered_len - 1);
-        self.commit_search_selected_index = next;
+        self.commit_search_selected_index =
+            move_index(self.commit_search_selected_index, filtered_len, delta);
     }
 
     pub(super) fn selected_commit_search_entry(&mut self) -> Option<CommitSearchEntry> {
@@ -136,43 +168,4 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn build_test_app() -> App {
-        App::new_for_benchmarks(PathBuf::from("/tmp/vigil-app-tests"))
-    }
-
-    fn build_commit_entry(hash: &str, short_hash: &str, subject: &str) -> CommitSearchEntry {
-        CommitSearchEntry {
-            hash: hash.to_string(),
-            short_hash: short_hash.to_string(),
-            parent_hashes: vec!["parent".to_string()],
-            author: "Author".to_string(),
-            date: "2026-03-24".to_string(),
-            subject: subject.to_string(),
-        }
-    }
-
-    #[test]
-    fn commit_search_filter_and_clamp_follow_filtered_entries() {
-        let mut app = build_test_app();
-        app.commit_search_entries = vec![
-            build_commit_entry("aaaaaaaa", "aaaaaaa", "initial import"),
-            build_commit_entry("bbbbbbbb", "bbbbbbb", "refactor parser"),
-            build_commit_entry("cccccccc", "ccccccc", "fix renderer"),
-        ];
-        app.commit_search_query = "parser".to_string();
-
-        assert_eq!(app.filtered_commit_search_indices(), vec![1]);
-
-        app.commit_search_selected_index = 99;
-        app.clamp_commit_search_selection();
-        assert_eq!(app.commit_search_selected_index, 0);
-        assert_eq!(
-            app.selected_commit_search_entry()
-                .map(|entry| entry.subject),
-            Some("refactor parser".to_string())
-        );
-    }
-}
+mod tests;

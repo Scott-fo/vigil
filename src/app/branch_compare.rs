@@ -1,8 +1,42 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use tokio::task;
 
+use super::input::is_plain_text_key;
+use super::navigation::move_index;
 use super::*;
 
 impl App {
+    pub(super) async fn handle_branch_compare_key(
+        &mut self,
+        key_event: KeyEvent,
+    ) -> color_eyre::Result<bool> {
+        if !self.branch_compare_modal_open {
+            return Ok(false);
+        }
+
+        match key_event.code {
+            KeyCode::Esc => self.close_branch_compare_modal(),
+            KeyCode::Tab => self.toggle_branch_compare_field(),
+            KeyCode::Enter => {
+                self.confirm_branch_compare().await?;
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.move_branch_compare_selection(1),
+            KeyCode::Up | KeyCode::Char('k') => self.move_branch_compare_selection(-1),
+            KeyCode::Backspace => {
+                self.active_branch_compare_query_mut().pop();
+                self.sync_branch_compare_selection_after_query_change();
+            }
+            KeyCode::Char(ch) if is_plain_text_key(key_event) => {
+                self.active_branch_compare_query_mut().push(ch);
+                self.sync_branch_compare_selection_after_query_change();
+            }
+            _ => {}
+        }
+
+        Ok(true)
+    }
+
     pub(super) fn handle_branch_compare_loaded(
         &mut self,
         result: Result<git::BranchCompareRefs, String>,
@@ -194,13 +228,7 @@ impl App {
             BranchCompareField::Destination => &mut self.branch_compare_destination_ref,
         };
 
-        let base_index = (*current_index).min(filtered.len() - 1);
-        let next_index = if delta.is_negative() {
-            base_index.saturating_sub(delta.unsigned_abs() as usize)
-        } else {
-            base_index.saturating_add(delta as usize)
-        }
-        .min(filtered.len() - 1);
+        let next_index = move_index(*current_index, filtered.len(), delta);
 
         *current_index = next_index;
         *current_ref = filtered.get(next_index).cloned();
@@ -223,74 +251,4 @@ fn resolve_default_destination_ref(refs: &[String], source_ref: Option<&str>) ->
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn build_test_app() -> App {
-        App::new_for_benchmarks(PathBuf::from("/tmp/vigil-app-tests"))
-    }
-
-    #[test]
-    fn seed_branch_compare_selection_prefers_current_branch_for_source() {
-        let mut app = build_test_app();
-        app.branch_compare_available_refs = vec![
-            "feature/refactor".to_string(),
-            "main".to_string(),
-            "master".to_string(),
-        ];
-
-        app.seed_branch_compare_selection(Some("main"));
-
-        assert_eq!(app.branch_compare_source_ref.as_deref(), Some("main"));
-        assert_eq!(
-            app.branch_compare_destination_ref.as_deref(),
-            Some("master")
-        );
-        assert_eq!(app.branch_compare_selected_source_index, 1);
-        assert_eq!(app.branch_compare_selected_destination_index, 0);
-    }
-
-    #[test]
-    fn seed_branch_compare_selection_falls_back_to_first_ref_without_current_branch() {
-        let mut app = build_test_app();
-        app.branch_compare_available_refs = vec![
-            "feature/refactor".to_string(),
-            "master".to_string(),
-            "main".to_string(),
-        ];
-
-        app.seed_branch_compare_selection(None);
-
-        assert_eq!(
-            app.branch_compare_source_ref.as_deref(),
-            Some("feature/refactor")
-        );
-        assert!(matches!(
-            app.branch_compare_destination_ref.as_deref(),
-            Some("main" | "master")
-        ));
-        assert_eq!(app.branch_compare_selected_source_index, 0);
-        assert_eq!(app.branch_compare_selected_destination_index, 0);
-    }
-
-    #[test]
-    fn branch_compare_query_change_preserves_matching_selection() {
-        let mut app = build_test_app();
-        app.branch_compare_available_refs = vec![
-            "feature/refactor".to_string(),
-            "release/1.0".to_string(),
-            "main".to_string(),
-        ];
-        app.branch_compare_active_field = BranchCompareField::Source;
-        app.branch_compare_source_ref = Some("release/1.0".to_string());
-        app.branch_compare_source_query = "release".to_string();
-
-        app.sync_branch_compare_selection_after_query_change();
-
-        assert_eq!(
-            app.branch_compare_source_ref.as_deref(),
-            Some("release/1.0")
-        );
-        assert_eq!(app.branch_compare_selected_source_index, 0);
-    }
-}
+mod tests;

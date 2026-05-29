@@ -1,3 +1,8 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+
+use super::input::is_plain_text_key;
+use super::navigation::move_index;
 use super::*;
 
 struct FileSearchCandidate {
@@ -12,6 +17,41 @@ impl AsRef<str> for FileSearchCandidate {
 }
 
 impl App {
+    pub(super) async fn handle_file_search_key(
+        &mut self,
+        key_event: KeyEvent,
+    ) -> color_eyre::Result<bool> {
+        if !self.file_search_modal_open {
+            return Ok(false);
+        }
+
+        match key_event.code {
+            KeyCode::Esc => {
+                self.cancel_file_search_modal().await?;
+            }
+            KeyCode::Enter => {
+                self.confirm_file_search_modal();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_file_search_selection(1).await?;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_file_search_selection(-1).await?;
+            }
+            KeyCode::Backspace => {
+                self.file_search_query.pop();
+                self.sync_file_search_selection_after_query_change().await?;
+            }
+            KeyCode::Char(ch) if is_plain_text_key(key_event) => {
+                self.file_search_query.push(ch);
+                self.sync_file_search_selection_after_query_change().await?;
+            }
+            _ => {}
+        }
+
+        Ok(true)
+    }
+
     pub(super) async fn open_file_search_modal(&mut self) -> color_eyre::Result<()> {
         if self.file_search_modal_open {
             return Ok(());
@@ -99,19 +139,8 @@ impl App {
         delta: i32,
     ) -> color_eyre::Result<()> {
         let filtered_len = self.filtered_file_search_indices().len();
-        if filtered_len == 0 {
-            self.file_search_selected_index = 0;
-            return Ok(());
-        }
-
-        let current = self.file_search_selected_index.min(filtered_len - 1);
-        let next = if delta.is_negative() {
-            current.saturating_sub(delta.unsigned_abs() as usize)
-        } else {
-            current.saturating_add(delta as usize)
-        }
-        .min(filtered_len - 1);
-        self.file_search_selected_index = next;
+        self.file_search_selected_index =
+            move_index(self.file_search_selected_index, filtered_len, delta);
         self.preview_file_search_selection().await
     }
 
@@ -132,62 +161,4 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::*;
-
-    fn build_test_app() -> App {
-        let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-app-tests"));
-        app.files = vec![
-            FileEntry {
-                status: "M ".to_string(),
-                path: "src/app/mod.rs".to_string(),
-                label: "mod.rs".to_string(),
-                filetype: Some("rust"),
-            },
-            FileEntry {
-                status: "A ".to_string(),
-                path: "src/ui/sidebar.rs".to_string(),
-                label: "sidebar.rs".to_string(),
-                filetype: Some("rust"),
-            },
-        ];
-        app.rebuild_sidebar_items();
-        app
-    }
-
-    #[test]
-    fn file_search_filters_by_path_fragments() {
-        let mut app = build_test_app();
-        app.file_search_query = "side".to_string();
-
-        assert_eq!(app.filtered_file_search_indices(), vec![1]);
-    }
-
-    #[tokio::test]
-    async fn cancelling_file_search_restores_initial_selection() {
-        let mut app = build_test_app();
-        app.open_file_search_modal()
-            .await
-            .expect("modal should open");
-        app.move_file_search_selection(1)
-            .await
-            .expect("selection should preview");
-
-        assert_eq!(
-            app.selected_file().map(|file| file.path.as_str()),
-            Some("src/ui/sidebar.rs")
-        );
-
-        app.cancel_file_search_modal()
-            .await
-            .expect("cancel should restore");
-
-        assert_eq!(
-            app.selected_file().map(|file| file.path.as_str()),
-            Some("src/app/mod.rs")
-        );
-        assert!(!app.file_search_modal_open);
-    }
-}
+mod tests;

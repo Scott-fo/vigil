@@ -4,37 +4,25 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
-        Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
     },
 };
 
 use crate::app::App;
 
-use super::super::layout::centered_rect;
 use super::super::{
     border_active_color, border_color, diff_context_color, error_color, panel_color, primary_color,
     text_color, text_muted_color, warning_color,
 };
+use super::frame::render_modal_frame;
 
 pub(super) fn render_blame_modal(frame: &mut Frame, app: &mut App) {
-    let area = centered_rect(86, 20, frame.area());
-    frame.render_widget(Clear, area);
-
     let title = app
         .blame_target
         .as_ref()
-        .map(|target| format!(" Blame {}:{} ", target.file_path, target.line_number))
-        .unwrap_or_else(|| " Blame ".to_string());
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().fg(border_active_color()))
-        .style(Style::new().bg(panel_color()))
-        .title(Line::from(Span::styled(
-            title,
-            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
-        )));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+        .map(|target| format!("Blame {}:{}", target.file_path, target.line_number))
+        .unwrap_or_else(|| "Blame".to_string());
+    let inner = render_modal_frame(frame, 86, 20, title);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)

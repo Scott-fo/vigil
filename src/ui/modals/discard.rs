@@ -1,33 +1,21 @@
 use ratatui::{
     Frame,
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::app::App;
 
-use super::super::layout::centered_rect;
-use super::super::{error_color, panel_color, text_color, text_muted_color, warning_color};
+use super::super::{panel_color, text_color, text_muted_color, warning_color};
+use super::frame::render_danger_modal_frame;
 
 pub(super) fn render_discard_modal(frame: &mut Frame, app: &App) {
     let Some(file) = app.discard_target.as_ref() else {
         return;
     };
 
-    let area = centered_rect(72, 9, frame.area());
-    frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().fg(error_color()))
-        .style(Style::new().bg(panel_color()))
-        .title(Line::from(Span::styled(
-            " Discard File Changes? ",
-            Style::new().fg(error_color()).add_modifier(Modifier::BOLD),
-        )));
-    let inner = block.inner(area);
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
+    let inner = render_danger_modal_frame(frame, 72, 9, "Discard File Changes?");
 
     let text = vec![
         Line::from(Span::styled(

@@ -4,7 +4,9 @@ mod commit;
 mod commit_search;
 mod discard;
 mod file_search;
+mod frame;
 mod help;
+mod list;
 mod theme;
 mod worktree;
 

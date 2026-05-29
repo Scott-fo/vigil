@@ -1,11 +1,22 @@
 use std::sync::Arc;
 
+mod changed_files;
+mod command;
+mod commit;
 mod diff;
 mod highlight;
 mod parse;
+mod refs;
 mod repo;
+mod status;
 mod types;
+mod worktree;
 
+pub use command::git_output;
+pub use commit::{
+    commit_staged_changes, list_searchable_commits, load_blame_commit_details,
+    load_files_with_commit_diff, resolve_commit_base_ref,
+};
 pub use diff::{
     ChangeType, CodeColumnType, CodeOverflow, DiffHunkResolution, DiffIconType, DiffIndicators,
     DiffIterationOptions, DiffLine, DiffLineAnnotation, DiffLineMetadata, DiffLineType,
@@ -46,19 +57,21 @@ pub use diff::{
     process_patch, resolve_conflict, resolve_merge_conflict_contents, trim_patch_context,
 };
 pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_highlight_registry};
+pub use refs::{list_comparable_refs, load_branch_compare_refs, load_files_with_branch_diff};
 pub use repo::{
-    commit_staged_changes, discard_file_changes, git_output, init_repo, is_file_fully_staged,
-    is_file_staged, list_comparable_refs, list_searchable_commits, list_worktrees,
-    load_blame_commit_details, load_branch_compare_refs, load_files_with_branch_diff,
-    load_files_with_commit_diff, load_files_with_status, load_revision_file_bytes,
-    load_status_for_path, pull_from_remote, push_to_remote, resolve_commit_base_ref,
-    resolve_repo_root, resolve_repo_root_from, revision_matches_head, should_refresh_for_paths,
-    stage_all_changes, status_color, toggle_file_stage, unstage_all_changes,
+    init_repo, load_revision_file_bytes, pull_from_remote, push_to_remote, resolve_repo_root,
+    resolve_repo_root_from, revision_matches_head,
+};
+pub use status::{
+    discard_file_changes, is_file_fully_staged, is_file_staged, load_files_with_status,
+    load_status_for_path, should_refresh_for_paths, stage_all_changes, status_color,
+    toggle_file_stage, unstage_all_changes,
 };
 pub use types::{
     BlameCommitDetails, BlameTarget, BranchCompareRefs, BranchCompareSelection,
     CommitCompareSelection, CommitSearchEntry, FileEntry, WorktreeEntry,
 };
+pub use worktree::list_worktrees;
 
 pub type SharedHighlightRegistry = Arc<HighlightRegistry>;
 pub const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";

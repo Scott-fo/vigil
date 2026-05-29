@@ -2,28 +2,16 @@ use ratatui::{
     Frame,
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Padding, Paragraph},
+    widgets::{Block, Padding, Paragraph},
 };
 
 use crate::app::{ActivePane, App};
 
-use super::super::layout::centered_rect;
-use super::super::{border_active_color, panel_color, primary_color, text_color, text_muted_color};
+use super::super::{panel_color, primary_color, text_color, text_muted_color};
+use super::frame::render_modal_frame;
 
 pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
-    let area = centered_rect(76, 22, frame.area());
-    frame.render_widget(Clear, area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().fg(border_active_color()))
-        .style(Style::new().bg(panel_color()))
-        .title(Line::from(Span::styled(
-            " Help ",
-            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
-        )));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = render_modal_frame(frame, 76, 22, "Help");
 
     let pane_hint = match app.active_pane {
         ActivePane::Sidebar if !app.sidebar_hidden => "Sidebar focused",
