@@ -7,6 +7,7 @@ impl App {
         &mut self,
         result: Result<git::SharedHighlightRegistry, String>,
     ) {
+        self.highlight_registry_loading = false;
         match result {
             Ok(registry) => {
                 self.highlight_registry = Some(registry);

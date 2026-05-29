@@ -6,7 +6,7 @@ use crate::{
     app::DiffCacheKey,
     git::{
         BlameCommitDetails, BranchCompareRefs, CommitSearchEntry, DiffView,
-        SharedHighlightRegistry, WorktreeEntry,
+        SharedHighlightRegistry, WorkingTreeStatus, WorktreeEntry,
     },
     watcher::RepoWatcher,
 };
@@ -39,6 +39,10 @@ pub enum Event {
         result: Result<DiffView, String>,
     },
     DiffPrefetched(Box<DiffPrefetchedEvent>),
+    WorkingTreeStatusLoaded {
+        request_id: u64,
+        result: Result<WorkingTreeStatus, String>,
+    },
     BlameLoaded {
         request_id: u64,
         result: Result<BlameCommitDetails, String>,

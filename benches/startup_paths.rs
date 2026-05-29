@@ -1,10 +1,12 @@
 use std::{fs, hint::black_box, path::PathBuf, process::Command, sync::LazyLock};
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use ratatui::{Terminal, backend::TestBackend};
 use tokio::runtime::Runtime;
 use vigil::{
     app::App,
     git::{self, FileEntry, HighlightRegistry},
+    ui,
 };
 
 struct StartupFixture {
@@ -99,6 +101,19 @@ fn bench_startup_paths(c: &mut Criterion) {
         b.iter(|| {
             let app = App::new_for_benchmarks(black_box(fixture.repo_root.clone()));
             black_box(app);
+        });
+    });
+
+    group.bench_function("render_loading_first_paint", |b| {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        b.iter(|| {
+            let mut app = App::new_for_benchmarks(black_box(fixture.repo_root.clone()));
+            app.repo_loading = true;
+            app.status_message = Some("Loading repository...".to_string());
+            terminal
+                .draw(|frame| ui::render(frame, &mut app))
+                .expect("loading first paint should render");
         });
     });
 

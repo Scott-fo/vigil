@@ -19,26 +19,34 @@ const VIGIL_LOGO: [&str; 6] = [
 
 pub struct Splash<'a> {
     error: Option<&'a str>,
+    loading: bool,
     text_style: Style,
     text_muted_style: Style,
 }
 
 impl<'a> Splash<'a> {
-    pub fn new(error: Option<&'a str>, text_style: Style, text_muted_style: Style) -> Self {
+    pub fn new(
+        error: Option<&'a str>,
+        loading: bool,
+        text_style: Style,
+        text_muted_style: Style,
+    ) -> Self {
         Self {
             error,
+            loading,
             text_style,
             text_muted_style,
         }
     }
 
     fn subtitle(&self) -> Cow<'a, str> {
-        match self.error {
-            None => Cow::Borrowed("No changed files in working tree"),
-            Some(message) if is_not_git_repository_error(message) => {
+        match (self.loading, self.error) {
+            (true, _) => Cow::Borrowed("Loading repository..."),
+            (false, None) => Cow::Borrowed("No changed files in working tree"),
+            (false, Some(message)) if is_not_git_repository_error(message) => {
                 Cow::Borrowed("Not a git repo, init to use vigil.")
             }
-            Some(message) => Cow::Borrowed(message),
+            (false, Some(message)) => Cow::Borrowed(message),
         }
     }
 

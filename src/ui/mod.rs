@@ -57,6 +57,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(
             Splash::new(
                 app.splash_error(),
+                app.repo_loading,
                 Style::new().fg(text_color()),
                 Style::new().fg(text_muted_color()),
             ),

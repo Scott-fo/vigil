@@ -32,8 +32,7 @@ impl App {
             EventHandler::new(),
             preference,
         );
-        app.refresh().await?;
-        app.spawn_highlight_registry_init();
+        app.queue_initial_working_tree_status_load();
         if let Some(target) = options.initial_blame_target {
             app.open_blame_target(target);
         }

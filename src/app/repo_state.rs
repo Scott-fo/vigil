@@ -1,4 +1,6 @@
-use crate::git;
+use tokio::task;
+
+use crate::{event::Event, git};
 
 use super::{App, ReviewMode};
 
@@ -10,7 +12,13 @@ mod watcher;
 use self::selection::refreshed_file_index;
 
 impl App {
+    pub(super) fn queue_initial_working_tree_status_load(&mut self) {
+        self.queue_working_tree_status_load("Loading repository...");
+    }
+
     pub(super) async fn refresh(&mut self) -> color_eyre::Result<()> {
+        self.next_repo_request_id();
+        self.repo_loading = false;
         let previously_selected = self.selected_file().map(|file| file.path.clone());
         let files = match &self.review_mode {
             ReviewMode::WorkingTree => match git::load_working_tree_status(&self.repo_root).await {
@@ -19,7 +27,7 @@ impl App {
                     status.files
                 }
                 Err(error) => {
-                    self.enter_repo_error_state(error.to_string()).await?;
+                    self.enter_repo_error_state(error.to_string())?;
                     return Ok(());
                 }
             },
@@ -30,22 +38,31 @@ impl App {
                 git::load_files_with_branch_diff(&self.repo_root, selection).await?
             }
         };
-        self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
-        self.diff_view_cache.clear();
-        self.pending_diff_cache_key = None;
-        self.files = files;
-        self.rebuild_sidebar_items();
-
-        self.selected_file_index = refreshed_file_index(
-            previously_selected.as_deref(),
-            &self.files,
-            &self.sidebar_items,
-        );
-
-        self.sync_sidebar_state();
-        self.queue_selected_diff_load(true, true);
-        self.status_message = Some(self.current_status_message());
+        self.apply_refreshed_files(previously_selected, files);
         Ok(())
+    }
+
+    pub(in crate::app) fn handle_working_tree_status_loaded(
+        &mut self,
+        request_id: u64,
+        result: Result<git::WorkingTreeStatus, String>,
+    ) -> bool {
+        if request_id != self.repo_request_id || !self.is_working_tree_mode() {
+            return false;
+        }
+
+        self.repo_loading = false;
+        let previously_selected = self.selected_file().map(|file| file.path.clone());
+        match result {
+            Ok(status) => {
+                self.apply_working_tree_status_root(status.repo_root);
+                self.apply_refreshed_files(previously_selected, status.files);
+            }
+            Err(error) => {
+                let _ = self.enter_repo_error_state(error);
+            }
+        }
+        true
     }
 
     pub(super) fn is_working_tree_mode(&self) -> bool {
@@ -76,6 +93,49 @@ impl App {
         Ok(())
     }
 
+    fn queue_working_tree_status_load(&mut self, status_message: impl Into<String>) {
+        let request_id = self.next_repo_request_id();
+        let repo_root = self.repo_root.clone();
+        let sender = self.events.sender();
+        self.repo_loading = true;
+        self.status_message = Some(status_message.into());
+        self.track_background_task(task::spawn(async move {
+            let result = git::load_working_tree_status(&repo_root)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(Event::WorkingTreeStatusLoaded { request_id, result });
+        }));
+    }
+
+    fn next_repo_request_id(&mut self) -> u64 {
+        self.repo_request_id = self.repo_request_id.saturating_add(1);
+        self.repo_request_id
+    }
+
+    fn apply_refreshed_files(
+        &mut self,
+        previously_selected: Option<String>,
+        files: Vec<git::FileEntry>,
+    ) {
+        self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
+        self.repo_loading = false;
+        self.diff_view_cache.clear();
+        self.pending_diff_cache_key = None;
+        self.files = files;
+        self.rebuild_sidebar_items();
+
+        self.selected_file_index = refreshed_file_index(
+            previously_selected.as_deref(),
+            &self.files,
+            &self.sidebar_items,
+        );
+
+        self.sync_sidebar_state();
+        self.spawn_highlight_registry_init();
+        self.queue_selected_diff_load(true, true);
+        self.status_message = Some(self.current_status_message());
+    }
+
     fn apply_working_tree_status_root(&mut self, resolved_root: std::path::PathBuf) {
         let watcher_needs_restart = self.repo_error.is_some()
             || (!self.repo_watcher_loading && self.repo_watcher.is_none())
@@ -89,8 +149,9 @@ impl App {
         }
     }
 
-    async fn enter_repo_error_state(&mut self, error: String) -> color_eyre::Result<()> {
+    fn enter_repo_error_state(&mut self, error: String) -> color_eyre::Result<()> {
         self.repo_error = Some(error);
+        self.repo_loading = false;
         self.repo_watcher = None;
         self.repo_watcher_loading = false;
         self.files.clear();

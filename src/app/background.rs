@@ -17,11 +17,16 @@ impl App {
     }
 
     pub(super) fn spawn_highlight_registry_init(&mut self) {
+        if self.highlight_registry.is_some() || self.highlight_registry_loading {
+            return;
+        }
+
         let initial_filetypes = self
             .selected_file()
             .and_then(|file| file.filetype)
             .into_iter()
             .collect::<Vec<_>>();
+        self.highlight_registry_loading = true;
         let sender = self.events.sender();
         self.track_background_task(task::spawn(async move {
             let result = task::spawn_blocking(move || {

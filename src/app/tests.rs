@@ -4,6 +4,81 @@ fn build_test_app() -> App {
     App::new_for_benchmarks(PathBuf::from("/tmp/vigil-app-tests"))
 }
 
+#[tokio::test]
+async fn launch_returns_with_empty_first_paint_state() {
+    let mut app = App::new(AppLaunchOptions {
+        repo_root: Some(PathBuf::from("/tmp/vigil-app-tests")),
+        ..AppLaunchOptions::default()
+    })
+    .await
+    .expect("launch should build app state before repo status loads");
+
+    assert!(app.files.is_empty());
+    assert_eq!(app.repo_request_id, 1);
+    assert!(app.repo_loading);
+    assert_eq!(app.status_message.as_deref(), Some("Loading repository..."));
+    assert!(app.highlight_registry.is_none());
+    assert!(!app.highlight_registry_loading);
+
+    app.quit();
+}
+
+#[tokio::test]
+async fn working_tree_status_event_applies_files_and_queues_plain_diff_load() {
+    let mut app = build_test_app();
+    app.repo_request_id = 7;
+
+    let loaded = app.handle_working_tree_status_loaded(
+        7,
+        Ok(git::WorkingTreeStatus {
+            repo_root: PathBuf::from("/tmp/vigil-app-tests"),
+            files: vec![FileEntry {
+                status: " M".to_string(),
+                path: "src/main.rs".to_string(),
+                label: "main.rs".to_string(),
+                filetype: Some("rust"),
+            }],
+        }),
+    );
+
+    assert!(loaded);
+    assert!(!app.repo_loading);
+    assert_eq!(app.files.len(), 1);
+    assert_eq!(
+        app.selected_file().map(|file| file.path.as_str()),
+        Some("src/main.rs")
+    );
+    assert_eq!(app.status_message.as_deref(), Some("1 changed file"));
+    assert!(app.diff_load_task.is_some());
+    assert!(app.highlight_registry_loading);
+
+    app.cancel_inflight_diff_load();
+    app.abort_background_tasks();
+}
+
+#[test]
+fn stale_working_tree_status_event_is_ignored() {
+    let mut app = build_test_app();
+    app.repo_request_id = 7;
+
+    let loaded = app.handle_working_tree_status_loaded(
+        6,
+        Ok(git::WorkingTreeStatus {
+            repo_root: PathBuf::from("/tmp/vigil-app-tests"),
+            files: vec![FileEntry {
+                status: " M".to_string(),
+                path: "src/main.rs".to_string(),
+                label: "main.rs".to_string(),
+                filetype: Some("rust"),
+            }],
+        }),
+    );
+
+    assert!(!loaded);
+    assert!(app.files.is_empty());
+    assert!(app.diff_load_task.is_none());
+}
+
 #[test]
 fn toggling_sidebar_hidden_moves_focus_to_diff() {
     let mut app = build_test_app();
