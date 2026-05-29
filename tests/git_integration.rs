@@ -183,10 +183,23 @@ async fn worktree_listing_reports_current_branch_and_dirty_state() -> Result<()>
         &linked_root_arg,
     ]);
     fs::write(linked_root.join("feature.txt"), "dirty\n")?;
+    let clean_root = repo.root.with_file_name(format!(
+        "{}-clean",
+        repo.root
+            .file_name()
+            .expect("test repo has a file name")
+            .to_string_lossy()
+    ));
+    if clean_root.exists() {
+        let _ = fs::remove_dir_all(&clean_root);
+    }
+    let clean_root_arg = clean_root.to_string_lossy().to_string();
+    repo.git(&["worktree", "add", "-b", "feature/clean", &clean_root_arg]);
 
     let worktrees = git::list_worktrees(&repo.root).await?;
     let canonical_root = fs::canonicalize(&repo.root)?;
     let canonical_linked_root = fs::canonicalize(&linked_root)?;
+    let canonical_clean_root = fs::canonicalize(&clean_root)?;
     let current = worktrees
         .iter()
         .find(|entry| entry.path == canonical_root)
@@ -205,8 +218,17 @@ async fn worktree_listing_reports_current_branch_and_dirty_state() -> Result<()>
     assert_eq!(linked.branch.as_deref(), Some("feature/worktree"));
     assert!(linked.dirty);
     assert_eq!(linked.change_count, 1);
+    assert!(
+        worktrees
+            .iter()
+            .position(|entry| entry.path == canonical_linked_root)
+            < worktrees
+                .iter()
+                .position(|entry| entry.path == canonical_clean_root)
+    );
 
     repo.git(&["worktree", "remove", "--force", &linked_root_arg]);
+    repo.git(&["worktree", "remove", "--force", &clean_root_arg]);
     Ok(())
 }
 

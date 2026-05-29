@@ -341,6 +341,7 @@ pub async fn list_worktrees(repo_root: &Path) -> color_eyre::Result<Vec<Worktree
         let b_current = b.path == repo_root || b.path == current_root;
         b_current
             .cmp(&a_current)
+            .then_with(|| b.dirty.cmp(&a.dirty))
             .then_with(|| a.branch.cmp(&b.branch))
             .then_with(|| a.path.cmp(&b.path))
     });
