@@ -100,9 +100,15 @@ Measured against a one-file dirty TSX repository:
 
 | Case | Mean |
 | --- | ---: |
+| first-paint app state construction | 1.27 us |
+| render loading first paint on `TestBackend` | 71.49 us |
 | baseline `resolve_repo_root` + `load_working_tree_status` | 16.03 ms |
 | current `load_status_with_repo_root` | 8.79 ms |
 | selected TSX highlight registry | 41.75 ms |
+
+`App::new` no longer awaits the fresh repository snapshot. The first paint uses
+the empty loading state, then the working-tree status event queues the plain
+selected diff and selected-language highlight registry work in the background.
 
 Measured with nvim Tree-sitter highlight queries:
 
