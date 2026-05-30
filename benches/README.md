@@ -44,6 +44,7 @@ cargo bench --bench diff_performance get_merge_conflict_line_types
 cargo bench --bench diff_performance parse_merge_conflict_diff_from_file
 cargo bench --bench diff_performance resolve_conflict
 cargo bench --bench diff_performance collect_diff_lines
+cargo bench --bench diff_search_performance -- --noplot
 cargo bench --bench highlight_registry_init -- --noplot
 cargo bench --bench startup_paths -- --noplot
 ```
@@ -88,6 +89,22 @@ so it is not used as a headline speedup claim.
 `parse_merge_conflict_diff_from_file` follows Pierre's direct marker scanner
 shape, builds resolved current/incoming contents during the scan, and caches
 per-hunk unified line offsets while assembling marker rows.
+
+# Diff Search Benchmarks
+
+`diff_search_performance` measures a synthetic 1,000-file review scope with
+1,000 added lines per file. The index is built once per review snapshot and
+search reuses a `DiffSearchMatcher` across query edits.
+
+## Latest local diff search results
+
+Measured against 1,000,000 added diff lines:
+
+| Case | Mean | Throughput |
+| --- | ---: | ---: |
+| build search index | 96.38 ms | 10.38 Melem/s |
+| search top 50, common query | 150.59 ms | 6.64 Melem/s |
+| search top 50, sparse query | 9.69 ms | 103.17 Melem/s |
 
 # Startup Benchmarks
 

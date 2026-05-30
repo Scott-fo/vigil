@@ -53,6 +53,16 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
+            Event::DiffSearchIndexLoaded { request_id, result } => {
+                if self.handle_diff_search_index_loaded(request_id, result) {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
+            Event::DiffSearchResultsLoaded { request_id, result } => {
+                if self.handle_diff_search_results_loaded(request_id, result) {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
             Event::BranchCompareLoaded(result) => {
                 self.handle_branch_compare_loaded(result);
                 if self.branch_compare_modal_open {

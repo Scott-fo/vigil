@@ -40,6 +40,7 @@ impl App {
                     .last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
                 self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
                 self.diff_view = diff_view;
+                self.apply_pending_diff_search_target();
                 self.diff_highlight_complete = self.highlight_registry.is_none();
                 self.status_message = Some(self.current_status_message());
             }

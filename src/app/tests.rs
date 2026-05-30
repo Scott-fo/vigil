@@ -6,8 +6,19 @@ fn build_test_app() -> App {
 }
 
 #[tokio::test]
-async fn global_shortcuts_use_f_for_file_search_and_p_for_pull() {
+async fn global_shortcuts_use_ff_for_file_search_fg_for_diff_search_and_p_for_pull() {
     let mut app = build_test_app();
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(!app.file_search_modal_open);
+    assert!(!app.diff_search_modal_open);
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("f: f files, g diff search")
+    );
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
         .await
@@ -17,12 +28,103 @@ async fn global_shortcuts_use_f_for_file_search_and_p_for_pull() {
     assert!(app.remote_sync.is_none());
 
     app.file_search_modal_open = false;
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(app.diff_search_modal_open);
+    assert!(!app.file_search_modal_open);
+    assert!(app.diff_search_loading);
+
+    app.close_diff_search_modal();
     app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE))
         .await
         .unwrap();
 
     assert!(!app.file_search_modal_open);
     assert_eq!(app.remote_sync, Some(RemoteSyncDirection::Pull));
+
+    app.abort_background_tasks();
+}
+
+#[tokio::test]
+async fn diff_search_jump_waits_for_selected_file_diff_from_sidebar() {
+    let mut app = build_test_app();
+    app.files = vec![
+        FileEntry {
+            status: " M".to_string(),
+            path: "src/a.rs".to_string(),
+            label: "a.rs".to_string(),
+            filetype: Some("rust"),
+        },
+        FileEntry {
+            status: " M".to_string(),
+            path: "src/b.rs".to_string(),
+            label: "b.rs".to_string(),
+            filetype: Some("rust"),
+        },
+    ];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.update_diff_viewport(app.diff_view_mode, 120, 0, 20);
+    app.active_pane = ActivePane::Sidebar;
+    app.diff_search_modal_open = true;
+    app.diff_search_results = git::DiffSearchResults {
+        total_matched: 1,
+        items: vec![git::DiffSearchResult {
+            file_path: "src/b.rs".to_string(),
+            filetype: Some("rust"),
+            hunk_index: 0,
+            hunk_old_start: 1,
+            hunk_new_start: 1,
+            kind: git::DiffSearchLineKind::Addition,
+            old_line: None,
+            new_line: Some(2),
+            line: "fn target() {}".to_string(),
+            match_ranges: Vec::new(),
+            syntax_ranges: Vec::new(),
+            score: 1,
+        }],
+    };
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.selected_file().map(|file| file.path.as_str()),
+        Some("src/b.rs")
+    );
+    assert!(app.pending_diff_search_target.is_some());
+
+    let request_id = app.diff_request_id;
+    app.cancel_inflight_diff_load();
+    let diff_view = git::build_diff_view_from_diff_text(
+        concat!(
+            "diff --git a/src/b.rs b/src/b.rs\n",
+            "--- a/src/b.rs\n",
+            "+++ b/src/b.rs\n",
+            "@@ -1,1 +1,2 @@\n",
+            " fn existing() {}\n",
+            "+fn target() {}\n",
+        ),
+        Some("rust"),
+    );
+
+    assert!(app.handle_diff_loaded(request_id, Ok(diff_view)));
+    assert_eq!(app.active_pane, ActivePane::Diff);
+    assert_eq!(
+        app.diff_view.selected_new_line_number(
+            app.diff_view_mode,
+            app.current_diff_display_width(),
+            app.selected_diff_line_index,
+        ),
+        Some(2)
+    );
+    assert!(app.pending_diff_search_target.is_none());
 
     app.abort_background_tasks();
 }

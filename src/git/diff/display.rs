@@ -265,6 +265,30 @@ impl DiffView {
         None
     }
 
+    pub fn display_index_for_line(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        old_line: Option<usize>,
+        new_line: Option<usize>,
+    ) -> Option<usize> {
+        self.ensure_display_cache(mode, width);
+        self.display_cache
+            .entry(mode)
+            .row_refs
+            .iter()
+            .position(|row_refs| {
+                row_refs
+                    .left
+                    .and_then(|row_index| self.rows.get(row_index))
+                    .is_some_and(|row| row.old_line == old_line && row.new_line == new_line)
+                    || row_refs
+                        .right
+                        .and_then(|row_index| self.rows.get(row_index))
+                        .is_some_and(|row| row.old_line == old_line && row.new_line == new_line)
+            })
+    }
+
     pub fn selected_gap_index(
         &mut self,
         mode: DiffViewMode,
