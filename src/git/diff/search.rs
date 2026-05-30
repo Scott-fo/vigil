@@ -33,6 +33,8 @@ use super::{
     preview::load_diff_preview_for_working_tree,
 };
 
+const DIFF_SEARCH_PREVIEW_CONTEXT_LINES: usize = 4;
+
 #[derive(Debug, Default, Clone)]
 pub struct DiffSearchIndex {
     files: Vec<IndexedDiffFile>,
@@ -91,7 +93,17 @@ pub struct DiffSearchResult {
     pub line: String,
     pub match_ranges: Vec<Range<usize>>,
     pub syntax_ranges: Vec<DiffSearchSyntaxRange>,
+    pub preview_lines: Vec<DiffSearchPreviewLine>,
     pub score: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffSearchPreviewLine {
+    pub kind: DiffSearchLineKind,
+    pub old_line: Option<usize>,
+    pub new_line: Option<usize>,
+    pub line: String,
+    pub is_match: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -405,12 +417,74 @@ impl DiffSearchIndex {
             line: line.text.to_string(),
             match_ranges: char_indices_to_byte_ranges(&line.text, &matcher.indices),
             syntax_ranges: Vec::new(),
+            preview_lines: self.preview_lines_for(ranked.line_index),
             score: ranked.score,
         }
+    }
+
+    fn preview_lines_for(&self, line_index: usize) -> Vec<DiffSearchPreviewLine> {
+        let Some(target) = self.lines.get(line_index) else {
+            return Vec::new();
+        };
+
+        let mut start = line_index;
+        let mut before = 0usize;
+        while start > 0 && before < DIFF_SEARCH_PREVIEW_CONTEXT_LINES {
+            let previous_index = start - 1;
+            if !self.same_hunk(previous_index, target) {
+                break;
+            }
+            start = previous_index;
+            before += 1;
+        }
+
+        let mut end = line_index + 1;
+        let mut after = 0usize;
+        while end < self.lines.len() && after < DIFF_SEARCH_PREVIEW_CONTEXT_LINES {
+            if !self.same_hunk(end, target) {
+                break;
+            }
+            end += 1;
+            after += 1;
+        }
+
+        self.lines[start..end]
+            .iter()
+            .enumerate()
+            .map(|(offset, line)| DiffSearchPreviewLine {
+                kind: line.kind,
+                old_line: line.old_line,
+                new_line: line.new_line,
+                line: line.text.to_string(),
+                is_match: start + offset == line_index,
+            })
+            .collect()
+    }
+
+    fn same_hunk(&self, line_index: usize, target: &IndexedDiffLine) -> bool {
+        self.lines.get(line_index).is_some_and(|line| {
+            line.file_index == target.file_index && line.hunk_index == target.hunk_index
+        })
     }
 }
 
 impl DiffSearchResults {
+    pub fn group_items_by_file(&mut self) {
+        let mut groups = Vec::<(String, Vec<DiffSearchResult>)>::new();
+        for item in std::mem::take(&mut self.items) {
+            if let Some((_, items)) = groups
+                .iter_mut()
+                .find(|(file_path, _)| file_path == &item.file_path)
+            {
+                items.push(item);
+            } else {
+                groups.push((item.file_path.clone(), vec![item]));
+            }
+        }
+
+        self.items = groups.into_iter().flat_map(|(_, items)| items).collect();
+    }
+
     pub fn apply_syntax_highlighting(&mut self, registry: &HighlightRegistry) {
         for item in &mut self.items {
             item.apply_syntax_highlighting(registry);
@@ -744,6 +818,70 @@ mod tests {
                 .any(|range| range.highlight_name.is_some()),
             "expected syntax ranges for rust result: {:?}",
             results.items[0].syntax_ranges
+        );
+    }
+
+    #[test]
+    fn search_results_include_bounded_hunk_preview() {
+        let results = search(
+            concat!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n",
+                "--- a/src/lib.rs\n",
+                "+++ b/src/lib.rs\n",
+                "@@ -1,8 +1,8 @@\n",
+                " line one\n",
+                " line two\n",
+                " line three\n",
+                "-legacy_target()\n",
+                "+modern_target()\n",
+                " line six\n",
+                " line seven\n",
+                " line eight\n",
+            ),
+            "'modern",
+        );
+
+        let result = &results.items[0];
+        assert_eq!(result.preview_lines.len(), 8);
+        assert!(
+            result
+                .preview_lines
+                .iter()
+                .any(|line| line.is_match && line.line == "modern_target()")
+        );
+        assert_eq!(result.preview_lines[0].line, "line one");
+        assert_eq!(result.preview_lines.last().unwrap().line, "line eight");
+    }
+
+    #[test]
+    fn search_results_group_by_file_preserving_file_discovery_order() {
+        let mut results = search(
+            concat!(
+                "diff --git a/src/a.rs b/src/a.rs\n",
+                "--- a/src/a.rs\n",
+                "+++ b/src/a.rs\n",
+                "@@ -0,0 +1,2 @@\n",
+                "+target a one\n",
+                "+target a two\n",
+                "diff --git a/src/b.rs b/src/b.rs\n",
+                "--- a/src/b.rs\n",
+                "+++ b/src/b.rs\n",
+                "@@ -0,0 +1,1 @@\n",
+                "+target b one\n",
+            ),
+            "target",
+        );
+        results.items.swap(1, 2);
+
+        results.group_items_by_file();
+
+        assert_eq!(
+            results
+                .items
+                .iter()
+                .map(|item| item.file_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/a.rs", "src/a.rs", "src/b.rs"]
         );
     }
 }

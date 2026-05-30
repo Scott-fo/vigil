@@ -78,9 +78,10 @@ pub use self::preview::{
 };
 pub use self::resolution::{diff_accept_reject_content, diff_accept_reject_hunk, resolve_conflict};
 pub use self::search::{
-    DiffSearchIndex, DiffSearchLineKind, DiffSearchMatcher, DiffSearchOptions, DiffSearchResult,
-    DiffSearchResults, DiffSearchSyntaxRange, load_diff_search_index_for_branch_compare,
-    load_diff_search_index_for_commit_compare, load_diff_search_index_for_working_tree,
+    DiffSearchIndex, DiffSearchLineKind, DiffSearchMatcher, DiffSearchOptions,
+    DiffSearchPreviewLine, DiffSearchResult, DiffSearchResults, DiffSearchSyntaxRange,
+    load_diff_search_index_for_branch_compare, load_diff_search_index_for_commit_compare,
+    load_diff_search_index_for_working_tree,
 };
 use self::view::{DiffHunkBlock, DiffHunkGap, DiffLineKind, DiffRow, DiffRowSyntax};
 pub use self::view::{

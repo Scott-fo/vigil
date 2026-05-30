@@ -153,7 +153,8 @@ impl App {
         self.diff_search_query_task = None;
         self.diff_search_loading = false;
         match result {
-            Ok(results) => {
+            Ok(mut results) => {
+                results.group_items_by_file();
                 self.diff_search_results = results;
                 self.diff_search_error = None;
                 self.clamp_diff_search_selection();

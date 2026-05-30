@@ -86,6 +86,7 @@ async fn diff_search_jump_waits_for_selected_file_diff_from_sidebar() {
             line: "fn target() {}".to_string(),
             match_ranges: Vec::new(),
             syntax_ranges: Vec::new(),
+            preview_lines: Vec::new(),
             score: 1,
         }],
     };
