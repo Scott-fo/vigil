@@ -30,6 +30,8 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         key_line("ff / fg", "file search / diff search"),
         key_line("v", "toggle unified / split diff"),
         key_line("r", "refresh"),
+        key_line("R", "run Codex review"),
+        key_line("S", "open Codex review summary"),
         key_line("g", "open commit search"),
         key_line("b", "open branch compare"),
         key_line("m", "merge compared branches"),

@@ -83,12 +83,12 @@ pub use self::search::{
     load_diff_search_index_for_branch_compare, load_diff_search_index_for_commit_compare,
     load_diff_search_index_for_working_tree,
 };
-use self::view::{DiffHunkBlock, DiffHunkGap, DiffLineKind, DiffRow, DiffRowSyntax};
 pub use self::view::{
-    DiffPreviewData, DiffSelectionPane, DiffSelectionPoint, DiffView,
+    DiffDisplayLineAnchor, DiffPreviewData, DiffSelectionPane, DiffSelectionPoint, DiffView,
     build_diff_view_from_diff_text, build_diff_view_from_diff_text_with_context,
     build_diff_view_from_preview_data,
 };
+use self::view::{DiffHunkBlock, DiffHunkGap, DiffLineKind, DiffRow, DiffRowSyntax};
 
 const DIFF_TAB_WIDTH: usize = 4;
 

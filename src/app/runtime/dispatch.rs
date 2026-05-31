@@ -79,6 +79,16 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
+            Event::ReviewFinished { request_id, result } => {
+                if self.handle_review_finished(request_id, result) {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
+            Event::ReviewLoaded { request_id, result } => {
+                if self.handle_review_loaded(request_id, result) {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
             Event::RepoWatcherReady(repo_root, result) => {
                 if self.handle_repo_watcher_ready(repo_root, result) && self.running {
                     terminal.draw(|frame| ui::render(frame, self))?;

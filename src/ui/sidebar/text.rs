@@ -41,11 +41,18 @@ pub(super) fn sidebar_status_label(status: &str) -> String {
     status.trim().to_string()
 }
 
-pub(super) fn file_label_width(width: u16, indent: &str, indicator: &str, status: &str) -> usize {
+pub(super) fn file_label_width(
+    width: u16,
+    indent: &str,
+    indicator: &str,
+    review_marker: &str,
+    status: &str,
+) -> usize {
     let reserved_width = display_width(indent)
         .saturating_add(display_width(indicator))
+        .saturating_add(display_width(review_marker))
         .saturating_add(display_width(status))
-        .saturating_add(2);
+        .saturating_add(if review_marker.is_empty() { 2 } else { 3 });
     (width as usize).saturating_sub(reserved_width).max(1)
 }
 
@@ -102,17 +109,19 @@ pub(super) fn status_gap(
     indent: &str,
     indicator: &str,
     label: &str,
+    review_marker: &str,
     status: &str,
 ) -> String {
-    if status.is_empty() {
+    if status.is_empty() && review_marker.is_empty() {
         return String::new();
     }
 
     let occupied_width = display_width(indent)
         .saturating_add(display_width(indicator))
         .saturating_add(display_width(label))
+        .saturating_add(display_width(review_marker))
         .saturating_add(display_width(status))
-        .saturating_add(1);
+        .saturating_add(if review_marker.is_empty() { 1 } else { 2 });
     let row_width = width as usize;
     let gap_width = row_width.saturating_sub(occupied_width).max(1);
     " ".repeat(gap_width)
@@ -170,9 +179,9 @@ mod tests {
             devicon_for_path("file.tsx").expect("tsx should have a devicon for width tests");
         let indicator = format!("{tsx_icon} ");
 
-        assert!(!status_gap(12, "", &indicator, "file.tsx", "M").is_empty());
-        assert_eq!(status_gap(4, "", &indicator, "file.tsx", "M"), " ");
-        assert_eq!(status_gap(12, "", &indicator, "file.tsx", ""), "");
+        assert!(!status_gap(12, "", &indicator, "file.tsx", "", "M").is_empty());
+        assert_eq!(status_gap(4, "", &indicator, "file.tsx", "", "M"), " ");
+        assert_eq!(status_gap(12, "", &indicator, "file.tsx", "", ""), "");
     }
 
     #[test]
@@ -180,12 +189,14 @@ mod tests {
         let (tsx_icon, _) =
             devicon_for_path("file.tsx").expect("tsx should have a devicon for width tests");
         let indicator = format!("{tsx_icon} ");
-        let label_width = file_label_width(24, "", &indicator, "M");
+        let label_width = file_label_width(24, "", &indicator, "●", "M");
         let label = truncate_middle("JavaScriptSyntaxHighlighter.tsx", label_width);
-        let gap = status_gap(24, "", &indicator, &label, "M");
+        let gap = status_gap(24, "", &indicator, &label, "●", "M");
         let rendered_width = display_width(&indicator)
             + display_width(&label)
             + display_width(&gap)
+            + display_width("●")
+            + 1
             + display_width("M")
             + 1;
 

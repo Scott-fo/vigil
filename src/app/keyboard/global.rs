@@ -51,6 +51,14 @@ impl App {
                 self.refresh().await?;
                 handled()
             }
+            KeyCode::Char('R') => {
+                self.start_codex_review();
+                handled()
+            }
+            KeyCode::Char('S') => {
+                self.open_review_summary_modal();
+                handled()
+            }
             KeyCode::Char('i') => {
                 self.initialize_repo_if_needed().await?;
                 handled()

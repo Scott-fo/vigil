@@ -7,11 +7,18 @@ use ratatui::{
 use crate::{git, sidebar::SidebarItem};
 
 use super::{
-    super::{add_bg_color, border_active_color, border_color, text_color, text_muted_color},
+    super::{
+        add_bg_color, border_active_color, border_color, text_color, text_muted_color,
+        warning_color,
+    },
     text::{devicon_for_path, file_label_width, sidebar_status_label, status_gap, truncate_middle},
 };
 
-pub(super) fn list_item(item: &SidebarItem, row_width: u16) -> ListItem<'static> {
+pub(super) fn list_item(
+    item: &SidebarItem,
+    row_width: u16,
+    review_comment_count: usize,
+) -> ListItem<'static> {
     match item {
         SidebarItem::Header {
             label,
@@ -26,7 +33,14 @@ pub(super) fn list_item(item: &SidebarItem, row_width: u16) -> ListItem<'static>
             depth,
             matches_search,
             ..
-        } => file_item(file, label, *depth, *matches_search, row_width),
+        } => file_item(
+            file,
+            label,
+            *depth,
+            *matches_search,
+            row_width,
+            review_comment_count,
+        ),
     }
 }
 
@@ -57,6 +71,7 @@ fn file_item(
     depth: usize,
     matches_search: bool,
     row_width: u16,
+    review_comment_count: usize,
 ) -> ListItem<'static> {
     let indent = "  ".repeat(depth);
     let staged = git::is_file_staged(&file.status);
@@ -75,22 +90,42 @@ fn file_item(
         .map(|(icon, color)| (format!("{icon} "), Style::new().fg(color)))
         .unwrap_or_else(|| (format!("{} ", file.status), Style::new().fg(status_color)));
     let status = sidebar_status_label(&file.status);
-    let label_width = file_label_width(row_width, &indent, &indicator, &status);
+    let review_marker = if review_comment_count > 0 { "●" } else { "" };
+    let label_width = file_label_width(row_width, &indent, &indicator, review_marker, &status);
     let display_label = truncate_middle(label, label_width);
-    let status_gap = status_gap(row_width, &indent, &indicator, &display_label, &status);
+    let status_gap = status_gap(
+        row_width,
+        &indent,
+        &indicator,
+        &display_label,
+        review_marker,
+        &status,
+    );
     let status_style = if staged {
         Style::new().fg(status_color).add_modifier(Modifier::BOLD)
     } else {
         Style::new().fg(status_color)
     };
+    let mut status_spans = Vec::new();
+    if !review_marker.is_empty() {
+        status_spans.push(Span::styled(
+            review_marker.to_string(),
+            Style::new()
+                .fg(warning_color())
+                .add_modifier(Modifier::BOLD),
+        ));
+        status_spans.push(Span::raw(" "));
+    }
+    status_spans.push(Span::styled(status, status_style));
 
-    ListItem::new(Line::from(vec![
+    let mut spans = vec![
         Span::styled(indent, Style::new().fg(border_color())),
         Span::styled(indicator, indicator_style),
         Span::styled(display_label, label_style),
         Span::raw(status_gap),
-        Span::styled(status, status_style),
-        Span::raw(" "),
-    ]))
-    .style(row_style)
+    ];
+    spans.extend(status_spans);
+    spans.push(Span::raw(" "));
+
+    ListItem::new(Line::from(spans)).style(row_style)
 }

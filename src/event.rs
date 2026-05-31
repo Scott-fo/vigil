@@ -9,6 +9,7 @@ use crate::{
         DiffSearchIndex, DiffSearchResults, DiffView, SharedHighlightRegistry, WorkingTreeStatus,
         WorktreeEntry,
     },
+    review::PersistedReview,
     watcher::RepoWatcher,
 };
 
@@ -60,6 +61,14 @@ pub enum Event {
     BranchCompareLoaded(Result<BranchCompareRefs, String>),
     BranchMergeFinished(Result<BranchMergeOutcome, String>),
     WorktreesLoaded(Result<Vec<WorktreeEntry>, String>),
+    ReviewFinished {
+        request_id: u64,
+        result: Result<PersistedReview, String>,
+    },
+    ReviewLoaded {
+        request_id: u64,
+        result: Result<Option<PersistedReview>, String>,
+    },
     RepoWatcherReady(PathBuf, Result<RepoWatcher, String>),
     RepoChanged(Vec<PathBuf>),
     RemoteSyncFinished(Result<String, String>),

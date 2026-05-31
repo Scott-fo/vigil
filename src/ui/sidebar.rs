@@ -41,7 +41,13 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .skip(visible_start)
         .take(visible_end.saturating_sub(visible_start))
-        .map(|item| row::list_item(item, inner.width.saturating_sub(1)))
+        .map(|item| {
+            let review_comment_count = item
+                .file()
+                .map(|file| app.review_comment_count_for_file(&file.path))
+                .unwrap_or_default();
+            row::list_item(item, inner.width.saturating_sub(1), review_comment_count)
+        })
         .collect();
 
     let item_count = items.len();

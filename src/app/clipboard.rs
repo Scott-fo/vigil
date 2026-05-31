@@ -1,5 +1,7 @@
 use std::io::{Write, stdout};
 
+use crate::review::{ReviewFinding, ReviewSeverity, ReviewVerdict};
+
 use super::{ActivePane, App};
 
 impl App {
@@ -26,14 +28,98 @@ impl App {
         self.status_message = Some("copied diff selection".to_string());
         Ok(true)
     }
+
+    pub(super) fn copy_review_summary_to_clipboard(&mut self) -> color_eyre::Result<bool> {
+        let Some(text) = self.review_clipboard_text() else {
+            self.status_message = Some("no Codex review loaded".to_string());
+            return Ok(false);
+        };
+
+        write_osc52_clipboard(&text)?;
+        self.status_message = Some("copied Codex review summary".to_string());
+        Ok(true)
+    }
+
+    fn review_clipboard_text(&self) -> Option<String> {
+        if let Some(error) = self.review_error.as_deref() {
+            return Some(format!("Codex review failed\n\n{error}"));
+        }
+
+        let report = self.review_report.as_ref()?;
+        let mut text = String::new();
+        text.push_str(&report.summary.headline);
+        text.push('\n');
+        text.push_str(&format!(
+            "Verdict: {} | {} comment{}\n\n",
+            verdict_label(report.summary.verdict),
+            report.findings.len(),
+            if report.findings.len() == 1 { "" } else { "s" }
+        ));
+        text.push_str(&report.summary.body);
+        text.push('\n');
+
+        if !report.summary.risk_areas.is_empty() {
+            text.push_str("\nRisk areas\n");
+            for area in &report.summary.risk_areas {
+                text.push_str("- ");
+                text.push_str(area);
+                text.push('\n');
+            }
+        }
+
+        if !report.findings.is_empty() {
+            text.push_str("\nComments\n");
+            for finding in &report.findings {
+                text.push_str("- ");
+                text.push_str(severity_label(finding.severity));
+                text.push_str(": ");
+                text.push_str(&finding.title);
+                text.push_str(" (");
+                text.push_str(&finding_location(finding));
+                text.push_str(")\n  ");
+                text.push_str(&finding.body);
+                text.push('\n');
+            }
+        }
+
+        Some(text)
+    }
 }
 
-fn write_osc52_clipboard(text: &str) -> color_eyre::Result<()> {
+pub(super) fn write_osc52_clipboard(text: &str) -> color_eyre::Result<()> {
     let encoded = encode_base64(text.as_bytes());
     let mut output = stdout();
     write!(output, "\x1b]52;c;{encoded}\x07")?;
     output.flush()?;
     Ok(())
+}
+
+fn finding_location(finding: &ReviewFinding) -> String {
+    match (finding.line, finding.end_line) {
+        (Some(line), Some(end_line)) if end_line != line => {
+            format!("{}:{}-{}", finding.path, line, end_line)
+        }
+        (Some(line), _) => format!("{}:{}", finding.path, line),
+        _ => finding.path.clone(),
+    }
+}
+
+fn verdict_label(verdict: ReviewVerdict) -> &'static str {
+    match verdict {
+        ReviewVerdict::Clean => "clean",
+        ReviewVerdict::HasConcerns => "has concerns",
+        ReviewVerdict::NeedsWork => "needs work",
+    }
+}
+
+fn severity_label(severity: ReviewSeverity) -> &'static str {
+    match severity {
+        ReviewSeverity::Critical => "critical",
+        ReviewSeverity::High => "high",
+        ReviewSeverity::Medium => "medium",
+        ReviewSeverity::Low => "low",
+        ReviewSeverity::Info => "info",
+    }
 }
 
 fn encode_base64(bytes: &[u8]) -> String {

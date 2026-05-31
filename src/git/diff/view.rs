@@ -39,6 +39,12 @@ pub struct DiffSelectionPoint {
     pub column: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiffDisplayLineAnchor {
+    pub old_line: Option<usize>,
+    pub new_line: Option<usize>,
+}
+
 impl DiffView {
     pub fn empty(message: impl Into<String>) -> Self {
         Self {

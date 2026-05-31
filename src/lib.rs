@@ -2,6 +2,7 @@ pub mod app;
 pub mod cli;
 pub mod event;
 pub mod git;
+pub mod review;
 pub mod sidebar;
 pub mod theme;
 pub mod ui;

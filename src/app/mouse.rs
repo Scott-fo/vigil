@@ -41,6 +41,7 @@ impl App {
             || self.commit_modal_open
             || self.discard_target.is_some()
             || self.help_modal_open
+            || self.review_summary_modal_open
             || self.theme_modal_open
             || self.commit_search_modal_open
             || self.branch_compare_modal_open
