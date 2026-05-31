@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
 use crate::event::DiffPrefetchedEvent;
+use crate::review::{
+    ReviewFinding, ReviewFindingState, ReviewReport, ReviewSeverity, ReviewSide, ReviewSummary,
+    ReviewVerdict,
+};
 
 use super::*;
 
@@ -128,6 +132,59 @@ fn prepare_diff_viewport_does_not_auto_scroll_from_sidebar_pane() {
 
     assert_eq!(viewport.start, 0);
     assert_eq!(app.diff_scroll, 0);
+}
+
+#[test]
+fn prepare_diff_viewport_counts_review_comment_rows() {
+    let mut app = build_test_app();
+    app.active_pane = ActivePane::Sidebar;
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/app.rs".to_string(),
+        label: "app.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.diff_view = build_diff_view(1);
+    app.review_report = Some(ReviewReport {
+        summary: ReviewSummary {
+            headline: "Needs review".to_string(),
+            verdict: ReviewVerdict::HasConcerns,
+            body: "One issue.".to_string(),
+            risk_areas: Vec::new(),
+        },
+        findings: vec![ReviewFinding {
+            path: "src/app.rs".to_string(),
+            side: ReviewSide::New,
+            line: Some(1),
+            end_line: None,
+            severity: ReviewSeverity::Medium,
+            title: "Comment should affect scrolling".to_string(),
+            body: "This is a long review comment that should add several visual rows to the diff viewport when the terminal is narrow.".to_string(),
+            suggested_patch: None,
+            state: ReviewFindingState::Open,
+            fingerprint: String::new(),
+        }],
+    });
+
+    let raw_line_count = app.diff_view.rendered_lines(DiffViewMode::Split, 48).len();
+    let viewport = app
+        .prepare_diff_viewport(DiffViewMode::Split, 48, 3)
+        .expect("viewport should be available");
+
+    assert!(viewport.rendered_line_count > raw_line_count);
+
+    app.diff_scroll = u16::MAX;
+    let viewport = app
+        .prepare_diff_viewport(DiffViewMode::Split, 48, 3)
+        .expect("viewport should be available");
+
+    assert_eq!(
+        app.diff_scroll as usize,
+        viewport
+            .rendered_line_count
+            .saturating_sub(3)
+            .min(u16::MAX as usize)
+    );
 }
 
 #[test]

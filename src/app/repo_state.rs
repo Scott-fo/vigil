@@ -117,6 +117,7 @@ impl App {
         previously_selected: Option<String>,
         files: Vec<git::FileEntry>,
     ) {
+        self.invalidate_review_snapshot();
         self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
         self.repo_loading = false;
         self.diff_view_cache.clear();
@@ -134,6 +135,7 @@ impl App {
         self.spawn_highlight_registry_init();
         self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
+        self.queue_review_restore_for_current_snapshot();
     }
 
     fn apply_working_tree_status_root(&mut self, resolved_root: std::path::PathBuf) {
@@ -150,6 +152,7 @@ impl App {
     }
 
     fn enter_repo_error_state(&mut self, error: String) -> color_eyre::Result<()> {
+        self.invalidate_review_snapshot();
         self.repo_error = Some(error);
         self.repo_loading = false;
         self.repo_watcher = None;

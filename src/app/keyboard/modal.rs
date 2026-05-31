@@ -15,6 +15,14 @@ impl App {
             return Ok(true);
         }
 
+        if self.handle_review_context_modal_key(key_event) {
+            return Ok(true);
+        }
+
+        if self.handle_review_summary_modal_key(key_event) {
+            return Ok(true);
+        }
+
         if self.handle_theme_modal_key(key_event).await? {
             return Ok(true);
         }

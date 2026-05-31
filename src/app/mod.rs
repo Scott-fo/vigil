@@ -24,6 +24,7 @@ mod launch;
 mod mouse;
 mod navigation;
 mod repo_state;
+mod review;
 mod runtime;
 mod sidebar_state;
 mod theme_modal;
@@ -41,6 +42,7 @@ use crate::{
         CommitSearchEntry, DiffSearchIndex, DiffSearchResults, DiffSelectionPoint, DiffView,
         FileEntry, SharedHighlightRegistry, WorktreeEntry,
     },
+    review::ReviewReport,
     sidebar::SidebarItem,
     theme::ThemeMode,
     watcher::RepoWatcher,
@@ -211,6 +213,17 @@ pub struct App {
     pub commit_error: Option<String>,
     pub discard_target: Option<FileEntry>,
     pub remote_sync: Option<RemoteSyncDirection>,
+    pub review_loading: bool,
+    pub review_error: Option<String>,
+    pub review_report: Option<ReviewReport>,
+    pub review_snapshot_id: Option<String>,
+    pub review_provider_session_id: Option<String>,
+    pub review_context_modal_open: bool,
+    pub review_extra_context: String,
+    pub review_summary_modal_open: bool,
+    pub review_summary_scroll: u16,
+    review_request_id: u64,
+    review_task: Option<task::JoinHandle<()>>,
     pub snackbar_notice: Option<SnackbarNotice>,
     pub snackbar_generation: u64,
     pub status_message: Option<String>,

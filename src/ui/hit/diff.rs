@@ -108,8 +108,13 @@ fn diff_body_hit(
         return None;
     }
 
-    let display_index = viewport.start + mouse_row.saturating_sub(body_area.y) as usize;
-    (display_index < viewport.end).then_some((body_area, display_index))
+    let relative_row = mouse_row.saturating_sub(body_area.y) as usize;
+    let display_index = viewport
+        .visible_display_indices
+        .get(relative_row)
+        .copied()
+        .flatten()?;
+    Some((body_area, display_index))
 }
 
 fn diff_body_clamped_hit(
@@ -130,10 +135,39 @@ fn diff_body_clamped_hit(
             .y
             .saturating_add(body_area.height.saturating_sub(1)),
     );
-    let display_index = (viewport.start + clamped_row.saturating_sub(body_area.y) as usize)
-        .min(viewport.end.saturating_sub(1));
+    let relative_row = clamped_row.saturating_sub(body_area.y) as usize;
+    let display_index = nearest_display_index(&viewport, relative_row)?;
     let _ = mouse_column;
     Some((body_area, display_index))
+}
+
+fn nearest_display_index(viewport: &PreparedDiffViewport, row: usize) -> Option<usize> {
+    let len = viewport.visible_display_indices.len();
+    if len == 0 {
+        return None;
+    }
+
+    let row = row.min(len.saturating_sub(1));
+    if let Some(display_index) = viewport.visible_display_indices[row] {
+        return Some(display_index);
+    }
+
+    for offset in 1..len {
+        if let Some(previous) = row
+            .checked_sub(offset)
+            .and_then(|index| viewport.visible_display_indices[index])
+        {
+            return Some(previous);
+        }
+        let next_index = row.saturating_add(offset);
+        if next_index < len
+            && let Some(next) = viewport.visible_display_indices[next_index]
+        {
+            return Some(next);
+        }
+    }
+
+    None
 }
 
 fn diff_body_state(

@@ -4,8 +4,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::{app::DiffViewMode, ui};
 
 use super::{
-    DiffHunkGap, DiffLineKind, DiffSelectionPane, DiffSelectionPoint, DiffView, GapExpandDirection,
-    SyntaxToken,
+    DiffDisplayLineAnchor, DiffHunkGap, DiffLineKind, DiffSelectionPane, DiffSelectionPoint,
+    DiffView, GapExpandDirection, SyntaxToken,
     rendering::{
         normalize_selection_points, render_expand_gap_line, render_expanded_context_lines,
         render_split_hunk_rows, render_unified_code_lines, slice_string_by_width,
@@ -289,6 +289,27 @@ impl DiffView {
             })
     }
 
+    pub fn display_line_anchor(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        display_index: usize,
+    ) -> Option<DiffDisplayLineAnchor> {
+        self.ensure_display_cache(mode, width);
+        let row_refs = self.display_cache.entry(mode).row_refs.as_slice();
+        let anchor = self.anchor_for_display_refs(*row_refs.get(display_index)?)?;
+        if display_index > 0
+            && row_refs
+                .get(display_index - 1)
+                .and_then(|previous| self.anchor_for_display_refs(*previous))
+                == Some(anchor)
+        {
+            return None;
+        }
+
+        Some(anchor)
+    }
+
     pub fn selected_gap_index(
         &mut self,
         mode: DiffViewMode,
@@ -437,6 +458,22 @@ impl DiffView {
     fn nav_targets(&mut self, mode: DiffViewMode, width: usize) -> &[Option<DisplayNavTarget>] {
         self.ensure_display_cache(mode, width);
         &self.display_cache.entry(mode).nav
+    }
+
+    fn anchor_for_display_refs(&self, row_refs: DisplayRowRefs) -> Option<DiffDisplayLineAnchor> {
+        let left = row_refs.left.and_then(|row_index| self.rows.get(row_index));
+        let right = row_refs
+            .right
+            .and_then(|row_index| self.rows.get(row_index));
+        let anchor = DiffDisplayLineAnchor {
+            old_line: left
+                .and_then(|row| row.old_line)
+                .or_else(|| right.and_then(|row| row.old_line)),
+            new_line: right
+                .and_then(|row| row.new_line)
+                .or_else(|| left.and_then(|row| row.new_line)),
+        };
+        (anchor.old_line.is_some() || anchor.new_line.is_some()).then_some(anchor)
     }
 
     fn build_unified_display(
