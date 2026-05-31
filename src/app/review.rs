@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::task;
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::{App, DiffViewMode, ReviewMode};
+use super::{App, DiffViewMode, ReviewMode, input::is_plain_text_key};
 
 const DEFAULT_REVIEW_INSTRUCTIONS: &str =
     "Focus on correctness bugs, regressions, missing tests, and risky edge cases.";
@@ -41,10 +41,11 @@ impl App {
 
         let repo_root = self.repo_root.clone();
         let files = self.files.clone();
+        let extra_context = self.review_extra_context.clone();
         let sender = self.events.sender();
 
         self.review_task = Some(task::spawn(async move {
-            let result = run_codex_review(repo_root, scope, files)
+            let result = run_codex_review(repo_root, scope, files, extra_context)
                 .await
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::ReviewFinished { request_id, result });
@@ -97,10 +98,11 @@ impl App {
         let request_id = self.review_request_id;
         let repo_root = self.repo_root.clone();
         let files = self.files.clone();
+        let extra_context = self.review_extra_context.clone();
         let sender = self.events.sender();
 
         self.review_task = Some(task::spawn(async move {
-            let result = load_persisted_review(repo_root, scope, files)
+            let result = load_persisted_review(repo_root, scope, files, extra_context)
                 .await
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::ReviewLoaded { request_id, result });
@@ -161,6 +163,58 @@ impl App {
         self.review_provider_session_id = None;
         self.review_summary_modal_open = false;
         self.review_summary_scroll = 0;
+    }
+
+    pub(in crate::app) fn open_review_context_modal(&mut self) {
+        self.review_context_modal_open = true;
+        self.status_message = Some("editing Codex review context".to_string());
+    }
+
+    pub(in crate::app) fn close_review_context_modal(&mut self) {
+        self.review_context_modal_open = false;
+    }
+
+    pub(in crate::app) fn handle_review_context_modal_key(&mut self, key_event: KeyEvent) -> bool {
+        if !self.review_context_modal_open {
+            return false;
+        }
+
+        match key_event.code {
+            KeyCode::Esc => {
+                self.close_review_context_modal();
+            }
+            KeyCode::Char('r' | 'R') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close_review_context_modal();
+                self.start_codex_review();
+            }
+            KeyCode::Char('l' | 'L') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.review_extra_context.clear();
+            }
+            KeyCode::Backspace => {
+                self.review_extra_context.pop();
+            }
+            KeyCode::Enter => {
+                self.review_extra_context.push('\n');
+            }
+            KeyCode::Tab => {
+                self.review_extra_context.push('\t');
+            }
+            KeyCode::Char(ch) if is_plain_text_key(key_event) => {
+                self.review_extra_context.push(ch);
+            }
+            _ => {}
+        }
+
+        true
+    }
+
+    pub(in crate::app) fn handle_review_context_paste(&mut self, text: &str) -> bool {
+        if !self.review_context_modal_open || text.is_empty() {
+            return false;
+        }
+
+        self.review_extra_context.push_str(text);
+        true
     }
 
     pub fn open_review_summary_modal(&mut self) {
@@ -278,12 +332,14 @@ async fn run_codex_review(
     repo_root: std::path::PathBuf,
     scope: ReviewScope,
     files: Vec<crate::git::FileEntry>,
+    extra_context: String,
 ) -> color_eyre::Result<PersistedReview> {
     let snapshot = review_domain::build_review_snapshot(BuildReviewSnapshotOptions {
         repo_root: repo_root.clone(),
         worktree_root: repo_root,
         scope,
         files,
+        extra_context,
     })
     .await?;
     let target = ReviewTarget {
@@ -312,12 +368,14 @@ async fn load_persisted_review(
     repo_root: std::path::PathBuf,
     scope: ReviewScope,
     files: Vec<crate::git::FileEntry>,
+    extra_context: String,
 ) -> color_eyre::Result<Option<PersistedReview>> {
     let snapshot = review_domain::build_review_snapshot(BuildReviewSnapshotOptions {
         repo_root: repo_root.clone(),
         worktree_root: repo_root,
         scope,
         files,
+        extra_context,
     })
     .await?;
     let snapshot_id = snapshot.id;

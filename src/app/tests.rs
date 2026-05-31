@@ -157,6 +157,34 @@ async fn global_merge_shortcut_opens_branch_merge_confirmation() {
 }
 
 #[tokio::test]
+async fn review_context_modal_captures_multiline_context() {
+    let mut app = build_test_app();
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::SHIFT))
+        .await
+        .unwrap();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT))
+        .await
+        .unwrap();
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(app.review_context_modal_open);
+    assert_eq!(app.review_extra_context, "A\nb");
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(!app.review_context_modal_open);
+    assert_eq!(app.review_extra_context, "A\nb");
+}
+
+#[tokio::test]
 async fn launch_returns_with_empty_first_paint_state() {
     let mut app = App::new(AppLaunchOptions {
         repo_root: Some(PathBuf::from("/tmp/vigil-app-tests")),

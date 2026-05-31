@@ -16,6 +16,7 @@ pub struct BuildReviewSnapshotOptions {
     pub worktree_root: PathBuf,
     pub scope: ReviewScope,
     pub files: Vec<FileEntry>,
+    pub extra_context: String,
 }
 
 pub async fn build_review_snapshot(
@@ -50,6 +51,7 @@ pub async fn build_review_snapshot(
         branch,
         scope,
         files,
+        extra_context: options.extra_context,
         patch,
         created_at_ms,
     })

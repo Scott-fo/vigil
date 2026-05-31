@@ -12,6 +12,8 @@ pub struct ReviewSnapshot {
     pub branch: Option<String>,
     pub scope: ReviewScope,
     pub files: Vec<String>,
+    #[serde(default)]
+    pub extra_context: String,
     pub patch: String,
     pub created_at_ms: u128,
 }

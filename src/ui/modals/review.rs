@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Padding, Paragraph, Wrap},
@@ -12,10 +13,81 @@ use crate::{
 };
 
 use super::super::{
-    error_color, panel_color, primary_color, success_color, text_color, text_muted_color,
-    warning_color,
+    element_color, error_color, panel_color, primary_color, success_color, text_color,
+    text_muted_color, warning_color,
 };
 use super::frame::render_modal_frame;
+
+pub(super) fn render_review_context_modal(frame: &mut Frame, app: &App) {
+    let inner = render_modal_frame(frame, 104, 26, "Codex Review Context");
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(4),
+            Constraint::Length(2),
+        ])
+        .split(inner);
+
+    let header = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(
+            "Paste Jira ticket, PRD excerpt, bug report, or review notes.",
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            format!(
+                "{} characters saved for the next review.",
+                app.review_extra_context.len()
+            ),
+            Style::new().fg(text_muted_color()),
+        )),
+    ]))
+    .style(Style::new().bg(panel_color()))
+    .block(Block::new().padding(Padding::horizontal(1)));
+    frame.render_widget(header, chunks[0]);
+
+    let is_empty = app.review_extra_context.is_empty();
+    let body = if is_empty {
+        "No extra context yet."
+    } else {
+        app.review_extra_context.as_str()
+    };
+    let scroll = text_area_scroll(body, chunks[1].width, chunks[1].height);
+    let text_area = Paragraph::new(body)
+        .style(
+            Style::new()
+                .fg(if is_empty {
+                    text_muted_color()
+                } else {
+                    text_color()
+                })
+                .bg(element_color()),
+        )
+        .block(Block::new().padding(Padding::horizontal(1)))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
+    frame.render_widget(text_area, chunks[1]);
+
+    let footer = Paragraph::new(Text::from(vec![Line::from(Span::styled(
+        "Enter inserts newline. Ctrl-R runs review. Ctrl-L clears. Esc closes.",
+        Style::new().fg(text_muted_color()),
+    ))]))
+    .style(Style::new().bg(panel_color()))
+    .block(Block::new().padding(Padding::horizontal(1)));
+    frame.render_widget(footer, chunks[2]);
+}
+
+fn text_area_scroll(text: &str, width: u16, height: u16) -> u16 {
+    let content_width = usize::from(width).saturating_sub(2).max(1);
+    let visual_lines = text
+        .lines()
+        .map(|line| wrapped_line_count(UnicodeWidthStr::width(line), content_width))
+        .sum::<usize>()
+        .max(1);
+    visual_lines
+        .saturating_sub(usize::from(height))
+        .min(u16::MAX as usize) as u16
+}
 
 pub(super) fn render_review_summary_modal(frame: &mut Frame, app: &mut App) {
     let inner = render_modal_frame(frame, 110, 28, "Codex Review");

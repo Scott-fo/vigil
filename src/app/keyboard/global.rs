@@ -55,6 +55,10 @@ impl App {
                 self.start_codex_review();
                 handled()
             }
+            KeyCode::Char('E') => {
+                self.open_review_context_modal();
+                handled()
+            }
             KeyCode::Char('S') => {
                 self.open_review_summary_modal();
                 handled()

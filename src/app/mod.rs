@@ -218,6 +218,8 @@ pub struct App {
     pub review_report: Option<ReviewReport>,
     pub review_snapshot_id: Option<String>,
     pub review_provider_session_id: Option<String>,
+    pub review_context_modal_open: bool,
+    pub review_extra_context: String,
     pub review_summary_modal_open: bool,
     pub review_summary_scroll: u16,
     review_request_id: u64,

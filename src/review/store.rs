@@ -275,6 +275,7 @@ impl ReviewStore {
                     .iter()
                     .map(|finding| finding.path.clone())
                     .collect(),
+                extra_context: String::new(),
                 patch: String::new(),
                 created_at_ms: row.created_at_ms.max(0) as u128,
             },
@@ -482,6 +483,7 @@ mod tests {
             branch: Some("main".to_string()),
             scope: ReviewScope::WorkingTree,
             files: vec!["src/lib.rs".to_string()],
+            extra_context: "Jira ticket text".to_string(),
             patch: "diff".to_string(),
             created_at_ms: 7,
         }

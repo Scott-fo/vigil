@@ -133,6 +133,8 @@ impl App {
             review_report: None,
             review_snapshot_id: None,
             review_provider_session_id: None,
+            review_context_modal_open: false,
+            review_extra_context: String::new(),
             review_summary_modal_open: false,
             review_summary_scroll: 0,
             review_request_id: 0,
