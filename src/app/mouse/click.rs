@@ -65,6 +65,7 @@ impl App {
         self.selected_diff_line_index = self.diff_view.expand_selected_gap(
             self.diff_view_mode,
             self.current_diff_display_width(),
+            self.diff_line_wrap_mode,
             self.selected_diff_line_index,
             20,
         );

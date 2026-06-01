@@ -28,6 +28,7 @@ pub fn diff_gap_click_at(
     app.diff_view.selected_gap_action(
         app.diff_view_mode,
         body_area.width as usize,
+        app.diff_line_wrap_mode,
         display_index,
     )?;
 
@@ -52,6 +53,7 @@ pub fn diff_selection_point_at(
     app.diff_view.selection_point_at(
         app.diff_view_mode,
         body_area.width as usize,
+        app.diff_line_wrap_mode,
         display_index,
         relative_column,
     )
@@ -76,6 +78,7 @@ pub fn diff_selection_drag_point_at(
     app.diff_view.selection_point_for_pane(
         app.diff_view_mode,
         body_area.width as usize,
+        app.diff_line_wrap_mode,
         display_index,
         anchor_pane,
         relative_column,

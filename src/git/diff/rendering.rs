@@ -6,7 +6,7 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::ui;
+use crate::{app::DiffLineWrapMode, ui};
 
 use super::{
     DIFF_TAB_WIDTH, DiffLineKind, DiffRow, DiffRowSyntax, DiffSelectionPoint, DisplayNavTarget,
@@ -33,7 +33,11 @@ struct WrappedLineContent {
     content_width: usize,
 }
 
-pub(super) fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<RenderedDisplayLine> {
+pub(super) fn render_unified_code_lines(
+    row: &DiffRow,
+    width: usize,
+    line_wrap: DiffLineWrapMode,
+) -> Vec<RenderedDisplayLine> {
     let base_style = base_style(row.kind);
     let sign_style = match row.kind {
         DiffLineKind::Context => ui::context_sign_style(),
@@ -70,31 +74,39 @@ pub(super) fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<Rend
     ];
     let content = render_row_content(row.unified_content(), &row.text, base_style);
     let prefix_width = spans_width(&prefix);
-    wrap_prefixed_spans_to_lines(prefix, continuation_prefix, content, width, base_style)
-        .into_iter()
-        .map(|wrapped| RenderedDisplayLine {
-            line: Line::from(wrapped.spans).style(base_style),
-            selection: DisplaySelectionLine {
-                unified: Some(DisplaySelectionSegment {
-                    start_column: prefix_width,
-                    content_width: wrapped.content_width,
-                    text: wrapped.text,
-                }),
-                ..DisplaySelectionLine::default()
-            },
-        })
-        .collect()
+    prefixed_spans_to_lines(
+        prefix,
+        continuation_prefix,
+        content,
+        width,
+        base_style,
+        line_wrap,
+    )
+    .into_iter()
+    .map(|wrapped| RenderedDisplayLine {
+        line: Line::from(wrapped.spans).style(base_style),
+        selection: DisplaySelectionLine {
+            unified: Some(DisplaySelectionSegment {
+                start_column: prefix_width,
+                content_width: wrapped.content_width,
+                text: wrapped.text,
+            }),
+            ..DisplaySelectionLine::default()
+        },
+    })
+    .collect()
 }
 
 pub(super) fn render_split_pair_lines(
     left: Option<&DiffRow>,
     right: Option<&DiffRow>,
     side_width: usize,
+    line_wrap: DiffLineWrapMode,
 ) -> Vec<RenderedDisplayLine> {
-    let left_lines = render_split_side_lines(left, true, side_width);
-    let right_lines = render_split_side_lines(right, false, side_width);
+    let left_lines = render_split_side_lines(left, true, side_width, line_wrap);
+    let right_lines = render_split_side_lines(right, false, side_width, line_wrap);
     let line_count = left_lines.len().max(right_lines.len());
-    let gap = Span::styled("   ", ui::diff_context_style());
+    let gap = Span::styled(" │ ", ui::line_number_style());
 
     (0..line_count)
         .map(|index| {
@@ -134,6 +146,7 @@ pub(super) fn render_split_hunk_rows(
     rows: &[DiffRow],
     row_index_offset: usize,
     side_width: usize,
+    line_wrap: DiffLineWrapMode,
 ) -> Vec<(
     Line<'static>,
     Option<DisplayNavTarget>,
@@ -166,6 +179,7 @@ pub(super) fn render_split_hunk_rows(
                 left.map(|(_, row)| row),
                 right.map(|(_, row)| row),
                 side_width,
+                line_wrap,
             ) {
                 rendered.push((
                     rendered_line.line,
@@ -191,7 +205,9 @@ pub(super) fn render_split_hunk_rows(
                     left: Some(row_index),
                     right: Some(row_index),
                 };
-                for rendered_line in render_split_pair_lines(Some(row), Some(row), side_width) {
+                for rendered_line in
+                    render_split_pair_lines(Some(row), Some(row), side_width, line_wrap)
+                {
                     rendered.push((
                         rendered_line.line,
                         target_line.map(DisplayNavTarget::Line),
@@ -206,7 +222,7 @@ pub(super) fn render_split_hunk_rows(
                     left: Some(row_index),
                     right: Some(row_index),
                 };
-                for rendered_line in render_unified_code_lines(row, side_width * 2 + 3) {
+                for rendered_line in render_unified_code_lines(row, side_width * 2 + 3, line_wrap) {
                     rendered.push((
                         rendered_line.line,
                         row.conflict_index.map(DisplayNavTarget::Conflict),
@@ -253,6 +269,7 @@ pub(super) fn render_expanded_context_lines(
     highlighted_content: Option<Vec<SyntaxToken>>,
     width: usize,
     split: bool,
+    line_wrap: DiffLineWrapMode,
 ) -> Vec<RenderedDisplayLine> {
     let row = DiffRow {
         kind: DiffLineKind::Context,
@@ -269,9 +286,9 @@ pub(super) fn render_expanded_context_lines(
         let total_width = width.saturating_sub(1);
         let gutter_width = 3;
         let side_width = total_width.saturating_sub(gutter_width) / 2;
-        render_split_pair_lines(Some(&row), Some(&row), side_width)
+        render_split_pair_lines(Some(&row), Some(&row), side_width, line_wrap)
     } else {
-        render_unified_code_lines(&row, width)
+        render_unified_code_lines(&row, width, line_wrap)
     }
 }
 
@@ -287,6 +304,7 @@ fn render_split_side_lines(
     row: Option<&DiffRow>,
     left_side: bool,
     width: usize,
+    line_wrap: DiffLineWrapMode,
 ) -> Vec<WrappedSideLine> {
     let Some(row) = row else {
         return vec![blank_split_side(width)];
@@ -308,15 +326,22 @@ fn render_split_side_lines(
     )];
     let content = render_row_content(row.side_content(left_side), &row.text, base_style);
     let prefix_width = spans_width(&prefix);
-    wrap_prefixed_spans_to_lines(prefix, continuation_prefix, content, width + 1, base_style)
-        .into_iter()
-        .map(|wrapped| WrappedSideLine {
-            spans: wrapped.spans,
-            start_column: prefix_width,
-            content_width: wrapped.content_width,
-            text: wrapped.text,
-        })
-        .collect()
+    prefixed_spans_to_lines(
+        prefix,
+        continuation_prefix,
+        content,
+        width + 1,
+        base_style,
+        line_wrap,
+    )
+    .into_iter()
+    .map(|wrapped| WrappedSideLine {
+        spans: wrapped.spans,
+        start_column: prefix_width,
+        content_width: wrapped.content_width,
+        text: wrapped.text,
+    })
+    .collect()
 }
 
 fn blank_split_side(width: usize) -> WrappedSideLine {
@@ -448,6 +473,66 @@ fn fit_spans_to_width(
     }
 
     fitted
+}
+
+fn prefixed_spans_to_lines(
+    prefix: Vec<Span<'static>>,
+    continuation_prefix: Vec<Span<'static>>,
+    content: Vec<Span<'static>>,
+    width: usize,
+    pad_style: Style,
+    line_wrap: DiffLineWrapMode,
+) -> Vec<WrappedLineContent> {
+    if line_wrap.is_wrapped() {
+        return wrap_prefixed_spans_to_lines(
+            prefix,
+            continuation_prefix,
+            content,
+            width,
+            pad_style,
+        );
+    }
+
+    vec![truncate_prefixed_spans_to_line(
+        prefix, content, width, pad_style,
+    )]
+}
+
+fn truncate_prefixed_spans_to_line(
+    prefix: Vec<Span<'static>>,
+    content: Vec<Span<'static>>,
+    width: usize,
+    pad_style: Style,
+) -> WrappedLineContent {
+    let target_width = width.saturating_sub(1);
+    if target_width == 0 {
+        return WrappedLineContent {
+            spans: Vec::new(),
+            text: String::new(),
+            content_width: 0,
+        };
+    }
+
+    let prefix_width = spans_width(&prefix);
+    if prefix_width >= target_width {
+        return WrappedLineContent {
+            spans: fit_spans_to_width(prefix, target_width, pad_style),
+            text: String::new(),
+            content_width: 0,
+        };
+    }
+
+    let content_width = target_width.saturating_sub(prefix_width);
+    let content = fit_spans_to_width(content, content_width, pad_style);
+    let text = line_text(&content);
+    let mut spans = prefix;
+    spans.extend(content);
+
+    WrappedLineContent {
+        spans,
+        text,
+        content_width,
+    }
 }
 
 fn wrap_prefixed_spans_to_lines(

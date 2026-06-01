@@ -2,7 +2,7 @@ use std::{hint::black_box, sync::LazyLock};
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use vigil::{
-    app::DiffViewMode,
+    app::{DiffLineWrapMode, DiffViewMode},
     git::{
         ChangeType, DiffHunkResolution, DiffIterationOptions, DiffStyle,
         EstimatedDiffHeightOptions, FileContents, FileDiffMetadata, HighlightRegistry, Hunk,
@@ -19,6 +19,7 @@ use vigil::{
 const FILETYPE: Option<&'static str> = Some("tsx");
 const SPLIT_RENDER_WIDTH: usize = 160;
 const VIEWPORT_HEIGHT: usize = 40;
+const LINE_WRAP_MODE: DiffLineWrapMode = DiffLineWrapMode::Wrap;
 
 struct LargeTsxFixture {
     diff: String,
@@ -294,9 +295,11 @@ fn bench_diff_pipeline(c: &mut Criterion) {
     };
     let mut highlighted_view = plain_view.clone();
     highlighted_view.apply_syntax_highlighting(FILETYPE, &registry);
-    let display_line_count = plain_view
-        .clone()
-        .display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+    let display_line_count = plain_view.clone().display_line_count(
+        DiffViewMode::Split,
+        SPLIT_RENDER_WIDTH,
+        LINE_WRAP_MODE,
+    );
     let scrolled_viewport_start = display_line_count / 2;
     let scrolled_viewport_end = (scrolled_viewport_start + VIEWPORT_HEIGHT).min(display_line_count);
 
@@ -450,7 +453,11 @@ fn bench_diff_pipeline(c: &mut Criterion) {
             || plain_view.clone(),
             |mut view| {
                 view.apply_syntax_highlighting(FILETYPE, &registry);
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -463,12 +470,17 @@ fn bench_diff_pipeline(c: &mut Criterion) {
                 view.apply_syntax_highlighting_for_display_range(
                     DiffViewMode::Split,
                     SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
                     0,
                     VIEWPORT_HEIGHT,
                     FILETYPE,
                     &registry,
                 );
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -481,12 +493,17 @@ fn bench_diff_pipeline(c: &mut Criterion) {
                 view.apply_syntax_highlighting_for_display_range(
                     DiffViewMode::Split,
                     SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
                     scrolled_viewport_start,
                     scrolled_viewport_end,
                     FILETYPE,
                     &registry,
                 );
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -496,7 +513,8 @@ fn bench_diff_pipeline(c: &mut Criterion) {
         b.iter_batched(
             || plain_view.clone(),
             |mut view| {
-                let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+                let lines =
+                    view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
                 black_box(lines.len());
             },
             BatchSize::LargeInput,
@@ -507,7 +525,8 @@ fn bench_diff_pipeline(c: &mut Criterion) {
         b.iter_batched(
             || highlighted_view.clone(),
             |mut view| {
-                let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+                let lines =
+                    view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
                 black_box(lines.len());
             },
             BatchSize::LargeInput,
@@ -519,7 +538,11 @@ fn bench_diff_pipeline(c: &mut Criterion) {
             || exact_context_view.clone(),
             |mut view| {
                 view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -533,7 +556,11 @@ fn bench_diff_pipeline(c: &mut Criterion) {
             },
             |mut view| {
                 view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -543,7 +570,8 @@ fn bench_diff_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let mut view = build_diff_view_from_diff_text(black_box(diff), FILETYPE);
             view.apply_syntax_highlighting(FILETYPE, &registry);
-            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
             black_box(lines.len());
         });
     });
@@ -557,7 +585,8 @@ fn bench_diff_pipeline(c: &mut Criterion) {
                 Some(fixture.new_file_lines.clone()),
             );
             view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
             black_box(lines.len());
         });
     });
@@ -572,7 +601,8 @@ fn bench_diff_pipeline(c: &mut Criterion) {
                 Some(fixture.new_file_lines.clone()),
             );
             view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
             black_box(lines.len());
         });
     });
@@ -583,12 +613,14 @@ fn bench_diff_pipeline(c: &mut Criterion) {
             view.apply_syntax_highlighting_for_display_range(
                 DiffViewMode::Split,
                 SPLIT_RENDER_WIDTH,
+                LINE_WRAP_MODE,
                 0,
                 VIEWPORT_HEIGHT,
                 FILETYPE,
                 &registry,
             );
-            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
             black_box(lines.len());
         });
     });

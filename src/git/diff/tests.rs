@@ -319,7 +319,10 @@ fn review_diff_snapshot_builds_views_metrics_and_search_index_from_parsed_metada
             filetype: Some("rust"),
         })
         .expect("snapshot should build a file view");
-    assert_eq!(view.estimated_display_line_count(), 4);
+    assert_eq!(
+        view.estimated_display_line_count(DiffViewMode::Unified, DiffLineWrapMode::Wrap),
+        4
+    );
 
     let index = snapshot.build_search_index();
     assert_eq!(index.file_count(), 2);
@@ -1763,7 +1766,9 @@ fn merge_conflict_diff_view_maps_selected_rows_to_conflict_index() {
     )
     .unwrap();
     let mut view = build_merge_conflict_diff_view(&parsed, None, None, None);
-    let rendered = view.rendered_lines(DiffViewMode::Unified, 120).to_vec();
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 120, DiffLineWrapMode::Wrap)
+        .to_vec();
     let rows = render_lines_to_strings(rendered, 120);
 
     assert!(rows.iter().any(|row| row.contains("1 Accept current")));
@@ -1771,11 +1776,11 @@ fn merge_conflict_diff_view_maps_selected_rows_to_conflict_index() {
     assert!(rows.iter().any(|row| row.contains("(current)")));
     assert!(rows.iter().any(|row| row.contains("(incoming)")));
     assert_eq!(
-        view.selected_conflict_index(DiffViewMode::Unified, 120, 2),
+        view.selected_conflict_index(DiffViewMode::Unified, 120, DiffLineWrapMode::Wrap, 2),
         Some(0)
     );
     assert_eq!(
-        view.selected_conflict_index(DiffViewMode::Unified, 120, 4),
+        view.selected_conflict_index(DiffViewMode::Unified, 120, DiffLineWrapMode::Wrap, 4),
         Some(0)
     );
 }
@@ -1807,7 +1812,9 @@ fn merge_conflict_diff_view_uses_branch_labels_for_resolution_rows() {
         incoming: "feature/really-long-branch-name-for-review-ui".to_string(),
     };
     let mut view = build_merge_conflict_diff_view(&parsed, None, Some(&labels), None);
-    let rendered = view.rendered_lines(DiffViewMode::Unified, 120).to_vec();
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 120, DiffLineWrapMode::Wrap)
+        .to_vec();
     let rows = render_lines_to_strings(rendered, 120);
 
     assert!(rows.iter().any(|row| row.contains("1 Accept main")));
@@ -3027,7 +3034,9 @@ fn collect_diff_lines_expands_full_file_context_like_pierre() {
 fn unified_render_expands_tabs_before_rendering() {
     let diff = "@@ -1 +1 @@\n-\told\n+\tnew";
     let mut view = build_diff_view_from_diff_text(diff, Some("go"));
-    let rendered = view.rendered_lines(DiffViewMode::Unified, 24).to_vec();
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 24, DiffLineWrapMode::Wrap)
+        .to_vec();
     let rows = render_lines_to_strings(rendered, 24);
 
     assert_eq!(rows[0], "   1 -     old          ");
@@ -3038,25 +3047,29 @@ fn unified_render_expands_tabs_before_rendering() {
 fn split_render_expands_tabs_on_both_sides() {
     let diff = "@@ -1 +1 @@\n-\told\n+\tnew";
     let mut view = build_diff_view_from_diff_text(diff, Some("go"));
-    let rendered = view.rendered_lines(DiffViewMode::Split, 29).to_vec();
+    let rendered = view
+        .rendered_lines(DiffViewMode::Split, 29, DiffLineWrapMode::Wrap)
+        .to_vec();
     let rows = render_lines_to_strings(rendered, 29);
 
-    assert_eq!(rows, vec!["   1     old      1     new  "]);
+    assert_eq!(rows, vec!["   1     old │    1     new  "]);
 }
 
 #[test]
 fn split_render_wraps_sides_and_keeps_columns_aligned() {
     let diff = "@@ -1 +1 @@\n-abcdefghijklmnop\n+xy";
     let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
-    let rendered = view.rendered_lines(DiffViewMode::Split, 29).to_vec();
+    let rendered = view
+        .rendered_lines(DiffViewMode::Split, 29, DiffLineWrapMode::Wrap)
+        .to_vec();
     let rows = render_lines_to_strings(rendered, 29);
 
     assert_eq!(
         rows,
         vec![
-            "   1 abcdefg      1 xy       ",
-            "     hijklmn                 ",
-            "     op                      ",
+            "   1 abcdefg │    1 xy       ",
+            "     hijklmn │               ",
+            "     op      │               ",
         ]
     );
 }
@@ -3066,17 +3079,44 @@ fn split_wrapped_rows_keep_line_navigation_targets() {
     let diff = "@@ -1 +1 @@\n-abcdefghijklmnop\n+xy";
     let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
 
-    assert_eq!(view.display_line_count(DiffViewMode::Split, 29), 3);
     assert_eq!(
-        view.selected_line_number(DiffViewMode::Split, 29, 0),
+        view.display_line_count(DiffViewMode::Split, 29, DiffLineWrapMode::Wrap),
+        3
+    );
+    assert_eq!(
+        view.selected_line_number(DiffViewMode::Split, 29, DiffLineWrapMode::Wrap, 0),
         Some(1)
     );
     assert_eq!(
-        view.selected_line_number(DiffViewMode::Split, 29, 1),
+        view.selected_line_number(DiffViewMode::Split, 29, DiffLineWrapMode::Wrap, 1),
         Some(1)
     );
     assert_eq!(
-        view.selected_line_number(DiffViewMode::Split, 29, 2),
+        view.selected_line_number(DiffViewMode::Split, 29, DiffLineWrapMode::Wrap, 2),
+        Some(1)
+    );
+}
+
+#[test]
+fn split_no_wrap_truncates_sides_to_one_display_row() {
+    let diff = "@@ -1 +1 @@\n-abcdefghijklmnop\n+xy";
+    let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+    let rendered = view
+        .rendered_lines(DiffViewMode::Split, 29, DiffLineWrapMode::NoWrap)
+        .to_vec();
+    let rows = render_lines_to_strings(rendered, 29);
+
+    assert_eq!(rows, vec!["   1 abcdefg │    1 xy       "]);
+    assert_eq!(
+        view.display_line_count(DiffViewMode::Split, 29, DiffLineWrapMode::NoWrap),
+        1
+    );
+    assert_eq!(
+        view.estimated_display_line_count(DiffViewMode::Split, DiffLineWrapMode::NoWrap),
+        1
+    );
+    assert_eq!(
+        view.selected_line_number(DiffViewMode::Split, 29, DiffLineWrapMode::NoWrap, 0),
         Some(1)
     );
 }
@@ -3085,7 +3125,9 @@ fn split_wrapped_rows_keep_line_navigation_targets() {
 fn unified_render_wraps_long_lines_with_indented_continuations() {
     let diff = "@@ -1 +1 @@\n+abcdefghijklmnop";
     let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
-    let rendered = view.rendered_lines(DiffViewMode::Unified, 16).to_vec();
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 16, DiffLineWrapMode::Wrap)
+        .to_vec();
     let rows = render_lines_to_strings(rendered, 16);
 
     assert_eq!(rows, vec!["   1 + abcdefgh ", "       ijklmnop "]);
@@ -3096,13 +3138,36 @@ fn unified_wrapped_rows_keep_line_navigation_targets() {
     let diff = "@@ -1 +1 @@\n+abcdefghijklmnop";
     let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
 
-    assert_eq!(view.display_line_count(DiffViewMode::Unified, 16), 2);
     assert_eq!(
-        view.selected_line_number(DiffViewMode::Unified, 16, 0),
+        view.display_line_count(DiffViewMode::Unified, 16, DiffLineWrapMode::Wrap),
+        2
+    );
+    assert_eq!(
+        view.selected_line_number(DiffViewMode::Unified, 16, DiffLineWrapMode::Wrap, 0),
         Some(1)
     );
     assert_eq!(
-        view.selected_line_number(DiffViewMode::Unified, 16, 1),
+        view.selected_line_number(DiffViewMode::Unified, 16, DiffLineWrapMode::Wrap, 1),
+        Some(1)
+    );
+}
+
+#[test]
+fn unified_no_wrap_truncates_to_one_display_row() {
+    let diff = "@@ -1 +1 @@\n+abcdefghijklmnop";
+    let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 16, DiffLineWrapMode::NoWrap)
+        .to_vec();
+    let rows = render_lines_to_strings(rendered, 16);
+
+    assert_eq!(rows, vec!["   1 + abcdefgh "]);
+    assert_eq!(
+        view.display_line_count(DiffViewMode::Unified, 16, DiffLineWrapMode::NoWrap),
+        1
+    );
+    assert_eq!(
+        view.selected_line_number(DiffViewMode::Unified, 16, DiffLineWrapMode::NoWrap, 0),
         Some(1)
     );
 }
@@ -3113,22 +3178,22 @@ fn compare_source_line_navigation_ignores_removed_only_rows() {
     let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
 
     assert_eq!(
-        view.selected_new_line_number(DiffViewMode::Unified, 80, 0),
+        view.selected_new_line_number(DiffViewMode::Unified, 80, DiffLineWrapMode::Wrap, 0),
         None
     );
     assert_eq!(
-        view.selected_new_line_number(DiffViewMode::Unified, 80, 1),
+        view.selected_new_line_number(DiffViewMode::Unified, 80, DiffLineWrapMode::Wrap, 1),
         Some(1)
     );
     assert_eq!(
-        view.selected_new_line_number(DiffViewMode::Split, 80, 0),
+        view.selected_new_line_number(DiffViewMode::Split, 80, DiffLineWrapMode::Wrap, 0),
         Some(1)
     );
 
     let deleted_diff = "@@ -1 +0,0 @@\n-old";
     let mut deleted_view = build_diff_view_from_diff_text(deleted_diff, Some("rust"));
     assert_eq!(
-        deleted_view.selected_new_line_number(DiffViewMode::Split, 80, 0),
+        deleted_view.selected_new_line_number(DiffViewMode::Split, 80, DiffLineWrapMode::Wrap, 0),
         None
     );
 }
@@ -3139,11 +3204,11 @@ fn selection_hit_testing_ignores_prefix_and_targets_split_panes() {
     let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
 
     assert!(
-        view.selection_point_at(DiffViewMode::Unified, 24, 0, 3)
+        view.selection_point_at(DiffViewMode::Unified, 24, DiffLineWrapMode::Wrap, 0, 3)
             .is_none()
     );
     assert_eq!(
-        view.selection_point_at(DiffViewMode::Unified, 24, 0, 8),
+        view.selection_point_at(DiffViewMode::Unified, 24, DiffLineWrapMode::Wrap, 0, 8),
         Some(DiffSelectionPoint {
             display_index: 0,
             pane: DiffSelectionPane::Unified,
@@ -3151,7 +3216,7 @@ fn selection_hit_testing_ignores_prefix_and_targets_split_panes() {
         })
     );
     assert_eq!(
-        view.selection_point_at(DiffViewMode::Split, 29, 0, 21),
+        view.selection_point_at(DiffViewMode::Split, 29, DiffLineWrapMode::Wrap, 0, 21),
         Some(DiffSelectionPoint {
             display_index: 0,
             pane: DiffSelectionPane::Right,
@@ -3174,6 +3239,7 @@ fn split_selection_extracts_only_selected_pane_text() {
     let selected = view.selected_text(
         DiffViewMode::Split,
         40,
+        DiffLineWrapMode::Wrap,
         DiffSelectionPoint {
             display_index: 0,
             pane: DiffSelectionPane::Right,
@@ -3220,21 +3286,33 @@ fn expanded_context_lines_render_with_exact_syntax_highlighting() {
         .expect("highlight registry should initialize");
     view.apply_exact_syntax_highlighting(Some("rust"), &registry);
 
-    let gap_index = (0..view.display_line_count(DiffViewMode::Unified, 120))
-        .find(|index| {
-            matches!(
-                view.selected_gap_action(DiffViewMode::Unified, 120, *index),
-                Some((_, GapExpandDirection::Up))
-            )
-        })
-        .expect("expected expandable gap");
-    let expanded_gap_index = view.expand_selected_gap(DiffViewMode::Unified, 120, gap_index, 1);
+    let gap_index =
+        (0..view.display_line_count(DiffViewMode::Unified, 120, DiffLineWrapMode::Wrap))
+            .find(|index| {
+                matches!(
+                    view.selected_gap_action(
+                        DiffViewMode::Unified,
+                        120,
+                        DiffLineWrapMode::Wrap,
+                        *index
+                    ),
+                    Some((_, GapExpandDirection::Up))
+                )
+            })
+            .expect("expected expandable gap");
+    let expanded_gap_index = view.expand_selected_gap(
+        DiffViewMode::Unified,
+        120,
+        DiffLineWrapMode::Wrap,
+        gap_index,
+        1,
+    );
     assert!(
         expanded_gap_index > 0,
         "expanded line should precede the gap control"
     );
 
-    let rendered = view.rendered_lines(DiffViewMode::Unified, 120);
+    let rendered = view.rendered_lines(DiffViewMode::Unified, 120, DiffLineWrapMode::Wrap);
     let expanded_line = &rendered[expanded_gap_index - 1];
     let target_text = new_file_lines[1].as_str();
 

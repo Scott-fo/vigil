@@ -11,14 +11,23 @@ use super::{border_active_color, border_color, panel_color, text_color, text_mut
 pub(super) fn diff_pane_label(app: &App) -> String {
     if app.sidebar_hidden {
         return format!(
-            "{}  diff  sidebar hidden",
-            diff_mode_label(app.diff_view_mode)
+            "{}  {}  diff  sidebar hidden",
+            diff_mode_label(app.diff_view_mode),
+            app.diff_line_wrap_mode.label()
         );
     }
 
     match app.active_pane {
-        ActivePane::Sidebar => format!("{}  sidebar", diff_mode_label(app.diff_view_mode)),
-        ActivePane::Diff => format!("{}  diff", diff_mode_label(app.diff_view_mode)),
+        ActivePane::Sidebar => format!(
+            "{}  {}  sidebar",
+            diff_mode_label(app.diff_view_mode),
+            app.diff_line_wrap_mode.label()
+        ),
+        ActivePane::Diff => format!(
+            "{}  {}  diff",
+            diff_mode_label(app.diff_view_mode),
+            app.diff_line_wrap_mode.label()
+        ),
     }
 }
 

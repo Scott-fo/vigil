@@ -50,6 +50,7 @@ pub(super) fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let diff_focused = app.active_pane == ActivePane::Diff;
     let mode = app.diff_view_mode;
+    let line_wrap = app.diff_line_wrap_mode;
     if app.diff_text_selection.is_none() && app.review_report.is_none() {
         render_diff_body_windowed(frame, app, area, mode, diff_focused);
         return;
@@ -67,6 +68,7 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let all_lines = augmented_diff_lines(
         app,
         mode,
+        line_wrap,
         area.width as usize,
         diff_focused,
         viewport.selected_index,
@@ -109,7 +111,9 @@ fn render_diff_body_windowed(
 
     let width = area.width as usize;
     let height = area.height as usize;
-    let estimated_line_count = app.diff_view.estimated_display_line_count();
+    let estimated_line_count = app
+        .diff_view
+        .estimated_display_line_count(mode, app.diff_line_wrap_mode);
     let max_start = estimated_line_count.saturating_sub(height);
     let selected_index = app
         .selected_diff_line_index
@@ -131,9 +135,13 @@ fn render_diff_body_windowed(
     app.diff_scroll = visual_start.min(u16::MAX as usize) as u16;
     app.update_diff_viewport(mode, width, visual_start, visual_end);
 
-    let mut visible_lines =
-        app.diff_view
-            .rendered_lines_window(mode, width, visual_start, visual_end);
+    let mut visible_lines = app.diff_view.rendered_lines_window(
+        mode,
+        width,
+        app.diff_line_wrap_mode,
+        visual_start,
+        visual_end,
+    );
     if diff_focused && selected_index >= visual_start && selected_index < visual_end {
         let offset = selected_index - visual_start;
         if let Some(line) = visible_lines.get_mut(offset) {
@@ -161,11 +169,15 @@ fn render_diff_body_windowed(
 fn augmented_diff_lines(
     app: &mut App,
     mode: crate::app::DiffViewMode,
+    line_wrap: crate::app::DiffLineWrapMode,
     width: usize,
     diff_focused: bool,
     selected_index: usize,
 ) -> Vec<Line<'static>> {
-    let rendered_lines = app.diff_view.rendered_lines(mode, width).to_vec();
+    let rendered_lines = app
+        .diff_view
+        .rendered_lines(mode, width, line_wrap)
+        .to_vec();
     let mut lines = Vec::with_capacity(rendered_lines.len());
 
     for (display_index, line) in rendered_lines.into_iter().enumerate() {
@@ -174,6 +186,7 @@ fn augmented_diff_lines(
             && let Some((start, end)) = app.diff_view.selection_columns(
                 mode,
                 width,
+                line_wrap,
                 selection.anchor,
                 selection.head,
                 display_index,

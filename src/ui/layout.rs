@@ -1,5 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
+const SIDEBAR_WIDTH: u16 = 32;
+
 pub(super) fn main_layout(area: Rect, sidebar_hidden: bool) -> [Rect; 2] {
     if sidebar_hidden {
         return [Rect::new(area.x, area.y, 0, area.height), area];
@@ -7,7 +9,7 @@ pub(super) fn main_layout(area: Rect, sidebar_hidden: bool) -> [Rect; 2] {
 
     let layout = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(38), Constraint::Min(40)])
+        .constraints([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(40)])
         .split(area);
 
     [layout[0], layout[1]]
@@ -46,5 +48,14 @@ mod tests {
 
         assert_eq!(sidebar_area.width, 0);
         assert_eq!(diff_area, area);
+    }
+
+    #[test]
+    fn main_layout_uses_compact_sidebar_width() {
+        let area = Rect::new(0, 0, 120, 40);
+        let [sidebar_area, diff_area] = main_layout(area, false);
+
+        assert_eq!(sidebar_area.width, SIDEBAR_WIDTH);
+        assert_eq!(diff_area.width, area.width - SIDEBAR_WIDTH);
     }
 }

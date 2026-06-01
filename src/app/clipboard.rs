@@ -16,6 +16,7 @@ impl App {
         let text = self.diff_view.selected_text(
             self.diff_view_mode,
             self.current_diff_display_width(),
+            self.diff_line_wrap_mode,
             selection.anchor,
             selection.head,
         );

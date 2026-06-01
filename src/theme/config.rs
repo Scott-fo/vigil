@@ -17,6 +17,7 @@ pub fn read_tui_preference() -> TuiPreference {
         theme: env_theme.or(file_preference.theme),
         mode: env_mode.or(file_preference.mode),
         diff_view_mode: file_preference.diff_view_mode,
+        diff_line_wrap_mode: file_preference.diff_line_wrap_mode,
     }
 }
 
@@ -27,6 +28,12 @@ pub fn persist_theme_preference(theme: &str, mode: ThemeMode) -> io::Result<()> 
 
 pub fn persist_diff_view_mode(diff_view_mode: &str) -> io::Result<()> {
     let preference = apply_diff_view_mode(read_tui_preference_from_config(), diff_view_mode);
+    write_tui_preference_to_config(&preference)
+}
+
+pub fn persist_diff_line_wrap_mode(diff_line_wrap_mode: &str) -> io::Result<()> {
+    let preference =
+        apply_diff_line_wrap_mode(read_tui_preference_from_config(), diff_line_wrap_mode);
     write_tui_preference_to_config(&preference)
 }
 
@@ -43,6 +50,7 @@ fn read_tui_preference_from_path(path: &Path) -> TuiPreference {
             theme: None,
             mode: None,
             diff_view_mode: None,
+            diff_line_wrap_mode: None,
         };
     };
 
@@ -50,6 +58,7 @@ fn read_tui_preference_from_path(path: &Path) -> TuiPreference {
         theme: None,
         mode: None,
         diff_view_mode: None,
+        diff_line_wrap_mode: None,
     })
 }
 
@@ -79,6 +88,14 @@ fn apply_theme_preference(
 
 fn apply_diff_view_mode(mut preference: TuiPreference, diff_view_mode: &str) -> TuiPreference {
     preference.diff_view_mode = Some(diff_view_mode.to_owned());
+    preference
+}
+
+fn apply_diff_line_wrap_mode(
+    mut preference: TuiPreference,
+    diff_line_wrap_mode: &str,
+) -> TuiPreference {
+    preference.diff_line_wrap_mode = Some(diff_line_wrap_mode.to_owned());
     preference
 }
 
@@ -125,6 +142,7 @@ mod tests {
             theme: None,
             mode: None,
             diff_view_mode: Some("unified".to_string()),
+            diff_line_wrap_mode: Some("no_wrap".to_string()),
         };
         write_tui_preference_to_path(&path, &initial).expect("should write initial preference");
 
@@ -139,6 +157,7 @@ mod tests {
         assert_eq!(persisted.theme.as_deref(), Some("tokyo-night"));
         assert_eq!(persisted.mode, Some(ThemeMode::Light));
         assert_eq!(persisted.diff_view_mode.as_deref(), Some("unified"));
+        assert_eq!(persisted.diff_line_wrap_mode.as_deref(), Some("no_wrap"));
 
         let _ = fs::remove_file(path);
     }
@@ -150,6 +169,7 @@ mod tests {
             theme: Some("catppuccin-macchiato".to_string()),
             mode: Some(ThemeMode::Dark),
             diff_view_mode: None,
+            diff_line_wrap_mode: Some("wrap".to_string()),
         };
         write_tui_preference_to_path(&path, &initial).expect("should write initial preference");
 
@@ -160,6 +180,30 @@ mod tests {
         assert_eq!(persisted.theme.as_deref(), Some("catppuccin-macchiato"));
         assert_eq!(persisted.mode, Some(ThemeMode::Dark));
         assert_eq!(persisted.diff_view_mode.as_deref(), Some("split"));
+        assert_eq!(persisted.diff_line_wrap_mode.as_deref(), Some("wrap"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn diff_line_wrap_write_preserves_theme_and_diff_view() {
+        let path = temp_config_path("diff-line-wrap-write-preserves-theme-and-diff-view");
+        let initial = TuiPreference {
+            theme: Some("catppuccin-macchiato".to_string()),
+            mode: Some(ThemeMode::Dark),
+            diff_view_mode: Some("split".to_string()),
+            diff_line_wrap_mode: None,
+        };
+        write_tui_preference_to_path(&path, &initial).expect("should write initial preference");
+
+        let updated = apply_diff_line_wrap_mode(read_tui_preference_from_path(&path), "no_wrap");
+        write_tui_preference_to_path(&path, &updated).expect("should write updated preference");
+
+        let persisted = read_tui_preference_from_path(&path);
+        assert_eq!(persisted.theme.as_deref(), Some("catppuccin-macchiato"));
+        assert_eq!(persisted.mode, Some(ThemeMode::Dark));
+        assert_eq!(persisted.diff_view_mode.as_deref(), Some("split"));
+        assert_eq!(persisted.diff_line_wrap_mode.as_deref(), Some("no_wrap"));
 
         let _ = fs::remove_file(path);
     }

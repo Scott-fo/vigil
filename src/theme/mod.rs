@@ -46,6 +46,8 @@ pub struct TuiPreference {
     pub mode: Option<ThemeMode>,
     #[serde(rename = "diff_view_mode")]
     pub diff_view_mode: Option<String>,
+    #[serde(rename = "diff_line_wrap_mode")]
+    pub diff_line_wrap_mode: Option<String>,
 }
 
 static ACTIVE_THEME_INDEX: AtomicUsize = AtomicUsize::new(0);

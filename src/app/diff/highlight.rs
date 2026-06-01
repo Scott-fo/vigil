@@ -49,6 +49,7 @@ impl App {
         let viewport_ready = self.diff_view.is_display_range_fully_highlighted(
             viewport.mode,
             viewport.width,
+            viewport.line_wrap,
             viewport.start,
             viewport.end,
         );
@@ -129,6 +130,7 @@ impl App {
                     diff_view.apply_syntax_highlighting_for_display_range(
                         viewport.mode,
                         viewport.width,
+                        viewport.line_wrap,
                         viewport.start,
                         viewport.end,
                         file.filetype,

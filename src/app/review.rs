@@ -304,10 +304,12 @@ impl App {
         let Some(file_path) = self.selected_file().map(|file| file.path.clone()) else {
             return Vec::new();
         };
-        let Some(anchor) = self
-            .diff_view
-            .display_line_anchor(mode, width, display_index)
-        else {
+        let Some(anchor) = self.diff_view.display_line_anchor(
+            mode,
+            width,
+            self.diff_line_wrap_mode,
+            display_index,
+        ) else {
             return Vec::new();
         };
         review_domain::comments_for_display_line(self.active_review_findings(), &file_path, anchor)

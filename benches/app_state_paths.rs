@@ -2,13 +2,14 @@ use std::{fs, hint::black_box, path::PathBuf, process::Command, sync::LazyLock};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use vigil::{
-    app::{ActivePane, App, BranchCompareField, DiffViewMode},
+    app::{ActivePane, App, BranchCompareField, DiffLineWrapMode, DiffViewMode},
     git::{CommitSearchEntry, build_diff_view_from_diff_text},
 };
 
 const SPLIT_RENDER_WIDTH: usize = 160;
 const VIEWPORT_HEIGHT: usize = 40;
 const FILETYPE: Option<&'static str> = Some("rust");
+const LINE_WRAP_MODE: DiffLineWrapMode = DiffLineWrapMode::Wrap;
 
 struct AppStateFixture {
     repo_root: PathBuf,
@@ -104,9 +105,10 @@ fn bench_app_state_paths(c: &mut Criterion) {
     let mut commit_search_app = build_benchmark_app(fixture);
     let mut branch_compare_app = build_benchmark_app(fixture);
     let mut theme_filter_app = build_benchmark_app(fixture);
-    let rendered_line_count = viewport_app
-        .diff_view
-        .display_line_count(DiffViewMode::Split, 160);
+    let rendered_line_count =
+        viewport_app
+            .diff_view
+            .display_line_count(DiffViewMode::Split, 160, LINE_WRAP_MODE);
     let mut diff_cursor = 0usize;
     let mut sidebar_cursor = rendered_line_count / 3;
 

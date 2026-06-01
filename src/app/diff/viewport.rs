@@ -1,5 +1,5 @@
 use super::super::{
-    ActivePane, App, DiffViewMode,
+    ActivePane, App, DiffLineWrapMode, DiffViewMode,
     navigation::{scroll_u16, scroll_usize},
 };
 use crate::review::ReviewSeverity;
@@ -11,6 +11,7 @@ const FALLBACK_DIFF_DISPLAY_WIDTH: usize = 120;
 pub(crate) struct DiffViewport {
     pub(crate) mode: DiffViewMode,
     pub(crate) width: usize,
+    pub(crate) line_wrap: DiffLineWrapMode,
     pub(crate) start: usize,
     pub(crate) end: usize,
 }
@@ -19,6 +20,7 @@ pub(crate) struct DiffViewport {
 pub struct PreparedDiffViewport {
     pub mode: DiffViewMode,
     pub width: usize,
+    pub line_wrap: DiffLineWrapMode,
     pub start: usize,
     pub end: usize,
     pub visual_start: usize,
@@ -39,6 +41,7 @@ impl App {
         self.selected_diff_line_index = self.diff_view.move_selection(
             self.diff_view_mode,
             self.current_diff_display_width(),
+            self.diff_line_wrap_mode,
             self.selected_diff_line_index,
             delta,
         );
@@ -54,6 +57,7 @@ impl App {
         self.diff_viewport = (width > 0 && visible_start < visible_end).then_some(DiffViewport {
             mode,
             width,
+            line_wrap: self.diff_line_wrap_mode,
             start: visible_start,
             end: visible_end,
         });
@@ -69,7 +73,8 @@ impl App {
             return None;
         }
 
-        let display_line_count = self.diff_view.rendered_lines(mode, width).len();
+        let line_wrap = self.diff_line_wrap_mode;
+        let display_line_count = self.diff_view.rendered_lines(mode, width, line_wrap).len();
         if display_line_count == 0 {
             return None;
         }
@@ -128,6 +133,7 @@ impl App {
         Some(PreparedDiffViewport {
             mode,
             width,
+            line_wrap,
             start,
             end,
             visual_start,

@@ -14,6 +14,8 @@ use super::{
     text::{devicon_for_path, file_label_width, sidebar_status_label, status_gap, truncate_middle},
 };
 
+const INDENT_UNIT: &str = " ";
+
 pub(super) fn list_item(
     item: &SidebarItem,
     row_width: u16,
@@ -50,7 +52,7 @@ fn header_item(
     collapsed: bool,
     matches_search: bool,
 ) -> ListItem<'static> {
-    let indent = "  ".repeat(depth);
+    let indent = INDENT_UNIT.repeat(depth);
     let arrow = if collapsed { "▸ " } else { "▾ " };
     let label_style = if matches_search {
         Style::new().fg(text_color()).add_modifier(Modifier::BOLD)
@@ -73,7 +75,7 @@ fn file_item(
     row_width: u16,
     review_comment_count: usize,
 ) -> ListItem<'static> {
-    let indent = "  ".repeat(depth);
+    let indent = INDENT_UNIT.repeat(depth);
     let staged = git::is_file_staged(&file.status);
     let row_style = if staged {
         Style::new().bg(add_bg_color())

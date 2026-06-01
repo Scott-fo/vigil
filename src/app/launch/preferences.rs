@@ -1,12 +1,13 @@
 use crate::theme::{self, ThemeMode, config};
 
-use super::super::DiffViewMode;
+use super::super::{DiffLineWrapMode, DiffViewMode};
 
 #[derive(Debug, Clone)]
 pub(super) struct LaunchPreference {
     pub theme_name: String,
     pub theme_mode: ThemeMode,
     pub diff_view_mode: DiffViewMode,
+    pub diff_line_wrap_mode: DiffLineWrapMode,
 }
 
 impl LaunchPreference {
@@ -20,6 +21,11 @@ impl LaunchPreference {
                 .as_deref()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(DiffViewMode::Split),
+            diff_line_wrap_mode: preference
+                .diff_line_wrap_mode
+                .as_deref()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_default(),
         }
     }
 
@@ -28,6 +34,7 @@ impl LaunchPreference {
             theme_name: theme::resolve_theme_name(None).to_string(),
             theme_mode: ThemeMode::Dark,
             diff_view_mode: DiffViewMode::Split,
+            diff_line_wrap_mode: DiffLineWrapMode::default(),
         }
     }
 }

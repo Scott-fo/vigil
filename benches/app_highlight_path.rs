@@ -8,7 +8,7 @@ use std::{
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use tokio::{runtime::Runtime, sync::mpsc, task};
 use vigil::{
-    app::DiffViewMode,
+    app::{DiffLineWrapMode, DiffViewMode},
     git::{
         DiffView, HighlightRegistry, build_diff_view_from_diff_text,
         build_diff_view_from_diff_text_with_context,
@@ -18,6 +18,7 @@ use vigil::{
 const FILETYPE: Option<&'static str> = Some("rust");
 const SPLIT_RENDER_WIDTH: usize = 160;
 const VIEWPORT_HEIGHT: usize = 40;
+const LINE_WRAP_MODE: DiffLineWrapMode = DiffLineWrapMode::Wrap;
 
 struct GitRsNewFileFixture {
     diff: String,
@@ -65,12 +66,13 @@ fn direct_viewport_highlight(mut view: DiffView, registry: &HighlightRegistry) -
     view.apply_syntax_highlighting_for_display_range(
         DiffViewMode::Split,
         SPLIT_RENDER_WIDTH,
+        LINE_WRAP_MODE,
         0,
         VIEWPORT_HEIGHT,
         FILETYPE,
         registry,
     );
-    view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH)
+    view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE)
 }
 
 fn bench_app_highlight_path(c: &mut Criterion) {

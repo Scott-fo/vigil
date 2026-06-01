@@ -7,7 +7,7 @@ use std::{
 
 use color_eyre::Result;
 use vigil::{
-    app::DiffViewMode,
+    app::{DiffLineWrapMode, DiffViewMode},
     git::{
         self, BlameTarget, BranchCompareSelection, BranchMergeOutcome, BranchMergeRequest,
         CommitCompareSelection, DiffView, EMPTY_TREE_HASH, FileEntry,
@@ -146,7 +146,7 @@ fn find_file(files: &[FileEntry], path: &str) -> FileEntry {
 }
 
 fn rendered_lines(view: &mut DiffView, mode: DiffViewMode, width: usize) -> Vec<String> {
-    view.rendered_lines(mode, width)
+    view.rendered_lines(mode, width, DiffLineWrapMode::Wrap)
         .iter()
         .map(|line| {
             line.spans

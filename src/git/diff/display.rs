@@ -1,7 +1,10 @@
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
-use crate::{app::DiffViewMode, ui};
+use crate::{
+    app::{DiffLineWrapMode, DiffViewMode},
+    ui,
+};
 
 use super::{
     DiffDisplayLineAnchor, DiffHunkGap, DiffLineKind, DiffSelectionPane, DiffSelectionPoint,
@@ -14,8 +17,13 @@ use super::{
 };
 
 impl DiffView {
-    pub fn rendered_lines(&mut self, mode: DiffViewMode, width: usize) -> &[Line<'static>] {
-        self.ensure_display_cache(mode, width);
+    pub fn rendered_lines(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        line_wrap: DiffLineWrapMode,
+    ) -> &[Line<'static>] {
+        self.ensure_display_cache(mode, width, line_wrap);
         &self.display_cache.entry(mode).lines
     }
 
@@ -23,6 +31,7 @@ impl DiffView {
         &self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         start: usize,
         end: usize,
     ) -> Vec<Line<'static>> {
@@ -50,7 +59,8 @@ impl DiffView {
             match mode {
                 DiffViewMode::Unified => {
                     for row_index in hunk.row_start..hunk.row_end {
-                        for rendered_line in render_unified_code_lines(&self.rows[row_index], width)
+                        for rendered_line in
+                            render_unified_code_lines(&self.rows[row_index], width, line_wrap)
                         {
                             if push_window_line(
                                 &mut lines,
@@ -69,6 +79,7 @@ impl DiffView {
                         hunk.row_start,
                         hunk.row_end,
                         width,
+                        line_wrap,
                         &mut cursor,
                         start,
                         end,
@@ -81,7 +92,16 @@ impl DiffView {
             }
 
             if let Some(gap) = self.gaps.get(hunk_offset) {
-                self.push_gap_window_lines(gap, width, mode, &mut cursor, start, end, &mut lines);
+                self.push_gap_window_lines(
+                    gap,
+                    width,
+                    mode,
+                    line_wrap,
+                    &mut cursor,
+                    start,
+                    end,
+                    &mut lines,
+                );
                 if cursor >= end {
                     return lines;
                 }
@@ -91,12 +111,23 @@ impl DiffView {
         lines
     }
 
-    pub fn estimated_display_line_count(&self) -> usize {
+    pub fn estimated_display_line_count(
+        &self,
+        mode: DiffViewMode,
+        line_wrap: DiffLineWrapMode,
+    ) -> usize {
         if self.rows.is_empty() {
             return 1;
         }
 
-        self.rows.len()
+        let row_count = match (mode, line_wrap) {
+            (DiffViewMode::Split, DiffLineWrapMode::NoWrap) => {
+                self.estimated_split_no_wrap_row_count()
+            }
+            _ => self.rows.len(),
+        };
+
+        row_count
             + self
                 .gaps
                 .iter()
@@ -116,14 +147,48 @@ impl DiffView {
                 .sum::<usize>()
     }
 
+    fn estimated_split_no_wrap_row_count(&self) -> usize {
+        let mut line_count = 0usize;
+
+        for hunk in &self.hunks {
+            let mut row_index = hunk.row_start;
+            while row_index < hunk.row_end {
+                match self.rows[row_index].kind {
+                    DiffLineKind::Removed | DiffLineKind::Added => {
+                        let mut removed_count = 0usize;
+                        let mut added_count = 0usize;
+                        while row_index < hunk.row_end {
+                            match self.rows[row_index].kind {
+                                DiffLineKind::Removed => removed_count += 1,
+                                DiffLineKind::Added => added_count += 1,
+                                _ => break,
+                            }
+                            row_index += 1;
+                        }
+                        line_count += removed_count.max(added_count);
+                    }
+                    DiffLineKind::Context
+                    | DiffLineKind::ConflictAction
+                    | DiffLineKind::ConflictMarker(_) => {
+                        line_count += 1;
+                        row_index += 1;
+                    }
+                }
+            }
+        }
+
+        line_count
+    }
+
     pub fn selection_point_at(
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         display_index: usize,
         column: usize,
     ) -> Option<DiffSelectionPoint> {
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         let selection_line = self
             .display_cache
             .entry(mode)
@@ -167,11 +232,12 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         display_index: usize,
         pane: DiffSelectionPane,
         column: usize,
     ) -> Option<DiffSelectionPoint> {
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         let selection_line = self
             .display_cache
             .entry(mode)
@@ -189,6 +255,7 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         anchor: DiffSelectionPoint,
         head: DiffSelectionPoint,
     ) -> Option<String> {
@@ -196,7 +263,7 @@ impl DiffView {
             return None;
         }
 
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         let selection = self.display_cache.entry(mode).selection.as_slice();
         let (start, end) = normalize_selection_points(anchor, head);
         let mut lines = Vec::new();
@@ -227,6 +294,7 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         anchor: DiffSelectionPoint,
         head: DiffSelectionPoint,
         display_index: usize,
@@ -235,7 +303,7 @@ impl DiffView {
             return None;
         }
 
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         let selection = self.display_cache.entry(mode).selection.as_slice();
         let (start, end) = normalize_selection_points(anchor, head);
         if display_index < start.display_index || display_index > end.display_index {
@@ -261,15 +329,25 @@ impl DiffView {
         ))
     }
 
-    pub fn first_selectable_index(&mut self, mode: DiffViewMode, width: usize) -> usize {
-        self.nav_targets(mode, width)
+    pub fn first_selectable_index(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        line_wrap: DiffLineWrapMode,
+    ) -> usize {
+        self.nav_targets(mode, width, line_wrap)
             .iter()
             .position(|target| target.is_some())
             .unwrap_or(0)
     }
 
-    pub fn last_selectable_index(&mut self, mode: DiffViewMode, width: usize) -> usize {
-        self.nav_targets(mode, width)
+    pub fn last_selectable_index(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        line_wrap: DiffLineWrapMode,
+    ) -> usize {
+        self.nav_targets(mode, width, line_wrap)
             .iter()
             .rposition(|target| target.is_some())
             .unwrap_or(0)
@@ -279,10 +357,11 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         current: usize,
         delta: i32,
     ) -> usize {
-        let nav = self.nav_targets(mode, width);
+        let nav = self.nav_targets(mode, width, line_wrap);
         if nav.is_empty() {
             return 0;
         }
@@ -321,9 +400,15 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         index: usize,
     ) -> Option<usize> {
-        match self.nav_targets(mode, width).get(index).copied().flatten() {
+        match self
+            .nav_targets(mode, width, line_wrap)
+            .get(index)
+            .copied()
+            .flatten()
+        {
             Some(DisplayNavTarget::Line(line_number)) => Some(line_number),
             _ => None,
         }
@@ -333,9 +418,10 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         index: usize,
     ) -> Option<usize> {
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         let row_refs = self
             .display_cache
             .entry(mode)
@@ -367,10 +453,11 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         old_line: Option<usize>,
         new_line: Option<usize>,
     ) -> Option<usize> {
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         self.display_cache
             .entry(mode)
             .row_refs
@@ -391,9 +478,10 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         display_index: usize,
     ) -> Option<DiffDisplayLineAnchor> {
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         let row_refs = self.display_cache.entry(mode).row_refs.as_slice();
         let anchor = self.anchor_for_display_refs(*row_refs.get(display_index)?)?;
         if display_index > 0
@@ -412,9 +500,10 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         index: usize,
     ) -> Option<usize> {
-        self.selected_gap_action(mode, width, index)
+        self.selected_gap_action(mode, width, line_wrap, index)
             .map(|(gap_index, _)| gap_index)
     }
 
@@ -422,9 +511,15 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         index: usize,
     ) -> Option<(usize, GapExpandDirection)> {
-        match self.nav_targets(mode, width).get(index).copied().flatten() {
+        match self
+            .nav_targets(mode, width, line_wrap)
+            .get(index)
+            .copied()
+            .flatten()
+        {
             Some(DisplayNavTarget::Gap(gap_index, direction)) => Some((gap_index, direction)),
             _ => None,
         }
@@ -434,9 +529,10 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         index: usize,
     ) -> Option<usize> {
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         if let Some(Some(DisplayNavTarget::Conflict(conflict_index))) =
             self.display_cache.entry(mode).nav.get(index).copied()
         {
@@ -461,22 +557,29 @@ impl DiffView {
             })
     }
 
-    pub fn display_line_count(&mut self, mode: DiffViewMode, width: usize) -> usize {
-        self.nav_targets(mode, width).len()
+    pub fn display_line_count(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        line_wrap: DiffLineWrapMode,
+    ) -> usize {
+        self.nav_targets(mode, width, line_wrap).len()
     }
 
     pub fn expand_selected_gap(
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         index: usize,
         amount: usize,
     ) -> usize {
-        let Some((gap_index, direction)) = self.selected_gap_action(mode, width, index) else {
+        let Some((gap_index, direction)) = self.selected_gap_action(mode, width, line_wrap, index)
+        else {
             return index;
         };
         let _ = self.expand_gap(gap_index, direction, amount);
-        self.nav_targets(mode, width)
+        self.nav_targets(mode, width, line_wrap)
             .iter()
             .position(|target| {
                 matches!(
@@ -485,7 +588,13 @@ impl DiffView {
                         if *candidate == gap_index && *candidate_direction == direction
                 )
             })
-            .unwrap_or(index.min(self.nav_targets(mode, width).len().saturating_sub(1)))
+            .unwrap_or(
+                index.min(
+                    self.nav_targets(mode, width, line_wrap)
+                        .len()
+                        .saturating_sub(1),
+                ),
+            )
     }
 
     fn expand_gap(
@@ -520,6 +629,7 @@ impl DiffView {
         row_start: usize,
         row_end: usize,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         cursor: &mut usize,
         start: usize,
         end: usize,
@@ -553,7 +663,9 @@ impl DiffView {
                         let right = added
                             .get(pair_index)
                             .and_then(|index| self.rows.get(*index));
-                        for rendered_line in render_split_pair_lines(left, right, side_width) {
+                        for rendered_line in
+                            render_split_pair_lines(left, right, side_width, line_wrap)
+                        {
                             if push_window_line(lines, cursor, start, end, rendered_line.line) {
                                 return;
                             }
@@ -561,7 +673,9 @@ impl DiffView {
                     }
                 }
                 DiffLineKind::Context => {
-                    for rendered_line in render_split_pair_lines(Some(row), Some(row), side_width) {
+                    for rendered_line in
+                        render_split_pair_lines(Some(row), Some(row), side_width, line_wrap)
+                    {
                         if push_window_line(lines, cursor, start, end, rendered_line.line) {
                             return;
                         }
@@ -569,7 +683,9 @@ impl DiffView {
                     row_index += 1;
                 }
                 DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => {
-                    for rendered_line in render_unified_code_lines(row, side_width * 2 + 3) {
+                    for rendered_line in
+                        render_unified_code_lines(row, side_width * 2 + 3, line_wrap)
+                    {
                         if push_window_line(lines, cursor, start, end, rendered_line.line) {
                             return;
                         }
@@ -585,6 +701,7 @@ impl DiffView {
         gap: &DiffHunkGap,
         width: usize,
         mode: DiffViewMode,
+        line_wrap: DiffLineWrapMode,
         cursor: &mut usize,
         start: usize,
         end: usize,
@@ -619,6 +736,7 @@ impl DiffView {
                     self.expanded_context_highlighting(line_number),
                     gap_width,
                     split,
+                    line_wrap,
                 ) {
                     if push_window_line(lines, cursor, start, end, rendered_line.line) {
                         return;
@@ -668,6 +786,7 @@ impl DiffView {
                     self.expanded_context_highlighting(line_number),
                     gap_width,
                     split,
+                    line_wrap,
                 ) {
                     if push_window_line(lines, cursor, start, end, rendered_line.line) {
                         return;
@@ -677,10 +796,15 @@ impl DiffView {
         }
     }
 
-    pub(super) fn ensure_display_cache(&mut self, mode: DiffViewMode, width: usize) {
+    pub(super) fn ensure_display_cache(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        line_wrap: DiffLineWrapMode,
+    ) {
         let cache_is_stale = {
             let cache = self.display_cache.entry(mode);
-            !cache.valid || cache.width != width
+            !cache.valid || cache.width != width || cache.line_wrap != line_wrap
         };
 
         if !cache_is_stale {
@@ -701,13 +825,14 @@ impl DiffView {
             )
         } else {
             match mode {
-                DiffViewMode::Unified => self.build_unified_display(width),
-                DiffViewMode::Split => self.build_split_display(width),
+                DiffViewMode::Unified => self.build_unified_display(width, line_wrap),
+                DiffViewMode::Split => self.build_split_display(width, line_wrap),
             }
         };
 
         let cache = self.display_cache.entry_mut(mode);
         cache.width = width;
+        cache.line_wrap = line_wrap;
         cache.lines = lines;
         cache.nav = nav;
         cache.row_refs = row_refs;
@@ -715,8 +840,13 @@ impl DiffView {
         cache.valid = true;
     }
 
-    fn nav_targets(&mut self, mode: DiffViewMode, width: usize) -> &[Option<DisplayNavTarget>] {
-        self.ensure_display_cache(mode, width);
+    fn nav_targets(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        line_wrap: DiffLineWrapMode,
+    ) -> &[Option<DisplayNavTarget>] {
+        self.ensure_display_cache(mode, width, line_wrap);
         &self.display_cache.entry(mode).nav
     }
 
@@ -739,6 +869,7 @@ impl DiffView {
     fn build_unified_display(
         &self,
         width: usize,
+        line_wrap: DiffLineWrapMode,
     ) -> (
         Vec<Line<'static>>,
         Vec<Option<DisplayNavTarget>>,
@@ -774,7 +905,7 @@ impl DiffView {
                         }
                     }
                 };
-                for rendered_line in render_unified_code_lines(row, width) {
+                for rendered_line in render_unified_code_lines(row, width, line_wrap) {
                     lines.push(rendered_line.line);
                     nav.push(
                         row.conflict_index
@@ -801,6 +932,7 @@ impl DiffView {
                     gap,
                     width,
                     false,
+                    line_wrap,
                 );
             }
         }
@@ -811,6 +943,7 @@ impl DiffView {
     fn build_split_display(
         &self,
         width: usize,
+        line_wrap: DiffLineWrapMode,
     ) -> (
         Vec<Line<'static>>,
         Vec<Option<DisplayNavTarget>>,
@@ -830,6 +963,7 @@ impl DiffView {
                 &self.rows[hunk.row_start..hunk.row_end],
                 hunk.row_start,
                 side_width,
+                line_wrap,
             ) {
                 lines.push(line);
                 nav.push(target_line);
@@ -846,6 +980,7 @@ impl DiffView {
                     gap,
                     total_width,
                     true,
+                    line_wrap,
                 );
             }
         }
@@ -862,6 +997,7 @@ impl DiffView {
         gap: &DiffHunkGap,
         width: usize,
         split: bool,
+        line_wrap: DiffLineWrapMode,
     ) {
         let expansion = self
             .gap_expansions
@@ -883,6 +1019,7 @@ impl DiffView {
                     self.expanded_context_highlighting(line_number),
                     width,
                     split,
+                    line_wrap,
                 ) {
                     lines.push(rendered_line.line);
                     nav.push(Some(DisplayNavTarget::Line(line_number)));
@@ -936,6 +1073,7 @@ impl DiffView {
                     self.expanded_context_highlighting(line_number),
                     width,
                     split,
+                    line_wrap,
                 ) {
                     lines.push(rendered_line.line);
                     nav.push(Some(DisplayNavTarget::Line(line_number)));
@@ -998,6 +1136,7 @@ impl DiffDisplayCache {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct CachedDisplay {
     width: usize,
+    line_wrap: DiffLineWrapMode,
     pub(super) lines: Vec<Line<'static>>,
     pub(super) nav: Vec<Option<DisplayNavTarget>>,
     pub(super) row_refs: Vec<DisplayRowRefs>,

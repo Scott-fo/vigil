@@ -30,6 +30,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         key_line("F2", "open diff stats"),
         key_line("ff / fg", "file search / diff search"),
         key_line("v", "toggle unified / split diff"),
+        key_line("z", "toggle line wrap"),
         key_line("r", "refresh"),
         key_line("R", "run Codex review"),
         key_line("E", "edit Codex review context"),

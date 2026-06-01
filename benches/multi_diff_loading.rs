@@ -2,7 +2,7 @@ use std::{hint::black_box, sync::LazyLock};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use vigil::{
-    app::DiffViewMode,
+    app::{DiffLineWrapMode, DiffViewMode},
     git::{
         FileDiffMetadata, FileEntry, ReviewDiffSnapshot, build_diff_view_from_diff_text,
         build_diff_view_from_file_metadata, parse_patch_files,
@@ -17,6 +17,7 @@ const REMOVED_LINES_PER_SECTION: usize = 2;
 const ADDED_LINES_PER_SECTION: usize = 3;
 const GAP_SIZE: usize = 24;
 const DISPLAY_WIDTH: usize = 120;
+const LINE_WRAP_MODE: DiffLineWrapMode = DiffLineWrapMode::Wrap;
 
 static MULTI_FILE_DIFF: LazyLock<MultiFileDiffFixture> = LazyLock::new(build_multi_file_diff);
 static PARSED_FILES: LazyLock<Vec<FileDiffMetadata>> = LazyLock::new(|| {
@@ -122,7 +123,7 @@ index 0000000..1111111 100644\n\
 fn rendered_line_count(mut views: impl Iterator<Item = vigil::git::DiffView>) -> usize {
     let mut total = 0usize;
     for mut view in views.by_ref() {
-        total += view.display_line_count(DiffViewMode::Unified, DISPLAY_WIDTH);
+        total += view.display_line_count(DiffViewMode::Unified, DISPLAY_WIDTH, LINE_WRAP_MODE);
     }
     total
 }
@@ -211,7 +212,11 @@ fn bench_multi_diff_loading(c: &mut Criterion) {
     group.bench_function("build_one_view_from_whole_patch_text", |b| {
         b.iter(|| {
             let mut view = build_diff_view_from_diff_text(black_box(&fixture.patch), Some("rust"));
-            black_box(view.display_line_count(DiffViewMode::Unified, DISPLAY_WIDTH));
+            black_box(view.display_line_count(
+                DiffViewMode::Unified,
+                DISPLAY_WIDTH,
+                LINE_WRAP_MODE,
+            ));
         });
     });
 

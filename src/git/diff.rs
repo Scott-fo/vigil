@@ -1,5 +1,5 @@
 use super::highlight::SyntaxToken;
-use crate::app::DiffViewMode;
+use crate::app::{DiffLineWrapMode, DiffViewMode};
 
 mod display;
 mod equality;

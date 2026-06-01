@@ -11,6 +11,7 @@ impl App {
                 .selected_gap_action(
                     self.diff_view_mode,
                     self.current_diff_display_width(),
+                    self.diff_line_wrap_mode,
                     self.selected_diff_line_index,
                 )
                 .is_some()
@@ -18,6 +19,7 @@ impl App {
             self.selected_diff_line_index = self.diff_view.expand_selected_gap(
                 self.diff_view_mode,
                 self.current_diff_display_width(),
+                self.diff_line_wrap_mode,
                 self.selected_diff_line_index,
                 20,
             );
@@ -48,12 +50,14 @@ impl App {
             self.diff_view.selected_line_number(
                 self.diff_view_mode,
                 self.current_diff_display_width(),
+                self.diff_line_wrap_mode,
                 self.selected_diff_line_index,
             )
         } else {
             self.diff_view.selected_new_line_number(
                 self.diff_view_mode,
                 self.current_diff_display_width(),
+                self.diff_line_wrap_mode,
                 self.selected_diff_line_index,
             )
         };

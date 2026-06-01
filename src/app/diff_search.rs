@@ -225,6 +225,7 @@ impl App {
         if let Some(display_index) = self.diff_view.display_index_for_line(
             self.diff_view_mode,
             self.current_diff_display_width(),
+            self.diff_line_wrap_mode,
             target.old_line,
             target.new_line,
         ) {

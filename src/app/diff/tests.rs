@@ -149,7 +149,11 @@ fn selected_diff_load_uses_review_snapshot_without_task() {
 
     assert!(app.diff_load_task.is_none());
     assert!(app.diff_view.note.is_none());
-    assert_eq!(app.diff_view.estimated_display_line_count(), 2);
+    assert_eq!(
+        app.diff_view
+            .estimated_display_line_count(app.diff_view_mode, app.diff_line_wrap_mode),
+        2
+    );
 }
 
 #[test]
@@ -292,7 +296,9 @@ fn prepare_diff_viewport_keeps_selection_visible_in_diff_pane() {
     app.active_pane = ActivePane::Diff;
     app.diff_view = build_diff_view(120);
 
-    let rendered_line_count = app.diff_view.display_line_count(DiffViewMode::Split, 160);
+    let rendered_line_count =
+        app.diff_view
+            .display_line_count(DiffViewMode::Split, 160, app.diff_line_wrap_mode);
     app.selected_diff_line_index = rendered_line_count.saturating_sub(1);
     app.diff_scroll = 0;
 
@@ -353,7 +359,10 @@ fn prepare_diff_viewport_counts_review_comment_rows() {
         }],
     });
 
-    let raw_line_count = app.diff_view.rendered_lines(DiffViewMode::Split, 48).len();
+    let raw_line_count = app
+        .diff_view
+        .rendered_lines(DiffViewMode::Split, 48, app.diff_line_wrap_mode)
+        .len();
     let viewport = app
         .prepare_diff_viewport(DiffViewMode::Split, 48, 3)
         .expect("viewport should be available");
@@ -381,9 +390,9 @@ fn page_or_scroll_diff_moves_selection_when_diff_pane_is_active() {
     app.diff_view = build_diff_view(120);
     app.update_diff_viewport(DiffViewMode::Split, 160, 0, 12);
 
-    let initial_selection = app
-        .diff_view
-        .first_selectable_index(DiffViewMode::Split, 160);
+    let initial_selection =
+        app.diff_view
+            .first_selectable_index(DiffViewMode::Split, 160, app.diff_line_wrap_mode);
     app.selected_diff_line_index = initial_selection;
 
     app.page_or_scroll_diff(3);

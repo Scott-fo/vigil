@@ -223,6 +223,7 @@ async fn diff_search_jump_waits_for_selected_file_diff_from_sidebar() {
         app.diff_view.selected_new_line_number(
             app.diff_view_mode,
             app.current_diff_display_width(),
+            app.diff_line_wrap_mode,
             app.selected_diff_line_index,
         ),
         Some(2)

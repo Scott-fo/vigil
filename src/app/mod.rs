@@ -67,6 +67,43 @@ impl DiffViewMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum DiffLineWrapMode {
+    Wrap,
+    NoWrap,
+}
+
+impl DiffLineWrapMode {
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Wrap => Self::NoWrap,
+            Self::NoWrap => Self::Wrap,
+        }
+    }
+
+    pub fn is_wrapped(self) -> bool {
+        matches!(self, Self::Wrap)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Wrap => "wrap",
+            Self::NoWrap => "nowrap",
+        }
+    }
+}
+
+impl Default for DiffLineWrapMode {
+    fn default() -> Self {
+        Self::Wrap
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchCompareField {
     Source,
@@ -125,6 +162,7 @@ pub struct App {
     pub selected_file_index: usize,
     pub diff_view: DiffView,
     pub diff_view_mode: DiffViewMode,
+    pub diff_line_wrap_mode: DiffLineWrapMode,
     pub diff_scroll: u16,
     pub selected_diff_line_index: usize,
     pub diff_text_selection: Option<DiffTextSelection>,

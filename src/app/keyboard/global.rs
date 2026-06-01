@@ -135,6 +135,10 @@ impl App {
                 self.toggle_diff_view_mode();
                 handled()
             }
+            KeyCode::Char('z') => {
+                self.toggle_diff_line_wrap_mode();
+                handled()
+            }
             _ => Ok(None),
         }
     }
@@ -168,8 +172,30 @@ impl App {
             self.status_message = Some(format!("failed to persist diff view mode: {error}"));
         }
         self.diff_scroll = 0;
-        self.selected_diff_line_index = self
-            .diff_view
-            .first_selectable_index(self.diff_view_mode, self.current_diff_display_width());
+        self.selected_diff_line_index = self.diff_view.first_selectable_index(
+            self.diff_view_mode,
+            self.current_diff_display_width(),
+            self.diff_line_wrap_mode,
+        );
+    }
+
+    fn toggle_diff_line_wrap_mode(&mut self) {
+        self.clear_diff_text_selection();
+        self.diff_line_wrap_mode = self.diff_line_wrap_mode.toggle();
+        if let Err(error) = config::persist_diff_line_wrap_mode(self.diff_line_wrap_mode.as_str()) {
+            self.status_message = Some(format!("failed to persist diff line wrap mode: {error}"));
+        } else {
+            self.status_message = Some(format!(
+                "diff line wrap: {}",
+                self.diff_line_wrap_mode.label()
+            ));
+        }
+        self.diff_scroll = 0;
+        self.diff_viewport = None;
+        self.selected_diff_line_index = self.diff_view.first_selectable_index(
+            self.diff_view_mode,
+            self.current_diff_display_width(),
+            self.diff_line_wrap_mode,
+        );
     }
 }

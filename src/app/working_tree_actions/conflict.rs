@@ -30,6 +30,7 @@ impl App {
         let Some(conflict_index) = self.diff_view.selected_conflict_index(
             self.diff_view_mode,
             self.current_diff_display_width(),
+            self.diff_line_wrap_mode,
             self.selected_diff_line_index,
         ) else {
             self.status_message = Some("selected row is not inside a merge conflict".to_string());

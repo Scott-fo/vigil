@@ -2,7 +2,7 @@ use std::{fs, hint::black_box, path::PathBuf, sync::LazyLock};
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use vigil::{
-    app::DiffViewMode,
+    app::{DiffLineWrapMode, DiffViewMode},
     git::{
         HighlightRegistry, build_diff_view_from_diff_text,
         build_diff_view_from_diff_text_with_context, clear_exact_highlight_cache,
@@ -12,6 +12,7 @@ use vigil::{
 const FILETYPE: Option<&'static str> = Some("rust");
 const SPLIT_RENDER_WIDTH: usize = 160;
 const VIEWPORT_HEIGHT: usize = 40;
+const LINE_WRAP_MODE: DiffLineWrapMode = DiffLineWrapMode::Wrap;
 
 struct GitRsNewFileFixture {
     diff: String,
@@ -66,9 +67,11 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
         None,
         Some(fixture.new_file_lines.clone()),
     );
-    let display_line_count = plain_view
-        .clone()
-        .display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+    let display_line_count = plain_view.clone().display_line_count(
+        DiffViewMode::Split,
+        SPLIT_RENDER_WIDTH,
+        LINE_WRAP_MODE,
+    );
     let scrolled_viewport_start = display_line_count / 2;
     let scrolled_viewport_end = (scrolled_viewport_start + VIEWPORT_HEIGHT).min(display_line_count);
 
@@ -90,12 +93,17 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
                 view.apply_syntax_highlighting_for_display_range(
                     DiffViewMode::Split,
                     SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
                     0,
                     VIEWPORT_HEIGHT,
                     FILETYPE,
                     &registry,
                 );
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -108,12 +116,17 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
                 view.apply_syntax_highlighting_for_display_range(
                     DiffViewMode::Split,
                     SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
                     scrolled_viewport_start,
                     scrolled_viewport_end,
                     FILETYPE,
                     &registry,
                 );
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -124,7 +137,11 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
             || exact_context_view.clone(),
             |mut view| {
                 view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -138,7 +155,11 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
             },
             |mut view| {
                 view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-                black_box(view.display_line_count(DiffViewMode::Split, SPLIT_RENDER_WIDTH));
+                black_box(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    LINE_WRAP_MODE,
+                ));
             },
             BatchSize::LargeInput,
         );
@@ -150,12 +171,14 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
             view.apply_syntax_highlighting_for_display_range(
                 DiffViewMode::Split,
                 SPLIT_RENDER_WIDTH,
+                LINE_WRAP_MODE,
                 0,
                 VIEWPORT_HEIGHT,
                 FILETYPE,
                 &registry,
             );
-            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
             black_box(lines.len());
         });
     });
@@ -169,7 +192,8 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
                 Some(fixture.new_file_lines.clone()),
             );
             view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
             black_box(lines.len());
         });
     });
@@ -184,7 +208,8 @@ fn bench_git_rs_new_file_pipeline(c: &mut Criterion) {
                 Some(fixture.new_file_lines.clone()),
             );
             view.apply_exact_syntax_highlighting(FILETYPE, &registry);
-            let lines = view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
             black_box(lines.len());
         });
     });

@@ -107,9 +107,11 @@ impl App {
             ActivePane::Sidebar => self.select_sidebar_row(0).await,
             ActivePane::Diff => {
                 self.clear_diff_text_selection();
-                self.selected_diff_line_index = self
-                    .diff_view
-                    .first_selectable_index(self.diff_view_mode, self.current_diff_display_width());
+                self.selected_diff_line_index = self.diff_view.first_selectable_index(
+                    self.diff_view_mode,
+                    self.current_diff_display_width(),
+                    self.diff_line_wrap_mode,
+                );
                 self.diff_scroll = 0;
                 Ok(())
             }
@@ -126,9 +128,11 @@ impl App {
             }
             ActivePane::Diff => {
                 self.clear_diff_text_selection();
-                self.selected_diff_line_index = self
-                    .diff_view
-                    .last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
+                self.selected_diff_line_index = self.diff_view.last_selectable_index(
+                    self.diff_view_mode,
+                    self.current_diff_display_width(),
+                    self.diff_line_wrap_mode,
+                );
                 self.diff_scroll = u16::MAX;
                 Ok(())
             }

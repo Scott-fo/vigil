@@ -1,4 +1,4 @@
-use super::{DiffLineKind, DiffRow, DiffView, DiffViewMode, DisplayRowRefs};
+use super::{DiffLineKind, DiffLineWrapMode, DiffRow, DiffView, DiffViewMode, DisplayRowRefs};
 use crate::git::highlight::{
     HighlightRegistry, SyntaxToken, highlight_source_lines, highlight_source_lines_cached_exact,
 };
@@ -98,6 +98,7 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         start: usize,
         end: usize,
         filetype: Option<&'static str>,
@@ -107,7 +108,7 @@ impl DiffView {
             return;
         };
 
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         let row_ref_count = self.display_cache.entry(mode).row_refs.len();
         let start = start.min(row_ref_count);
         let end = end.min(row_ref_count);
@@ -154,10 +155,11 @@ impl DiffView {
         &mut self,
         mode: DiffViewMode,
         width: usize,
+        line_wrap: DiffLineWrapMode,
         start: usize,
         end: usize,
     ) -> bool {
-        self.ensure_display_cache(mode, width);
+        self.ensure_display_cache(mode, width, line_wrap);
         let row_refs = &self.display_cache.entry(mode).row_refs;
         let start = start.min(row_refs.len());
         let end = end.min(row_refs.len());
