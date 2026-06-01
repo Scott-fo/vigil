@@ -4,7 +4,7 @@ use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_mai
 use vigil::{
     app::{DiffLineWrapMode, DiffViewMode},
     git::{
-        ChangeType, DiffHunkResolution, DiffIterationOptions, DiffStyle,
+        ChangeType, DiffExactContext, DiffHunkResolution, DiffIterationOptions, DiffStyle,
         EstimatedDiffHeightOptions, FileContents, FileDiffMetadata, HighlightRegistry, Hunk,
         HunkContent, HunkSeparatorKind, MergeConflictResolution, ParseDiffOptions,
         ProcessFileConflictData, VirtualFileMetrics, WindowFromScrollPositionOptions,
@@ -600,6 +600,35 @@ fn bench_diff_pipeline(c: &mut Criterion) {
                 Some(fixture.old_file_lines.clone()),
                 Some(fixture.new_file_lines.clone()),
             );
+            view.apply_exact_syntax_highlighting(FILETYPE, &registry);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
+            black_box(lines.len());
+        });
+    });
+
+    group.bench_function("exact_reuse_plain_view_split_warm", |b| {
+        b.iter(|| {
+            let context = DiffExactContext::from_lines(
+                Some(fixture.old_file_lines.clone()),
+                Some(fixture.new_file_lines.clone()),
+            );
+            let mut view = plain_view.clone().with_exact_context(context);
+            view.apply_exact_syntax_highlighting(FILETYPE, &registry);
+            let lines =
+                view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);
+            black_box(lines.len());
+        });
+    });
+
+    group.bench_function("exact_reuse_plain_view_split_cold", |b| {
+        b.iter(|| {
+            clear_exact_highlight_cache();
+            let context = DiffExactContext::from_lines(
+                Some(fixture.old_file_lines.clone()),
+                Some(fixture.new_file_lines.clone()),
+            );
+            let mut view = plain_view.clone().with_exact_context(context);
             view.apply_exact_syntax_highlighting(FILETYPE, &registry);
             let lines =
                 view.rendered_lines(DiffViewMode::Split, SPLIT_RENDER_WIDTH, LINE_WRAP_MODE);

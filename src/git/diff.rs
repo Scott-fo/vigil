@@ -75,9 +75,11 @@ pub use self::patch::{
     get_singular_patch, parse_patch_files, process_file, process_patch, trim_patch_context,
 };
 pub use self::preview::{
-    load_diff_preview_for_branch_compare, load_diff_preview_for_commit_compare,
-    load_diff_preview_for_working_tree, load_diff_view, load_diff_view_for_branch_compare,
-    load_diff_view_for_commit_compare, load_diff_view_for_working_tree,
+    load_diff_exact_context_for_branch_compare, load_diff_exact_context_for_commit_compare,
+    load_diff_exact_context_for_working_tree, load_diff_preview_for_branch_compare,
+    load_diff_preview_for_commit_compare, load_diff_preview_for_working_tree, load_diff_view,
+    load_diff_view_for_branch_compare, load_diff_view_for_commit_compare,
+    load_diff_view_for_working_tree,
 };
 pub use self::resolution::{diff_accept_reject_content, diff_accept_reject_hunk, resolve_conflict};
 pub use self::search::{
@@ -99,9 +101,10 @@ pub use self::text_index::{
     load_review_diff_text_index_for_commit_compare, load_review_diff_text_index_for_working_tree,
 };
 pub use self::view::{
-    DiffDisplayLineAnchor, DiffPreviewData, DiffSelectionPane, DiffSelectionPoint, DiffView,
-    build_diff_view_from_diff_text, build_diff_view_from_diff_text_with_context,
-    build_diff_view_from_file_metadata, build_diff_view_from_preview_data,
+    DiffDisplayLineAnchor, DiffExactContext, DiffPreviewData, DiffSelectionPane,
+    DiffSelectionPoint, DiffView, build_diff_view_from_diff_text,
+    build_diff_view_from_diff_text_with_context, build_diff_view_from_file_metadata,
+    build_diff_view_from_preview_data,
 };
 use self::view::{DiffHunkBlock, DiffHunkGap, DiffLineKind, DiffRow, DiffRowSyntax};
 

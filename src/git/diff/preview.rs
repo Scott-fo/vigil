@@ -11,7 +11,7 @@ use color_eyre::eyre::{WrapErr, eyre};
 use tokio::fs;
 
 use super::{
-    DiffPreviewData, DiffView, FileContents, MergeConflictLabels,
+    DiffExactContext, DiffPreviewData, DiffView, FileContents, MergeConflictLabels,
     ParseMergeConflictDiffFromFileResult, build_diff_view_from_preview_data,
     parse_merge_conflict_diff_from_file,
 };
@@ -83,6 +83,53 @@ pub async fn load_diff_preview_for_branch_compare(
     include_exact_context: bool,
 ) -> color_eyre::Result<DiffPreviewData> {
     load_branch_preview(repo_root, file, selection, include_exact_context).await
+}
+
+pub async fn load_diff_exact_context_for_working_tree(
+    repo_root: &Path,
+    file: &FileEntry,
+) -> color_eyre::Result<DiffExactContext> {
+    if file.status == "??" {
+        let new_file_lines = load_working_tree_file_lines(repo_root, &file.path).await?;
+        return Ok(DiffExactContext::from_lines(None, new_file_lines));
+    }
+
+    load_exact_context(
+        repo_root,
+        Some(PreviewTarget::Revision("HEAD")),
+        Some(PreviewTarget::WorkingTree),
+        &file.path,
+    )
+    .await
+}
+
+pub async fn load_diff_exact_context_for_commit_compare(
+    repo_root: &Path,
+    file: &FileEntry,
+    selection: &CommitCompareSelection,
+) -> color_eyre::Result<DiffExactContext> {
+    load_exact_context(
+        repo_root,
+        Some(PreviewTarget::Revision(selection.base_ref.as_str())),
+        Some(PreviewTarget::Revision(selection.commit_hash.as_str())),
+        &file.path,
+    )
+    .await
+}
+
+pub async fn load_diff_exact_context_for_branch_compare(
+    repo_root: &Path,
+    file: &FileEntry,
+    selection: &BranchCompareSelection,
+) -> color_eyre::Result<DiffExactContext> {
+    let merge_base = resolve_branch_compare_base(repo_root, selection).await?;
+    load_exact_context(
+        repo_root,
+        Some(PreviewTarget::Revision(merge_base.as_str())),
+        Some(PreviewTarget::Revision(selection.source_ref.as_str())),
+        &file.path,
+    )
+    .await
 }
 
 #[derive(Clone, Copy)]
@@ -312,6 +359,19 @@ async fn load_revision_preview(
         old_file_lines,
         new_file_lines,
     ))
+}
+
+async fn load_exact_context(
+    repo_root: &Path,
+    old_target: Option<PreviewTarget<'_>>,
+    new_target: Option<PreviewTarget<'_>>,
+    file_path: &str,
+) -> color_eyre::Result<DiffExactContext> {
+    let (old_file_lines, new_file_lines) = tokio::try_join!(
+        load_preview_target_lines(repo_root, old_target, file_path),
+        load_preview_target_lines(repo_root, new_target, file_path)
+    )?;
+    Ok(DiffExactContext::from_lines(old_file_lines, new_file_lines))
 }
 
 async fn load_untracked_preview(

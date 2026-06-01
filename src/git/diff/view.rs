@@ -284,6 +284,45 @@ pub fn build_diff_view_from_diff_text_with_context(
     }
 }
 
+/// Full-file source context for exact syntax highlighting.
+///
+/// A plain `DiffView` can render immediately from diff text. This context is
+/// attached later when the app has loaded the old and new file contents needed
+/// for full-file parser state, avoiding chunk-local highlighting artifacts.
+#[derive(Debug, Clone, Default)]
+pub struct DiffExactContext {
+    pub old_file_lines: Option<Vec<String>>,
+    pub new_file_lines: Option<Vec<String>>,
+}
+
+impl DiffExactContext {
+    pub fn from_lines(
+        old_file_lines: Option<Vec<String>>,
+        new_file_lines: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            old_file_lines,
+            new_file_lines,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.old_file_lines.is_none() && self.new_file_lines.is_none()
+    }
+}
+
+impl DiffView {
+    pub fn with_exact_context(mut self, context: DiffExactContext) -> Self {
+        self.old_file_source = context.old_file_lines.as_deref().map(source_from_lines);
+        self.new_file_source = context.new_file_lines.as_deref().map(source_from_lines);
+        self.new_file_lines = context.new_file_lines;
+        self.old_exact_highlighted_lines = None;
+        self.new_exact_highlighted_lines = None;
+        self.invalidate_display_cache();
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DiffPreviewData {
     pub(super) diff: String,

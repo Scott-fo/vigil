@@ -46,12 +46,20 @@ impl DiffView {
         let rows = &self.rows;
         let left_source = self.old_file_source.clone();
         let right_source = self.new_file_source.clone();
-        let left_exact_highlighted_lines = left_source
-            .as_ref()
-            .and_then(|source| highlight_source_lines_cached_exact(registry, filetype, source));
-        let right_exact_highlighted_lines = right_source
-            .as_ref()
-            .and_then(|source| highlight_source_lines_cached_exact(registry, filetype, source));
+        let (left_exact_highlighted_lines, right_exact_highlighted_lines) = run_optional_pair(
+            left_source.is_some(),
+            right_source.is_some(),
+            || {
+                left_source.as_ref().and_then(|source| {
+                    highlight_source_lines_cached_exact(registry, filetype, source)
+                })
+            },
+            || {
+                right_source.as_ref().and_then(|source| {
+                    highlight_source_lines_cached_exact(registry, filetype, source)
+                })
+            },
+        );
         let (left, right) = run_optional_pair(
             left_exact_highlighted_lines.is_some(),
             right_exact_highlighted_lines.is_some(),

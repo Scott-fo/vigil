@@ -57,10 +57,12 @@ impl App {
             return;
         }
 
+        let plain_view = self.diff_view.clone();
         self.cancel_inflight_diff_highlight();
         self.spawn_selected_diff_highlight(
             cache_key,
             file,
+            plain_view,
             highlight_registry,
             DiffHighlightJobKind::Full,
         );
@@ -70,6 +72,7 @@ impl App {
         &mut self,
         cache_key: DiffCacheKey,
         file: FileEntry,
+        plain_view: DiffView,
         highlight_registry: SharedHighlightRegistry,
         kind: DiffHighlightJobKind,
     ) {
@@ -85,49 +88,95 @@ impl App {
         self.diff_highlight_task = Some(task::spawn(async move {
             let (complete, result) = match kind {
                 DiffHighlightJobKind::Full => {
-                    let preview_result = match &review_mode {
-                        ReviewMode::WorkingTree => {
-                            git::load_diff_preview_for_working_tree(&repo_root, &file, true).await
-                        }
-                        ReviewMode::CommitCompare(selection) => {
-                            git::load_diff_preview_for_commit_compare(
-                                &repo_root, &file, selection, true,
-                            )
-                            .await
-                        }
-                        ReviewMode::BranchCompare(selection) => {
-                            git::load_diff_preview_for_branch_compare(
-                                &repo_root, &file, selection, true,
-                            )
-                            .await
-                        }
-                    };
+                    if file.status.contains('U') {
+                        let preview_result = match &review_mode {
+                            ReviewMode::WorkingTree => {
+                                git::load_diff_preview_for_working_tree(&repo_root, &file, true)
+                                    .await
+                            }
+                            ReviewMode::CommitCompare(selection) => {
+                                git::load_diff_preview_for_commit_compare(
+                                    &repo_root, &file, selection, true,
+                                )
+                                .await
+                            }
+                            ReviewMode::BranchCompare(selection) => {
+                                git::load_diff_preview_for_branch_compare(
+                                    &repo_root, &file, selection, true,
+                                )
+                                .await
+                            }
+                        };
 
-                    let preview = match preview_result {
-                        Ok(preview) => preview,
-                        Err(error) => {
-                            let _ = sender.send(Event::DiffHighlightUpdated {
-                                request_id,
-                                complete: true,
-                                result: Err(error.to_string()),
-                            });
-                            return;
-                        }
-                    };
+                        let preview = match preview_result {
+                            Ok(preview) => preview,
+                            Err(error) => {
+                                let _ = sender.send(Event::DiffHighlightUpdated {
+                                    request_id,
+                                    complete: true,
+                                    result: Err(error.to_string()),
+                                });
+                                return;
+                            }
+                        };
 
-                    let result = task::spawn_blocking(move || {
-                        let mut diff_view =
-                            git::build_diff_view_from_preview_data(&preview, &file, None)
-                                .map_err(|error| error.to_string())?;
-                        diff_view.apply_exact_syntax_highlighting(
-                            file.filetype,
-                            highlight_registry.as_ref(),
-                        );
-                        Ok::<_, String>(diff_view)
-                    })
-                    .await
-                    .unwrap_or_else(|error| Err(error.to_string()));
-                    (true, result)
+                        let result = task::spawn_blocking(move || {
+                            let mut diff_view =
+                                git::build_diff_view_from_preview_data(&preview, &file, None)
+                                    .map_err(|error| error.to_string())?;
+                            diff_view.apply_exact_syntax_highlighting(
+                                file.filetype,
+                                highlight_registry.as_ref(),
+                            );
+                            Ok::<_, String>(diff_view)
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string()));
+                        (true, result)
+                    } else {
+                        let context_result = match &review_mode {
+                            ReviewMode::WorkingTree => {
+                                git::load_diff_exact_context_for_working_tree(&repo_root, &file)
+                                    .await
+                            }
+                            ReviewMode::CommitCompare(selection) => {
+                                git::load_diff_exact_context_for_commit_compare(
+                                    &repo_root, &file, selection,
+                                )
+                                .await
+                            }
+                            ReviewMode::BranchCompare(selection) => {
+                                git::load_diff_exact_context_for_branch_compare(
+                                    &repo_root, &file, selection,
+                                )
+                                .await
+                            }
+                        };
+
+                        let context = match context_result {
+                            Ok(context) => context,
+                            Err(error) => {
+                                let _ = sender.send(Event::DiffHighlightUpdated {
+                                    request_id,
+                                    complete: true,
+                                    result: Err(error.to_string()),
+                                });
+                                return;
+                            }
+                        };
+
+                        let result = task::spawn_blocking(move || {
+                            let mut diff_view = plain_view.with_exact_context(context);
+                            diff_view.apply_exact_syntax_highlighting(
+                                file.filetype,
+                                highlight_registry.as_ref(),
+                            );
+                            Ok::<_, String>(diff_view)
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string()));
+                        (true, result)
+                    }
                 }
             };
             let _ = sender.send(Event::DiffHighlightUpdated {
