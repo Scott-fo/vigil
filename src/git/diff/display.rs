@@ -8,7 +8,8 @@ use super::{
     DiffView, GapExpandDirection, SyntaxToken,
     rendering::{
         normalize_selection_points, render_expand_gap_line, render_expanded_context_lines,
-        render_split_hunk_rows, render_unified_code_lines, slice_string_by_width,
+        render_split_hunk_rows, render_split_pair_lines, render_unified_code_lines,
+        slice_string_by_width,
     },
 };
 
@@ -16,6 +17,103 @@ impl DiffView {
     pub fn rendered_lines(&mut self, mode: DiffViewMode, width: usize) -> &[Line<'static>] {
         self.ensure_display_cache(mode, width);
         &self.display_cache.entry(mode).lines
+    }
+
+    pub fn rendered_lines_window(
+        &self,
+        mode: DiffViewMode,
+        width: usize,
+        start: usize,
+        end: usize,
+    ) -> Vec<Line<'static>> {
+        if start >= end {
+            return Vec::new();
+        }
+
+        if self.rows.is_empty() {
+            return if start == 0 {
+                vec![Line::from(Span::styled(
+                    self.note
+                        .clone()
+                        .unwrap_or_else(|| "No textual diff available.".to_string()),
+                    ui::diff_meta_style(),
+                ))]
+            } else {
+                Vec::new()
+            };
+        }
+
+        let mut cursor = 0usize;
+        let mut lines = Vec::with_capacity(end.saturating_sub(start));
+
+        for (hunk_offset, hunk) in self.hunks.iter().enumerate() {
+            match mode {
+                DiffViewMode::Unified => {
+                    for row_index in hunk.row_start..hunk.row_end {
+                        for rendered_line in render_unified_code_lines(&self.rows[row_index], width)
+                        {
+                            if push_window_line(
+                                &mut lines,
+                                &mut cursor,
+                                start,
+                                end,
+                                rendered_line.line,
+                            ) {
+                                return lines;
+                            }
+                        }
+                    }
+                }
+                DiffViewMode::Split => {
+                    self.push_split_window_lines(
+                        hunk.row_start,
+                        hunk.row_end,
+                        width,
+                        &mut cursor,
+                        start,
+                        end,
+                        &mut lines,
+                    );
+                    if cursor >= end {
+                        return lines;
+                    }
+                }
+            }
+
+            if let Some(gap) = self.gaps.get(hunk_offset) {
+                self.push_gap_window_lines(gap, width, mode, &mut cursor, start, end, &mut lines);
+                if cursor >= end {
+                    return lines;
+                }
+            }
+        }
+
+        lines
+    }
+
+    pub fn estimated_display_line_count(&self) -> usize {
+        if self.rows.is_empty() {
+            return 1;
+        }
+
+        self.rows.len()
+            + self
+                .gaps
+                .iter()
+                .map(|gap| {
+                    let expansion = self
+                        .gap_expansions
+                        .get(&gap.gap_index)
+                        .copied()
+                        .unwrap_or_default();
+                    let expanded = expansion
+                        .from_previous
+                        .saturating_add(expansion.from_next)
+                        .min(gap.new_count);
+                    let remaining = gap.new_count.saturating_sub(expanded);
+                    expanded + if remaining > 0 { 2 } else { 0 }
+                })
+                .sum::<usize>()
     }
 
     pub fn selection_point_at(
@@ -417,6 +515,168 @@ impl DiffView {
         true
     }
 
+    fn push_split_window_lines(
+        &self,
+        row_start: usize,
+        row_end: usize,
+        width: usize,
+        cursor: &mut usize,
+        start: usize,
+        end: usize,
+        lines: &mut Vec<Line<'static>>,
+    ) {
+        let total_width = width.saturating_sub(1);
+        let gutter_width = 3;
+        let side_width = total_width.saturating_sub(gutter_width) / 2;
+        let mut row_index = row_start;
+
+        while row_index < row_end {
+            let row = &self.rows[row_index];
+            match row.kind {
+                DiffLineKind::Removed | DiffLineKind::Added => {
+                    let mut removed = Vec::new();
+                    let mut added = Vec::new();
+                    while row_index < row_end {
+                        match self.rows[row_index].kind {
+                            DiffLineKind::Removed => removed.push(row_index),
+                            DiffLineKind::Added => added.push(row_index),
+                            _ => break,
+                        }
+                        row_index += 1;
+                    }
+
+                    let pair_count = removed.len().max(added.len());
+                    for pair_index in 0..pair_count {
+                        let left = removed
+                            .get(pair_index)
+                            .and_then(|index| self.rows.get(*index));
+                        let right = added
+                            .get(pair_index)
+                            .and_then(|index| self.rows.get(*index));
+                        for rendered_line in render_split_pair_lines(left, right, side_width) {
+                            if push_window_line(lines, cursor, start, end, rendered_line.line) {
+                                return;
+                            }
+                        }
+                    }
+                }
+                DiffLineKind::Context => {
+                    for rendered_line in render_split_pair_lines(Some(row), Some(row), side_width) {
+                        if push_window_line(lines, cursor, start, end, rendered_line.line) {
+                            return;
+                        }
+                    }
+                    row_index += 1;
+                }
+                DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => {
+                    for rendered_line in render_unified_code_lines(row, side_width * 2 + 3) {
+                        if push_window_line(lines, cursor, start, end, rendered_line.line) {
+                            return;
+                        }
+                    }
+                    row_index += 1;
+                }
+            }
+        }
+    }
+
+    fn push_gap_window_lines(
+        &self,
+        gap: &DiffHunkGap,
+        width: usize,
+        mode: DiffViewMode,
+        cursor: &mut usize,
+        start: usize,
+        end: usize,
+        lines: &mut Vec<Line<'static>>,
+    ) {
+        let split = matches!(mode, DiffViewMode::Split);
+        let gap_width = if split {
+            width.saturating_sub(1)
+        } else {
+            width
+        };
+        let expansion = self
+            .gap_expansions
+            .get(&gap.gap_index)
+            .copied()
+            .unwrap_or_default();
+        let context_after_count = expansion.from_previous.min(gap.new_count);
+        let remaining_after_previous = gap.new_count.saturating_sub(context_after_count);
+        let context_before_count = expansion.from_next.min(remaining_after_previous);
+
+        if let Some(file_lines) = self.new_file_lines.as_ref() {
+            let line_start = gap.new_start.saturating_sub(1);
+            for offset in 0..context_after_count {
+                let line_number = gap.new_start + offset;
+                let text = file_lines
+                    .get(line_start + offset)
+                    .cloned()
+                    .unwrap_or_default();
+                for rendered_line in render_expanded_context_lines(
+                    line_number,
+                    &text,
+                    self.expanded_context_highlighting(line_number),
+                    gap_width,
+                    split,
+                ) {
+                    if push_window_line(lines, cursor, start, end, rendered_line.line) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        let remaining = gap
+            .new_count
+            .saturating_sub(context_after_count + context_before_count);
+        if remaining > 0 {
+            for line in [
+                render_expand_gap_line(
+                    gap_width,
+                    remaining,
+                    expansion.from_previous > 0,
+                    GapExpandDirection::Up,
+                ),
+                render_expand_gap_line(
+                    gap_width,
+                    remaining,
+                    expansion.from_next > 0,
+                    GapExpandDirection::Down,
+                ),
+            ] {
+                if push_window_line(lines, cursor, start, end, line) {
+                    return;
+                }
+            }
+        }
+
+        if let Some(file_lines) = self.new_file_lines.as_ref() {
+            let line_start = gap
+                .new_start
+                .saturating_sub(1)
+                .saturating_add(gap.new_count.saturating_sub(context_before_count));
+            for offset in 0..context_before_count {
+                let line_number = gap.new_start + gap.new_count - context_before_count + offset;
+                let text = file_lines
+                    .get(line_start + offset)
+                    .cloned()
+                    .unwrap_or_default();
+                for rendered_line in render_expanded_context_lines(
+                    line_number,
+                    &text,
+                    self.expanded_context_highlighting(line_number),
+                    gap_width,
+                    split,
+                ) {
+                    if push_window_line(lines, cursor, start, end, rendered_line.line) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn ensure_display_cache(&mut self, mode: DiffViewMode, width: usize) {
         let cache_is_stale = {
             let cache = self.display_cache.entry(mode);
@@ -697,6 +957,20 @@ impl DiffView {
             .get(line_index)
             .cloned()
     }
+}
+
+fn push_window_line(
+    lines: &mut Vec<Line<'static>>,
+    cursor: &mut usize,
+    start: usize,
+    end: usize,
+    line: Line<'static>,
+) -> bool {
+    if *cursor >= start && *cursor < end {
+        lines.push(line);
+    }
+    *cursor = (*cursor).saturating_add(1);
+    *cursor >= end
 }
 
 #[derive(Debug, Default, Clone)]

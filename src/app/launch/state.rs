@@ -52,6 +52,7 @@ impl App {
             diff_highlight_complete: false,
             diff_viewport: None::<DiffViewport>,
             background_tasks: Vec::new(),
+            diff_prefetch_task: None,
             diff_view_cache: DiffViewCache::default(),
             diff_cache_generation: 0,
             pending_diff_cache_key: None,

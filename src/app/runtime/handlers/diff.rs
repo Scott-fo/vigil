@@ -31,18 +31,16 @@ impl App {
 
         self.diff_load_task = None;
         match result {
-            Ok(mut diff_view) => {
+            Ok(diff_view) => {
                 if let Some(cache_key) = self.pending_diff_cache_key.clone() {
                     self.diff_view_cache
                         .insert_plain(cache_key, diff_view.clone());
                 }
-                let max_index = diff_view
-                    .last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
-                self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
                 self.diff_view = diff_view;
                 self.apply_pending_diff_search_target();
                 self.diff_highlight_complete = self.highlight_registry.is_none();
                 self.status_message = Some(self.current_status_message());
+                self.spawn_diff_prefetch();
             }
             Err(error) => {
                 self.diff_view = git::DiffView::empty(error);
@@ -128,13 +126,10 @@ impl App {
                 .map(|diff_view| (diff_view, self.highlight_registry.is_none()))
         };
 
-        let Some((mut diff_view, highlight_complete)) = loaded else {
+        let Some((diff_view, highlight_complete)) = loaded else {
             return false;
         };
 
-        let max_index =
-            diff_view.last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
-        self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
         self.diff_view = diff_view;
         self.apply_pending_diff_search_target();
         self.diff_highlight_complete = highlight_complete;

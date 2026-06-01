@@ -86,7 +86,7 @@ pub(super) fn render_unified_code_lines(row: &DiffRow, width: usize) -> Vec<Rend
         .collect()
 }
 
-fn render_split_pair_lines(
+pub(super) fn render_split_pair_lines(
     left: Option<&DiffRow>,
     right: Option<&DiffRow>,
     side_width: usize,

@@ -29,6 +29,8 @@ impl App {
     }
 
     pub(in crate::app) fn spawn_diff_prefetch(&mut self) {
+        self.cancel_inflight_diff_prefetch();
+
         let Some(selected_visible_index) = self.selected_visible_file_index() else {
             return;
         };
@@ -50,7 +52,7 @@ impl App {
         let highlight_registry = self.highlight_registry.clone();
         let sender = self.events.sender();
 
-        self.track_background_task(task::spawn(async move {
+        self.diff_prefetch_task = Some(task::spawn(async move {
             for (cache_key, file, should_prefetch_highlight) in prefetch_files {
                 let include_exact_context = should_prefetch_highlight;
                 let preview_result = match &review_mode {
@@ -117,6 +119,12 @@ impl App {
                 })));
             }
         }));
+    }
+
+    pub(in crate::app) fn cancel_inflight_diff_prefetch(&mut self) {
+        if let Some(task) = self.diff_prefetch_task.take() {
+            task.abort();
+        }
     }
 
     fn diff_prefetch_files(
@@ -231,28 +239,22 @@ impl App {
             return;
         };
 
-        self.spawn_diff_prefetch();
-
         let cache_key = self.diff_cache_key(&file);
         self.pending_diff_cache_key = Some(cache_key.clone());
-        if let Some((mut diff_view, highlight_complete)) =
+        if let Some((diff_view, highlight_complete)) =
             self.diff_view_cache.get_highlighted(&cache_key)
         {
-            let max_index = diff_view
-                .last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
-            self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
             self.diff_view = diff_view;
             self.diff_highlight_complete = highlight_complete;
             self.status_message = Some(self.current_status_message());
+            self.spawn_diff_prefetch();
             return;
         }
 
-        if let Some(mut plain_diff_view) = self.diff_view_cache.get_plain(&cache_key) {
-            let max_index = plain_diff_view
-                .last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
-            self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
+        if let Some(plain_diff_view) = self.diff_view_cache.get_plain(&cache_key) {
             self.diff_view = plain_diff_view;
             self.status_message = Some(self.current_status_message());
+            self.spawn_diff_prefetch();
             return;
         }
 
@@ -323,6 +325,7 @@ impl App {
             task.abort();
         }
         self.cancel_inflight_diff_highlight();
+        self.cancel_inflight_diff_prefetch();
         self.pending_diff_cache_key = None;
         self.diff_highlight_complete = false;
     }

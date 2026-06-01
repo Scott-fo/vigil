@@ -137,6 +137,7 @@ pub struct App {
     diff_highlight_complete: bool,
     diff_viewport: Option<DiffViewport>,
     background_tasks: Vec<task::JoinHandle<()>>,
+    diff_prefetch_task: Option<task::JoinHandle<()>>,
     diff_view_cache: DiffViewCache,
     diff_cache_generation: u64,
     pending_diff_cache_key: Option<DiffCacheKey>,

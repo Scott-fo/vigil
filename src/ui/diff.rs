@@ -50,6 +50,11 @@ pub(super) fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let diff_focused = app.active_pane == ActivePane::Diff;
     let mode = app.diff_view_mode;
+    if !diff_focused && app.diff_text_selection.is_none() && app.review_report.is_none() {
+        render_diff_body_windowed(frame, app, area, mode);
+        return;
+    }
+
     let Some(viewport) = app.prepare_diff_viewport(mode, area.width as usize, area.height as usize)
     else {
         let paragraph = Paragraph::new(Text::default())
@@ -78,6 +83,50 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
         let mut scrollbar_state = ScrollbarState::new(viewport.rendered_line_count)
             .position(app.diff_scroll as usize)
             .viewport_content_length(area.height as usize);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .thumb_style(Style::new().fg(border_active_color()))
+            .track_style(Style::new().fg(border_color()));
+        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+    }
+}
+
+fn render_diff_body_windowed(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    mode: crate::app::DiffViewMode,
+) {
+    if area.width == 0 || area.height == 0 {
+        let paragraph = Paragraph::new(Text::default())
+            .style(Style::new().fg(text_color()).bg(panel_color()))
+            .scroll((0, 0));
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    let width = area.width as usize;
+    let height = area.height as usize;
+    let estimated_line_count = app.diff_view.estimated_display_line_count();
+    let max_start = estimated_line_count.saturating_sub(height);
+    let visual_start = (app.diff_scroll as usize).min(max_start);
+    let visual_end = visual_start.saturating_add(height);
+    app.diff_scroll = visual_start.min(u16::MAX as usize) as u16;
+    app.update_diff_viewport(mode, width, visual_start, visual_end);
+
+    let visible_lines = app
+        .diff_view
+        .rendered_lines_window(mode, width, visual_start, visual_end);
+    let paragraph = Paragraph::new(Text::from(visible_lines))
+        .style(Style::new().fg(text_color()).bg(panel_color()))
+        .scroll((0, 0));
+    frame.render_widget(paragraph, area);
+
+    if estimated_line_count > height {
+        let mut scrollbar_state = ScrollbarState::new(estimated_line_count)
+            .position(app.diff_scroll as usize)
+            .viewport_content_length(height);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
