@@ -4,7 +4,6 @@ use tokio::task;
 
 use super::*;
 
-const SNAPSHOT_SYNC_BUILD_LINE_LIMIT: usize = 2_000;
 const DIFF_SNAPSHOT_PREFETCH_CONCURRENCY: usize = 4;
 
 impl App {
@@ -379,12 +378,7 @@ impl App {
             return;
         }
 
-        if self.queue_selected_diff_from_review_snapshot(
-            request_id,
-            &file,
-            &cache_key,
-            show_loading,
-        ) {
+        if self.load_selected_diff_from_review_snapshot_cache(&file, &cache_key) {
             return;
         }
 
@@ -450,52 +444,29 @@ impl App {
         }));
     }
 
-    fn queue_selected_diff_from_review_snapshot(
+    fn load_selected_diff_from_review_snapshot_cache(
         &mut self,
-        request_id: u64,
         file: &FileEntry,
         cache_key: &DiffCacheKey,
-        show_loading: bool,
     ) -> bool {
         let Some(snapshot) = self
             .review_diff_snapshot
             .as_ref()
             .filter(|snapshot| snapshot.contains_file(&file.path))
-            .cloned()
         else {
             return false;
         };
 
-        let line_count = snapshot
-            .metrics_for_file(&file.path)
-            .map(|metrics| metrics.unified_line_count.max(metrics.split_line_count))
-            .unwrap_or_default();
-
-        if line_count <= SNAPSHOT_SYNC_BUILD_LINE_LIMIT {
-            let Some(diff_view) = snapshot.build_diff_view(file) else {
-                return false;
-            };
-            self.diff_view_cache
-                .insert_plain(cache_key.clone(), diff_view.clone());
-            self.diff_view = diff_view;
-            self.apply_pending_diff_search_target();
-            self.diff_highlight_complete =
-                self.highlight_registry.is_none() || file.filetype.is_none();
-            self.status_message = Some(self.current_status_message());
-            self.spawn_diff_prefetch();
-            return true;
-        }
-
-        if show_loading && !self.diff_view.has_diff_rows() {
-            self.diff_view = DiffView::empty("Loading diff...");
-        }
-
-        let sender = self.events.sender();
-        let build_file = file.clone();
-        self.diff_load_task = Some(task::spawn(async move {
-            let result = build_diff_view_from_snapshot(snapshot, build_file).await;
-            let _ = sender.send(Event::DiffLoaded { request_id, result });
-        }));
+        let Some(diff_view) = snapshot.build_diff_view(file) else {
+            return false;
+        };
+        self.diff_view_cache
+            .insert_plain(cache_key.clone(), diff_view.clone());
+        self.diff_view = diff_view;
+        self.apply_pending_diff_search_target();
+        self.diff_highlight_complete = self.highlight_registry.is_none() || file.filetype.is_none();
+        self.status_message = Some(self.current_status_message());
+        self.spawn_diff_prefetch();
         true
     }
 
@@ -512,19 +483,6 @@ impl App {
         self.pending_diff_cache_key = None;
         self.diff_highlight_complete = false;
     }
-}
-
-async fn build_diff_view_from_snapshot(
-    snapshot: Arc<git::ReviewDiffSnapshot>,
-    file: FileEntry,
-) -> Result<DiffView, String> {
-    task::spawn_blocking(move || {
-        snapshot
-            .build_diff_view(&file)
-            .ok_or_else(|| format!("missing diff snapshot for {}", file.path))
-    })
-    .await
-    .unwrap_or_else(|error| Err(error.to_string()))
 }
 
 pub(super) fn build_snapshot_prefetch_event(

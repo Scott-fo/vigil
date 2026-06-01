@@ -69,6 +69,10 @@ name = "diff_search_performance"
 harness = false
 
 [[bench]]
+name = "diff_scrolling_performance"
+harness = false
+
+[[bench]]
 name = "multi_diff_loading"
 harness = false
 

@@ -33,6 +33,7 @@ cargo bench --bench diff_performance get_merge_conflict_line_types
 cargo bench --bench diff_performance parse_merge_conflict_diff_from_file
 cargo bench --bench diff_performance resolve_conflict
 cargo bench --bench diff_performance collect_diff_lines
+cargo bench --bench diff_scrolling_performance -- --noplot
 cargo bench --bench diff_search_performance -- --noplot
 cargo bench --bench multi_diff_loading -- --noplot
 cargo bench --bench highlight_registry_init -- --noplot

@@ -49,6 +49,23 @@ fn build_review_snapshot() -> git::ReviewDiffSnapshot {
     .expect("snapshot fixture should parse")
 }
 
+fn build_large_review_snapshot(line_count: usize) -> git::ReviewDiffSnapshot {
+    let mut diff = format!(
+        "diff --git a/src/large.rs b/src/large.rs\n\
+--- a/src/large.rs\n\
++++ b/src/large.rs\n\
+@@ -0,0 +1,{line_count} @@\n"
+    );
+    for index in 0..line_count {
+        diff.push_str(&format!(
+            "+pub fn generated_line_{index}() -> usize {{ {index} }}\n"
+        ));
+    }
+
+    git::ReviewDiffSnapshot::from_diff_text(&diff, Some("large-snapshot"))
+        .expect("large snapshot fixture should parse")
+}
+
 fn build_file_entries(count: usize) -> Vec<FileEntry> {
     (0..count)
         .map(|index| FileEntry {
@@ -202,6 +219,28 @@ fn selected_diff_load_uses_review_snapshot_without_task() {
             .estimated_display_line_count(app.diff_view_mode, app.diff_line_wrap_mode),
         2
     );
+}
+
+#[test]
+fn selected_large_diff_load_uses_review_snapshot_without_loading_task() {
+    let mut app = build_test_app();
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/large.rs".to_string(),
+        label: "large.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.review_diff_snapshot = Some(Arc::new(
+        build_large_review_snapshot(3_000).with_generation(app.diff_cache_generation),
+    ));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_none());
+    assert!(app.diff_view.note.is_none());
+    assert!(app.diff_view.has_diff_rows());
 }
 
 #[test]
