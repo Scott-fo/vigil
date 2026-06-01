@@ -3,14 +3,12 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{
-        Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    },
+    widgets::{Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::{
     app::App,
-    git::{DiffSearchLineKind, DiffSearchPreviewLine, DiffSearchResult, DiffSearchSyntaxRange},
+    git::{DiffSearchLineKind, DiffSearchResult, DiffSearchSyntaxRange},
 };
 
 use super::super::{
@@ -32,7 +30,7 @@ pub(super) fn render_diff_search_modal(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3),
             Constraint::Min(8),
-            Constraint::Length(2),
+            Constraint::Length(1),
         ])
         .split(inner);
 
@@ -69,19 +67,13 @@ pub(super) fn render_diff_search_modal(frame: &mut Frame, app: &App) {
         render_diff_search_results(frame, list_inner, app);
     }
 
-    let footer = Paragraph::new(Text::from(vec![
-        Line::from(Span::styled(
-            format!(
-                "Tab toggles mode. {} search. j/k select. Enter jumps. Esc closes.",
-                app.diff_search_mode.label()
-            ),
-            Style::new().fg(text_muted_color()),
-        )),
-        Line::from(Span::styled(
-            format!("{} matches", app.diff_search_results.total_matched),
-            Style::new().fg(diff_context_color()),
-        )),
-    ]))
+    let footer = Paragraph::new(Line::from(Span::styled(
+        format!(
+            "Tab toggles mode. {} search. j/k select. Enter jumps. Esc closes.",
+            app.diff_search_mode.label()
+        ),
+        Style::new().fg(text_muted_color()),
+    )))
     .style(Style::new().bg(panel_color()))
     .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(footer, chunks[2]);
@@ -91,22 +83,7 @@ fn render_diff_search_results(frame: &mut Frame, area: Rect, app: &App) {
     let selected_index = app
         .diff_search_selected_index
         .min(app.diff_search_results.items.len().saturating_sub(1));
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-        .split(area);
-
-    render_result_list(
-        frame,
-        panes[0],
-        &app.diff_search_results.items,
-        selected_index,
-    );
-    render_hunk_preview(
-        frame,
-        panes[1],
-        app.diff_search_results.items.get(selected_index),
-    );
+    render_result_list(frame, area, &app.diff_search_results.items, selected_index);
 }
 
 fn render_result_list(
@@ -180,49 +157,6 @@ fn diff_search_display_entries(results: &[DiffSearchResult]) -> Vec<DiffSearchDi
     entries
 }
 
-fn render_hunk_preview(frame: &mut Frame, area: Rect, result: Option<&DiffSearchResult>) {
-    let block = Block::default()
-        .borders(Borders::LEFT)
-        .border_style(Style::new().fg(border_color()))
-        .style(Style::new().bg(panel_color()))
-        .padding(Padding::horizontal(1));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let Some(result) = result else {
-        return;
-    };
-
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled(result.file_path.clone(), Style::new().fg(text_color())),
-            Span::styled(
-                format!(
-                    "  @@ -{} +{} @@",
-                    result.hunk_old_start, result.hunk_new_start
-                ),
-                Style::new().fg(diff_context_color()),
-            ),
-        ]),
-        Line::default(),
-    ];
-    lines.extend(
-        result
-            .preview_lines
-            .iter()
-            .map(|line| render_preview_line(result, line)),
-    );
-
-    let max_lines = inner.height as usize;
-    lines.truncate(max_lines);
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .style(Style::new().bg(panel_color()))
-            .block(Block::new()),
-        inner,
-    );
-}
-
 fn diff_search_loading_message(app: &App) -> &'static str {
     if app.diff_search_query.trim().is_empty() {
         "Indexing changed diff lines..."
@@ -289,53 +223,11 @@ fn diff_search_line_style(kind: DiffSearchLineKind) -> Style {
     }
 }
 
-fn render_preview_line(
-    result: &DiffSearchResult,
-    preview: &DiffSearchPreviewLine,
-) -> Line<'static> {
-    let base_style = diff_search_line_style(preview.kind);
-    let line_number = preview
-        .new_line
-        .or(preview.old_line)
-        .map(|line| line.to_string())
-        .unwrap_or_else(|| "-".to_string());
-    let mut spans = vec![
-        Span::styled(
-            format!("{line_number:>4} "),
-            base_style.patch(line_number_style()),
-        ),
-        Span::styled(
-            format!("{} ", diff_marker(preview.kind)),
-            diff_marker_style(preview.kind),
-        ),
-    ];
-
-    if preview.is_match {
-        spans.extend(line_spans(result, base_style, false));
-    } else {
-        spans.push(Span::styled(preview.line.clone(), base_style));
-    }
-
-    Line::from(spans).style(base_style)
-}
-
-fn line_number_style() -> Style {
-    Style::new().fg(diff_context_color())
-}
-
 fn diff_marker(kind: DiffSearchLineKind) -> &'static str {
     match kind {
         DiffSearchLineKind::Addition => "+",
         DiffSearchLineKind::Deletion => "-",
         DiffSearchLineKind::Context => " ",
-    }
-}
-
-fn diff_marker_style(kind: DiffSearchLineKind) -> Style {
-    match kind {
-        DiffSearchLineKind::Addition => diff_added_style(),
-        DiffSearchLineKind::Deletion => diff_removed_style(),
-        DiffSearchLineKind::Context => Style::new().fg(diff_context_color()),
     }
 }
 

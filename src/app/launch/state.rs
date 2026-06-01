@@ -103,6 +103,7 @@ impl App {
             diff_search_query_request_id: 0,
             diff_search_load_task: None,
             diff_search_query_task: None,
+            diff_search_query_cancel_token: None,
             pending_diff_search_target: None,
             commit_search_modal_open: false,
             commit_search_query: String::new(),

@@ -1,4 +1,8 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use nucleo_matcher::Matcher;
 use ratatui::widgets::ListState;
@@ -225,6 +229,7 @@ pub struct App {
     diff_search_query_request_id: u64,
     diff_search_load_task: Option<task::JoinHandle<()>>,
     diff_search_query_task: Option<task::JoinHandle<()>>,
+    diff_search_query_cancel_token: Option<Arc<AtomicBool>>,
     pending_diff_search_target: Option<DiffSearchNavigationTarget>,
     pub commit_search_modal_open: bool,
     pub commit_search_query: String,

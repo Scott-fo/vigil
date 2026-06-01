@@ -4,7 +4,10 @@
 //! across the current review scope. The git module owns the searchable index;
 //! UI code only receives prepared search results.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use tokio::task;
@@ -149,6 +152,9 @@ impl App {
     }
 
     fn cancel_diff_search_query_task(&mut self) {
+        if let Some(cancel_token) = self.diff_search_query_cancel_token.take() {
+            cancel_token.store(true, Ordering::Relaxed);
+        }
         if let Some(task) = self.diff_search_query_task.take() {
             task.abort();
         }
@@ -197,6 +203,7 @@ impl App {
         }
 
         self.diff_search_query_task = None;
+        self.diff_search_query_cancel_token = None;
         self.diff_search_loading = false;
         match result {
             Ok(mut results) => {
@@ -307,11 +314,13 @@ impl App {
         let sender = self.events.sender();
         let highlight_registry = self.highlight_registry.clone();
         let mode = self.diff_search_mode;
+        let cancel_token = Arc::new(AtomicBool::new(false));
+        self.diff_search_query_cancel_token = Some(cancel_token.clone());
         self.diff_search_loading = true;
 
         self.diff_search_query_task = Some(task::spawn(async move {
             let result = task::spawn_blocking(move || {
-                let mut matcher = git::DiffSearchMatcher::default();
+                let mut matcher = git::DiffSearchMatcher::with_cancel_token(cancel_token);
                 let mut results = index.search(
                     &query,
                     DiffSearchOptions {

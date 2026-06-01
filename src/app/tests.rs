@@ -176,6 +176,7 @@ async fn diff_search_jump_waits_for_selected_file_diff_from_sidebar() {
     app.diff_search_modal_open = true;
     app.diff_search_results = git::DiffSearchResults {
         total_matched: 1,
+        total_matched_exact: true,
         items: vec![git::DiffSearchResult {
             file_path: "src/b.rs".to_string(),
             filetype: Some("rust"),
