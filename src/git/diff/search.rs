@@ -41,6 +41,7 @@ const FUZZY_SEARCH_CHUNK_LINES: usize = 4_096;
 pub struct DiffSearchIndex {
     files: Vec<IndexedDiffFile>,
     lines: Vec<IndexedDiffLine>,
+    text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +59,7 @@ struct IndexedDiffLine {
     kind: DiffSearchLineKind,
     old_line: Option<usize>,
     new_line: Option<usize>,
-    text: Box<str>,
+    text_range: Range<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,6 +211,15 @@ impl DiffSearchIndex {
         Ok(index)
     }
 
+    pub fn from_diff_text_owned(diff: String) -> color_eyre::Result<Self> {
+        let scanned = scan_diff_text_for_search(&diff, 0, 0);
+        Ok(Self {
+            files: scanned.files,
+            lines: scanned.lines,
+            text: diff,
+        })
+    }
+
     pub fn from_patches(patches: &[ParsedPatch]) -> Self {
         let mut index = Self::default();
         for patch in patches {
@@ -240,13 +250,12 @@ impl DiffSearchIndex {
     }
 
     pub fn append_diff_text(&mut self, diff: &str) -> color_eyre::Result<()> {
-        let patches = super::parse_patch_files(diff, None, false)?;
-        for patch in patches {
-            for file in patch.files {
-                self.push_file(&file);
-            }
-        }
-
+        let text_offset = self.text.len();
+        let file_index_offset = self.files.len();
+        let scanned = scan_diff_text_for_search(diff, text_offset, file_index_offset);
+        self.text.push_str(diff);
+        self.files.extend(scanned.files);
+        self.lines.extend(scanned.lines);
         Ok(())
     }
 
@@ -305,10 +314,11 @@ impl DiffSearchIndex {
                 continue;
             }
 
-            if let Some(match_ranges) = query.match_ranges(&line.text) {
+            let text = self.line_text(line);
+            if let Some(match_ranges) = query.match_ranges(text) {
                 total_matched = total_matched.saturating_add(1);
                 if items.len() < options.limit {
-                    let score = literal_match_score(line.text(), &match_ranges);
+                    let score = literal_match_score(text, &match_ranges);
                     items.push(self.search_result_from_ranges(line_index, match_ranges, score));
                     if items.len() == options.limit && !options.exhaustive {
                         total_matched_exact = false;
@@ -378,7 +388,7 @@ impl DiffSearchIndex {
             .into_iter()
             .filter_map(|ranked| {
                 let line = &self.lines[ranked.line_index];
-                let match_ranges = fuzzy_match_ranges(query, &line.text, &config)?;
+                let match_ranges = fuzzy_match_ranges(query, self.line_text(line), &config)?;
                 Some(self.search_result_from_ranges(ranked.line_index, match_ranges, ranked.score))
             })
             .collect();
@@ -403,6 +413,7 @@ impl DiffSearchIndex {
         top: &mut BinaryHeap<Reverse<RankedLine>>,
     ) {
         let mut fuzzy_matcher = neo_frizbee::Matcher::new(query, config);
+        let mut candidates = Vec::new();
         let mut chunk_matches = Vec::new();
         for (chunk_index, chunk) in self.lines.chunks(FUZZY_SEARCH_CHUNK_LINES).enumerate() {
             if matcher.is_cancelled() {
@@ -410,13 +421,23 @@ impl DiffSearchIndex {
                 break;
             }
 
+            candidates.clear();
             chunk_matches.clear();
             let line_index_offset = chunk_index.saturating_mul(FUZZY_SEARCH_CHUNK_LINES);
-            fuzzy_matcher.match_list_into(chunk, line_index_offset as u32, &mut chunk_matches);
+            candidates.extend(chunk.iter().enumerate().map(|(offset, line)| {
+                FuzzySearchCandidate {
+                    line_index: line_index_offset + offset,
+                    text: self.line_text(line),
+                }
+            }));
+            fuzzy_matcher.match_list_into(&candidates, 0, &mut chunk_matches);
             self.record_fuzzy_matches(
-                chunk_matches.iter().map(|matched| FuzzyMatchedLine {
-                    line_index: matched.index as usize,
-                    score: matched.score,
+                chunk_matches.iter().filter_map(|matched| {
+                    let candidate = candidates.get(matched.index as usize)?;
+                    Some(FuzzyMatchedLine {
+                        line_index: candidate.line_index,
+                        score: matched.score,
+                    })
                 }),
                 min_score,
                 options,
@@ -457,7 +478,7 @@ impl DiffSearchIndex {
             candidates.extend(chunk.iter().enumerate().filter_map(|(offset, line)| {
                 (line.kind != DiffSearchLineKind::Context).then_some(FuzzySearchCandidate {
                     line_index: line_index_offset + offset,
-                    text: line.text(),
+                    text: self.line_text(line),
                 })
             }));
             if candidates.is_empty() {
@@ -536,9 +557,12 @@ impl DiffSearchIndex {
 
     fn append_index(&mut self, mut other: DiffSearchIndex) {
         let file_index_offset = self.files.len();
+        let text_offset = self.text.len();
         for line in &mut other.lines {
             line.file_index += file_index_offset;
+            line.text_range = offset_range(line.text_range.clone(), text_offset);
         }
+        self.text.push_str(&other.text);
         self.files.extend(other.files);
         self.lines.extend(other.lines);
     }
@@ -634,6 +658,9 @@ impl DiffSearchIndex {
         new_line: Option<usize>,
         text: &str,
     ) {
+        let text_start = self.text.len();
+        self.text.push_str(text);
+        let text_end = self.text.len();
         self.lines.push(IndexedDiffLine {
             file_index,
             hunk_index,
@@ -642,7 +669,7 @@ impl DiffSearchIndex {
             kind,
             old_line,
             new_line,
-            text: text.into(),
+            text_range: text_start..text_end,
         });
     }
 
@@ -663,24 +690,16 @@ impl DiffSearchIndex {
             kind: line.kind,
             old_line: line.old_line,
             new_line: line.new_line,
-            line: line.text.to_string(),
+            line: self.line_text(line).to_string(),
             match_ranges,
             syntax_ranges: Vec::new(),
             preview_lines: Vec::new(),
             score,
         }
     }
-}
 
-impl IndexedDiffLine {
-    fn text(&self) -> &str {
-        self.text.as_ref()
-    }
-}
-
-impl neo_frizbee::Matchable for IndexedDiffLine {
-    fn match_str(&self) -> Option<&str> {
-        Some(self.text())
+    fn line_text(&self, line: &IndexedDiffLine) -> &str {
+        self.text.get(line.text_range.clone()).unwrap_or("")
     }
 }
 
@@ -700,6 +719,322 @@ impl neo_frizbee::Matchable for FuzzySearchCandidate<'_> {
     fn match_str(&self) -> Option<&str> {
         Some(self.text)
     }
+}
+
+#[derive(Debug, Default)]
+struct DiffSearchScan {
+    files: Vec<IndexedDiffFile>,
+    lines: Vec<IndexedDiffLine>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ActiveSearchHunk {
+    hunk_index: usize,
+    deletion_start: usize,
+    addition_start: usize,
+    deletion_count: usize,
+    addition_count: usize,
+    old_line: usize,
+    new_line: usize,
+    parsed_deletions: usize,
+    parsed_additions: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SearchHunkHeader {
+    deletion_start: usize,
+    deletion_count: usize,
+    addition_start: usize,
+    addition_count: usize,
+}
+
+fn scan_diff_text_for_search(
+    diff: &str,
+    text_offset: usize,
+    file_index_offset: usize,
+) -> DiffSearchScan {
+    let mut scan = DiffSearchScan::default();
+    let mut current_file_index = None;
+    let mut next_hunk_index = 0usize;
+    let mut active_hunk = None::<ActiveSearchHunk>;
+    let mut pending_unified_old_path = None::<String>;
+
+    let mut line_start = 0usize;
+    let bytes = diff.as_bytes();
+    while line_start < bytes.len() {
+        let line_end = memchr::memchr(b'\n', &bytes[line_start..])
+            .map(|offset| line_start + offset + 1)
+            .unwrap_or(bytes.len());
+        let content_end = line_content_end(bytes, line_start, line_end);
+        let line = &diff[line_start..content_end];
+
+        if let Some((_, path)) = parse_search_git_diff_names(line) {
+            let local_file_index = scan.files.len();
+            scan.files.push(IndexedDiffFile {
+                filetype: resolve_diff_filetype(&path),
+                path: path.into_boxed_str(),
+            });
+            current_file_index = Some(file_index_offset + local_file_index);
+            next_hunk_index = 0;
+            active_hunk = None;
+            pending_unified_old_path = None;
+            line_start = line_end;
+            continue;
+        }
+
+        if let Some(path) = parse_unified_header_path(line, "--- ") {
+            pending_unified_old_path = (path != "/dev/null").then_some(path);
+            active_hunk = None;
+            line_start = line_end;
+            continue;
+        }
+
+        if let Some(path) = parse_unified_header_path(line, "+++ ") {
+            if current_file_index.is_none() {
+                let path = if path == "/dev/null" {
+                    pending_unified_old_path
+                        .clone()
+                        .unwrap_or_else(|| path.clone())
+                } else {
+                    path
+                };
+                let local_file_index = scan.files.len();
+                scan.files.push(IndexedDiffFile {
+                    filetype: resolve_diff_filetype(&path),
+                    path: path.into_boxed_str(),
+                });
+                current_file_index = Some(file_index_offset + local_file_index);
+                next_hunk_index = 0;
+            }
+            active_hunk = None;
+            line_start = line_end;
+            continue;
+        }
+
+        if let Some(header) = parse_search_hunk_header(line) {
+            active_hunk = Some(ActiveSearchHunk {
+                hunk_index: next_hunk_index,
+                deletion_start: header.deletion_start,
+                addition_start: header.addition_start,
+                deletion_count: header.deletion_count,
+                addition_count: header.addition_count,
+                old_line: header.deletion_start,
+                new_line: header.addition_start,
+                parsed_deletions: 0,
+                parsed_additions: 0,
+            });
+            next_hunk_index += 1;
+            line_start = line_end;
+            continue;
+        }
+
+        if let (Some(file_index), Some(hunk)) = (current_file_index, active_hunk.as_mut()) {
+            if let Some(kind) = diff_line_kind(line.as_bytes().first().copied()) {
+                if hunk.parsed_deletions < hunk.deletion_count
+                    || hunk.parsed_additions < hunk.addition_count
+                {
+                    push_scanned_diff_line(
+                        &mut scan.lines,
+                        file_index,
+                        hunk,
+                        kind,
+                        text_offset + line_start + 1..text_offset + content_end,
+                    );
+                }
+            }
+        }
+
+        line_start = line_end;
+    }
+
+    scan
+}
+
+fn push_scanned_diff_line(
+    lines: &mut Vec<IndexedDiffLine>,
+    file_index: usize,
+    hunk: &mut ActiveSearchHunk,
+    kind: DiffSearchLineKind,
+    text_range: Range<usize>,
+) {
+    match kind {
+        DiffSearchLineKind::Context => {
+            if hunk.parsed_deletions >= hunk.deletion_count
+                || hunk.parsed_additions >= hunk.addition_count
+            {
+                return;
+            }
+            lines.push(IndexedDiffLine {
+                file_index,
+                hunk_index: hunk.hunk_index,
+                hunk_old_start: hunk.deletion_start,
+                hunk_new_start: hunk.addition_start,
+                kind,
+                old_line: Some(hunk.old_line),
+                new_line: Some(hunk.new_line),
+                text_range,
+            });
+            hunk.old_line += 1;
+            hunk.new_line += 1;
+            hunk.parsed_deletions += 1;
+            hunk.parsed_additions += 1;
+        }
+        DiffSearchLineKind::Deletion => {
+            if hunk.parsed_deletions >= hunk.deletion_count {
+                return;
+            }
+            lines.push(IndexedDiffLine {
+                file_index,
+                hunk_index: hunk.hunk_index,
+                hunk_old_start: hunk.deletion_start,
+                hunk_new_start: hunk.addition_start,
+                kind,
+                old_line: Some(hunk.old_line),
+                new_line: None,
+                text_range,
+            });
+            hunk.old_line += 1;
+            hunk.parsed_deletions += 1;
+        }
+        DiffSearchLineKind::Addition => {
+            if hunk.parsed_additions >= hunk.addition_count {
+                return;
+            }
+            lines.push(IndexedDiffLine {
+                file_index,
+                hunk_index: hunk.hunk_index,
+                hunk_old_start: hunk.deletion_start,
+                hunk_new_start: hunk.addition_start,
+                kind,
+                old_line: None,
+                new_line: Some(hunk.new_line),
+                text_range,
+            });
+            hunk.new_line += 1;
+            hunk.parsed_additions += 1;
+        }
+    }
+}
+
+fn diff_line_kind(first_byte: Option<u8>) -> Option<DiffSearchLineKind> {
+    match first_byte {
+        Some(b' ') => Some(DiffSearchLineKind::Context),
+        Some(b'+') => Some(DiffSearchLineKind::Addition),
+        Some(b'-') => Some(DiffSearchLineKind::Deletion),
+        _ => None,
+    }
+}
+
+fn line_content_end(bytes: &[u8], line_start: usize, line_end: usize) -> usize {
+    let mut end = line_end;
+    if end > line_start && bytes[end - 1] == b'\n' {
+        end -= 1;
+    }
+    if end > line_start && bytes[end - 1] == b'\r' {
+        end -= 1;
+    }
+    end
+}
+
+fn parse_search_hunk_header(line: &str) -> Option<SearchHunkHeader> {
+    let line = line.strip_prefix("@@ -")?;
+    let mut index = 0usize;
+    let deletion_start = read_search_decimal(line, &mut index)?;
+    let mut deletion_count = 1usize;
+    if line.as_bytes().get(index) == Some(&b',') {
+        index += 1;
+        deletion_count = read_search_decimal(line, &mut index)?;
+    }
+
+    if line.as_bytes().get(index) != Some(&b' ') || line.as_bytes().get(index + 1) != Some(&b'+') {
+        return None;
+    }
+    index += 2;
+
+    let addition_start = read_search_decimal(line, &mut index)?;
+    let mut addition_count = 1usize;
+    if line.as_bytes().get(index) == Some(&b',') {
+        index += 1;
+        addition_count = read_search_decimal(line, &mut index)?;
+    }
+
+    (line.as_bytes().get(index) == Some(&b' ')
+        && line.as_bytes().get(index + 1) == Some(&b'@')
+        && line.as_bytes().get(index + 2) == Some(&b'@'))
+    .then_some(SearchHunkHeader {
+        deletion_start,
+        deletion_count,
+        addition_start,
+        addition_count,
+    })
+}
+
+fn read_search_decimal(line: &str, index: &mut usize) -> Option<usize> {
+    let start = *index;
+    let mut parsed = 0usize;
+    while let Some(byte) = line.as_bytes().get(*index).copied() {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        parsed = parsed
+            .saturating_mul(10)
+            .saturating_add((byte - b'0') as usize);
+        *index += 1;
+    }
+    (*index != start).then_some(parsed)
+}
+
+fn parse_search_git_diff_names(line: &str) -> Option<(String, String)> {
+    let mut rest = line.strip_prefix("diff --git ")?;
+    let prev = parse_search_git_header_path(&mut rest)?;
+    rest = rest.trim_start();
+    let next = parse_search_git_header_path(&mut rest)?;
+    Some((prev, next))
+}
+
+fn parse_search_git_header_path(rest: &mut &str) -> Option<String> {
+    let value = rest.trim_start();
+    if let Some(after_quote) = value.strip_prefix('"') {
+        for (index, ch) in after_quote.char_indices() {
+            if ch == '"' {
+                let path = &after_quote[..index];
+                *rest = &after_quote[index + ch.len_utf8()..];
+                return strip_git_side_prefix(path).map(ToOwned::to_owned);
+            }
+        }
+        None
+    } else {
+        let end = value.find(char::is_whitespace).unwrap_or(value.len());
+        let path = &value[..end];
+        *rest = &value[end..];
+        strip_git_side_prefix(path).map(ToOwned::to_owned)
+    }
+}
+
+fn parse_unified_header_path(line: &str, prefix: &str) -> Option<String> {
+    let rest = line.strip_prefix(prefix)?.trim_start();
+    let path = rest
+        .split('\t')
+        .next()
+        .unwrap_or(rest)
+        .split('\r')
+        .next()
+        .unwrap_or(rest)
+        .split('\n')
+        .next()
+        .unwrap_or(rest)
+        .trim();
+    Some(strip_git_side_prefix(path).unwrap_or(path).to_string())
+}
+
+fn strip_git_side_prefix(path: &str) -> Option<&str> {
+    path.strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .or_else(|| (path == "/dev/null").then_some(path))
+}
+
+fn offset_range(range: Range<usize>, offset: usize) -> Range<usize> {
+    range.start + offset..range.end + offset
 }
 
 impl DiffSearchResults {
@@ -824,7 +1159,7 @@ fn is_unmerged_status(status: &str) -> bool {
 }
 
 async fn index_from_diff_text(diff: String) -> color_eyre::Result<DiffSearchIndex> {
-    task::spawn_blocking(move || DiffSearchIndex::from_diff_text(&diff))
+    task::spawn_blocking(move || DiffSearchIndex::from_diff_text_owned(diff))
         .await
         .wrap_err("diff search index parse task failed")?
 }
@@ -1188,6 +1523,37 @@ mod tests {
         assert_eq!(results.items[0].kind, DiffSearchLineKind::Addition);
         assert_eq!(results.items[0].new_line, Some(2));
         assert_eq!(results.items[0].hunk_index, 0);
+    }
+
+    #[test]
+    fn index_streams_git_diff_paths_without_full_patch_parse() {
+        let results = search(
+            concat!(
+                "diff --git \"a/old name.ts\" \"b/new name.ts\"\n",
+                "--- \"a/old name.ts\"\n",
+                "+++ \"b/new name.ts\"\n",
+                "@@ -0,0 +1,1 @@\n",
+                "+const streamed_target = true;\n",
+            ),
+            "'streamed_target",
+        );
+
+        assert_eq!(results.items[0].file_path, "new name.ts");
+        assert_eq!(results.items[0].filetype, Some("typescript"));
+    }
+
+    #[test]
+    fn index_keeps_files_without_searchable_lines() {
+        let index = DiffSearchIndex::from_diff_text(concat!(
+            "diff --git a/old.txt b/new.txt\n",
+            "similarity index 100%\n",
+            "rename from old.txt\n",
+            "rename to new.txt\n",
+        ))
+        .expect("diff should index");
+
+        assert_eq!(index.file_count(), 1);
+        assert_eq!(index.line_count(), 0);
     }
 
     #[test]
