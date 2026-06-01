@@ -97,8 +97,13 @@ pub use self::stats::{
     load_review_diff_stats_for_commit_compare, load_review_diff_stats_for_working_tree,
 };
 pub use self::text_index::{
-    ReviewDiffTextIndex, load_review_diff_text_index_for_branch_compare,
-    load_review_diff_text_index_for_commit_compare, load_review_diff_text_index_for_working_tree,
+    ReviewDiffPartialTextIndex, ReviewDiffStreamedFile, ReviewDiffTextIndex,
+    load_review_diff_text_index_for_branch_compare,
+    load_review_diff_text_index_for_branch_compare_streaming,
+    load_review_diff_text_index_for_commit_compare,
+    load_review_diff_text_index_for_commit_compare_streaming,
+    load_review_diff_text_index_for_working_tree,
+    load_review_diff_text_index_for_working_tree_streaming,
 };
 pub use self::view::{
     DiffDisplayLineAnchor, DiffExactContext, DiffPreviewData, DiffSelectionPane,

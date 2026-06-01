@@ -44,8 +44,8 @@ use crate::{
     git::{
         self, BlameCommitDetails, BlameTarget, BranchCompareSelection, CommitCompareSelection,
         CommitSearchEntry, DiffSearchIndex, DiffSearchMode, DiffSearchResults, DiffSelectionPoint,
-        DiffView, FileEntry, ReviewDiffSnapshot, ReviewDiffTextIndex, SharedHighlightRegistry,
-        WorktreeEntry,
+        DiffView, FileEntry, ReviewDiffPartialTextIndex, ReviewDiffSnapshot, ReviewDiffTextIndex,
+        SharedHighlightRegistry, WorktreeEntry,
     },
     review::ReviewReport,
     sidebar::SidebarItem,
@@ -183,6 +183,7 @@ pub struct App {
     diff_prefetch_task: Option<task::JoinHandle<()>>,
     diff_prefetch_direction: DiffPrefetchDirection,
     diff_prefetch_anchor_file_index: Option<usize>,
+    review_diff_stream_index: Option<ReviewDiffPartialTextIndex>,
     review_diff_text_index: Option<Arc<ReviewDiffTextIndex>>,
     review_diff_snapshot: Option<Arc<ReviewDiffSnapshot>>,
     review_diff_snapshot_request_id: u64,

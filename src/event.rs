@@ -7,7 +7,8 @@ use crate::{
     git::{
         BlameCommitDetails, BranchCompareRefs, BranchMergeOutcome, CommitSearchEntry,
         DiffSearchIndex, DiffSearchResults, DiffView, ReviewDiffSnapshot, ReviewDiffStats,
-        ReviewDiffTextIndex, SharedHighlightRegistry, WorkingTreeStatus, WorktreeEntry,
+        ReviewDiffStreamedFile, ReviewDiffTextIndex, SharedHighlightRegistry, WorkingTreeStatus,
+        WorktreeEntry,
     },
     review::PersistedReview,
     watcher::RepoWatcher,
@@ -50,6 +51,11 @@ pub enum Event {
         request_id: u64,
         generation: u64,
         result: Result<Arc<ReviewDiffTextIndex>, String>,
+    },
+    ReviewDiffFileStreamed {
+        request_id: u64,
+        generation: u64,
+        file: ReviewDiffStreamedFile,
     },
     ReviewDiffStatsLoaded {
         request_id: u64,

@@ -65,6 +65,8 @@ impl App {
         let review_mode = self.review_mode.clone();
         let review_diff_snapshot = self.review_diff_snapshot.clone();
         let review_diff_text_index = self.review_diff_text_index.clone();
+        let whole_diff_inflight =
+            review_diff_text_index.is_none() && self.review_diff_snapshot_task.is_some();
         let repo_root = self.repo_root.clone();
         let highlight_registry = self.highlight_registry.clone();
         let sender = self.events.sender();
@@ -99,6 +101,10 @@ impl App {
                     if memory_jobs.len() >= DIFF_SNAPSHOT_PREFETCH_CONCURRENCY {
                         send_next_memory_prefetch(&mut memory_jobs, &sender).await;
                     }
+                    continue;
+                }
+
+                if whole_diff_inflight && !file.status.contains('U') {
                     continue;
                 }
 
@@ -402,6 +408,10 @@ impl App {
             return;
         }
 
+        if self.load_selected_diff_from_review_stream_cache(&file, &cache_key) {
+            return;
+        }
+
         if self.review_diff_text_index.is_none()
             && self.review_diff_snapshot_task.is_some()
             && !file.status.contains('U')
@@ -491,6 +501,40 @@ impl App {
         };
         self.diff_view_cache
             .insert_plain(cache_key.clone(), diff_view.clone());
+        self.diff_view = diff_view;
+        self.apply_pending_diff_search_target();
+        self.diff_highlight_complete = self.highlight_registry.is_none() || file.filetype.is_none();
+        self.status_message = Some(self.current_status_message());
+        true
+    }
+
+    pub(in crate::app) fn load_selected_diff_from_review_stream_cache(
+        &mut self,
+        file: &FileEntry,
+        cache_key: &DiffCacheKey,
+    ) -> bool {
+        let Some(stream_index) = self
+            .review_diff_stream_index
+            .as_ref()
+            .filter(|stream_index| stream_index.contains_file(&file.path))
+        else {
+            return false;
+        };
+
+        let Some(diff_view) = stream_index.build_diff_view(file) else {
+            return false;
+        };
+        self.diff_view_cache
+            .insert_plain(cache_key.clone(), diff_view.clone());
+
+        if self.pending_diff_cache_key.as_ref() != Some(cache_key) {
+            return false;
+        }
+
+        if let Some(task) = self.diff_load_task.take() {
+            task.abort();
+        }
+
         self.diff_view = diff_view;
         self.apply_pending_diff_search_target();
         self.diff_highlight_complete = self.highlight_registry.is_none() || file.filetype.is_none();

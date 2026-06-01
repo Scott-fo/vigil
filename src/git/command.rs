@@ -9,7 +9,10 @@
 use std::{path::Path, process::Output};
 
 use color_eyre::eyre::{WrapErr, eyre};
-use tokio::{io::AsyncWriteExt, process::Command};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
 
 pub async fn git_output(repo_root: &Path, args: &[&str]) -> color_eyre::Result<String> {
     let output = git_output_raw(repo_root, args).await?;
@@ -39,6 +42,73 @@ pub(crate) async fn git_output_raw(repo_root: &Path, args: &[&str]) -> color_eyr
         .output()
         .await
         .wrap_err_with(|| format!("failed to run git {:?}", args))
+}
+
+pub(crate) async fn git_output_streamed<F>(
+    repo_root: &Path,
+    args: &[&str],
+    mut on_stdout: F,
+) -> color_eyre::Result<String>
+where
+    F: FnMut(&[u8]) -> color_eyre::Result<()>,
+{
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .wrap_err_with(|| format!("failed to spawn git {:?}", args))?;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| eyre!("failed to capture git {:?} stdout", args))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| eyre!("failed to capture git {:?} stderr", args))?;
+
+    let stderr_task = tokio::spawn(async move {
+        let mut stderr_bytes = Vec::new();
+        stderr
+            .read_to_end(&mut stderr_bytes)
+            .await
+            .map(|_| stderr_bytes)
+    });
+
+    let mut stdout_bytes = Vec::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = stdout
+            .read(&mut buffer)
+            .await
+            .wrap_err_with(|| format!("failed to read git {:?} stdout", args))?;
+        if read == 0 {
+            break;
+        }
+        on_stdout(&buffer[..read])?;
+        stdout_bytes.extend_from_slice(&buffer[..read]);
+    }
+
+    let status = child
+        .wait()
+        .await
+        .wrap_err_with(|| format!("failed to wait for git {:?}", args))?;
+    let stderr_bytes = stderr_task
+        .await
+        .wrap_err_with(|| format!("failed to join git {:?} stderr reader", args))?
+        .wrap_err_with(|| format!("failed to read git {:?} stderr", args))?;
+
+    if !status.success() {
+        return Err(eyre!(
+            "{}",
+            String::from_utf8_lossy(&stderr_bytes).trim().to_string()
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&stdout_bytes).into_owned())
 }
 
 pub(crate) async fn git_output_with_stdin(

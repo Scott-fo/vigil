@@ -57,6 +57,15 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
+            Event::ReviewDiffFileStreamed {
+                request_id,
+                generation,
+                file,
+            } => {
+                if self.handle_review_diff_file_streamed(request_id, generation, file) {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
             Event::ReviewDiffStatsLoaded {
                 request_id,
                 generation,

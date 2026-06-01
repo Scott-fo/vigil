@@ -134,6 +134,7 @@ impl App {
         self.apply_pending_diff_search_target();
         self.diff_highlight_complete = highlight_complete;
         self.status_message = Some(self.current_status_message());
+        self.spawn_diff_prefetch();
         true
     }
 }

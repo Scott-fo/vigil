@@ -278,6 +278,43 @@ fn selected_diff_load_uses_review_text_index_without_task() {
 }
 
 #[tokio::test]
+async fn selected_diff_load_uses_streamed_review_file_without_task() {
+    let mut app = build_test_app();
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/file-0.rs".to_string(),
+        label: "file-0.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    let mut stream_index = git::ReviewDiffPartialTextIndex::default();
+    stream_index.insert_file_diff(
+        "src/file-0.rs".to_string(),
+        concat!(
+            "diff --git a/src/file-0.rs b/src/file-0.rs\n",
+            "--- a/src/file-0.rs\n",
+            "+++ b/src/file-0.rs\n",
+            "@@ -1,1 +1,2 @@\n",
+            " fn existing() {}\n",
+            "+fn from_stream() {}\n",
+        )
+        .to_string(),
+    );
+    app.review_diff_stream_index = Some(stream_index);
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_none());
+    assert!(app.diff_view.note.is_none());
+    assert!(app.diff_view.has_diff_rows());
+    app.cancel_inflight_review_diff_snapshot();
+}
+
+#[tokio::test]
 async fn selected_diff_waits_for_inflight_whole_diff_without_stale_or_per_file_task() {
     let mut app = build_test_app();
     app.files = vec![FileEntry {
@@ -299,6 +336,85 @@ async fn selected_diff_waits_for_inflight_whole_diff_without_stale_or_per_file_t
     assert!(!app.diff_view.has_diff_rows());
     assert_eq!(app.diff_view.note.as_deref(), Some(""));
 
+    app.cancel_inflight_review_diff_snapshot();
+}
+
+#[tokio::test]
+async fn streamed_current_file_wakes_blank_diff_while_snapshot_is_inflight() {
+    let mut app = build_test_app();
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/file-0.rs".to_string(),
+        label: "file-0.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.review_diff_snapshot_request_id = 9;
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(!app.diff_view.has_diff_rows());
+
+    let changed = app.handle_review_diff_file_streamed(
+        9,
+        app.diff_cache_generation,
+        git::ReviewDiffStreamedFile {
+            path: "src/file-0.rs".to_string(),
+            diff: concat!(
+                "diff --git a/src/file-0.rs b/src/file-0.rs\n",
+                "--- a/src/file-0.rs\n",
+                "+++ b/src/file-0.rs\n",
+                "@@ -1,1 +1,2 @@\n",
+                " fn existing() {}\n",
+                "+fn from_stream() {}\n",
+            )
+            .to_string(),
+        },
+    );
+
+    assert!(changed);
+    assert!(app.diff_view.note.is_none());
+    assert!(app.diff_view.has_diff_rows());
+    app.cancel_inflight_review_diff_snapshot();
+}
+
+#[tokio::test]
+async fn streamed_visible_file_is_cached_without_per_file_load() {
+    let mut app = build_test_app();
+    app.files = build_file_entries(2);
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.sidebar_viewport_height = 20;
+    app.review_diff_snapshot_request_id = 11;
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+    let key = app.diff_cache_key(&app.files[1]);
+
+    let changed = app.handle_review_diff_file_streamed(
+        11,
+        app.diff_cache_generation,
+        git::ReviewDiffStreamedFile {
+            path: "src/file-1.rs".to_string(),
+            diff: concat!(
+                "diff --git a/src/file-1.rs b/src/file-1.rs\n",
+                "--- a/src/file-1.rs\n",
+                "+++ b/src/file-1.rs\n",
+                "@@ -1,1 +1,2 @@\n",
+                " fn existing() {}\n",
+                "+fn from_stream() {}\n",
+            )
+            .to_string(),
+        },
+    );
+
+    assert!(!changed);
+    assert!(app.diff_view_cache.has_plain(&key));
+    assert!(app.diff_load_task.is_none());
     app.cancel_inflight_review_diff_snapshot();
 }
 

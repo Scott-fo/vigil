@@ -13,7 +13,7 @@ use color_eyre::eyre::WrapErr;
 use super::{DiffView, preview::load_diff_preview_for_working_tree};
 use crate::git::{
     BranchCompareSelection, CommitCompareSelection, FileEntry,
-    command::git_output,
+    command::git_output_streamed,
     parse::{build_branch_diff_range, resolve_diff_filetype},
 };
 
@@ -22,6 +22,49 @@ pub struct ReviewDiffTextIndex {
     diff: Arc<str>,
     files: HashMap<String, Range<usize>>,
     file_order: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReviewDiffStreamedFile {
+    pub path: String,
+    pub diff: String,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ReviewDiffPartialTextIndex {
+    files: HashMap<String, Arc<str>>,
+}
+
+impl ReviewDiffPartialTextIndex {
+    pub fn from_diff_text_owned(diff: String) -> Self {
+        let (files, file_order) = scan_file_ranges(&diff);
+        let mut partial = Self {
+            files: HashMap::with_capacity(file_order.len()),
+        };
+        for path in file_order {
+            let Some(range) = files.get(&path) else {
+                continue;
+            };
+            partial.insert_file_diff(path, diff[range.clone()].to_string());
+        }
+        partial
+    }
+
+    pub fn insert_file_diff(&mut self, path: String, diff: String) {
+        self.files.insert(path, Arc::from(diff));
+    }
+
+    pub fn contains_file(&self, path: &str) -> bool {
+        self.files.contains_key(path)
+    }
+
+    pub fn build_diff_view(&self, file: &FileEntry) -> Option<DiffView> {
+        let diff = self.files.get(file.path.as_str())?;
+        Some(super::build_diff_view_from_diff_text(
+            diff,
+            file.filetype.or_else(|| resolve_diff_filetype(&file.path)),
+        ))
+    }
 }
 
 impl ReviewDiffTextIndex {
@@ -59,20 +102,33 @@ pub async fn load_review_diff_text_index_for_working_tree(
     repo_root: &Path,
     files: &[FileEntry],
 ) -> color_eyre::Result<ReviewDiffTextIndex> {
+    load_review_diff_text_index_for_working_tree_streaming(repo_root, files, |_| {}).await
+}
+
+pub async fn load_review_diff_text_index_for_working_tree_streaming<F>(
+    repo_root: &Path,
+    files: &[FileEntry],
+    on_file: F,
+) -> color_eyre::Result<ReviewDiffTextIndex>
+where
+    F: FnMut(ReviewDiffStreamedFile) + Send,
+{
     if files.iter().any(|file| is_unmerged_status(&file.status)) {
-        return load_working_tree_text_index_file_by_file(repo_root, files).await;
+        return load_working_tree_text_index_file_by_file(repo_root, files, on_file).await;
     }
 
     let mut diff = String::new();
+    let mut on_file = on_file;
     if files.iter().any(|file| file.status != "??") {
-        diff = git_output(
+        diff = stream_git_diff(
             repo_root,
             &["diff", "--no-color", "--find-renames", "HEAD", "--"],
+            &mut on_file,
         )
         .await?;
     }
 
-    append_untracked_diffs(repo_root, files, &mut diff).await?;
+    append_untracked_diffs(repo_root, files, &mut diff, &mut on_file).await?;
     Ok(ReviewDiffTextIndex::from_diff_text_owned(diff))
 }
 
@@ -80,7 +136,18 @@ pub async fn load_review_diff_text_index_for_commit_compare(
     repo_root: &Path,
     selection: &CommitCompareSelection,
 ) -> color_eyre::Result<ReviewDiffTextIndex> {
-    let diff = git_output(
+    load_review_diff_text_index_for_commit_compare_streaming(repo_root, selection, |_| {}).await
+}
+
+pub async fn load_review_diff_text_index_for_commit_compare_streaming<F>(
+    repo_root: &Path,
+    selection: &CommitCompareSelection,
+    mut on_file: F,
+) -> color_eyre::Result<ReviewDiffTextIndex>
+where
+    F: FnMut(ReviewDiffStreamedFile) + Send,
+{
+    let diff = stream_git_diff(
         repo_root,
         &[
             "diff",
@@ -89,6 +156,7 @@ pub async fn load_review_diff_text_index_for_commit_compare(
             selection.base_ref.as_str(),
             selection.commit_hash.as_str(),
         ],
+        &mut on_file,
     )
     .await?;
     Ok(ReviewDiffTextIndex::from_diff_text_owned(diff))
@@ -98,41 +166,164 @@ pub async fn load_review_diff_text_index_for_branch_compare(
     repo_root: &Path,
     selection: &BranchCompareSelection,
 ) -> color_eyre::Result<ReviewDiffTextIndex> {
+    load_review_diff_text_index_for_branch_compare_streaming(repo_root, selection, |_| {}).await
+}
+
+pub async fn load_review_diff_text_index_for_branch_compare_streaming<F>(
+    repo_root: &Path,
+    selection: &BranchCompareSelection,
+    mut on_file: F,
+) -> color_eyre::Result<ReviewDiffTextIndex>
+where
+    F: FnMut(ReviewDiffStreamedFile) + Send,
+{
     let diff_range = build_branch_diff_range(selection);
-    let diff = git_output(
+    let diff = stream_git_diff(
         repo_root,
         &["diff", "--no-color", "--find-renames", diff_range.as_str()],
+        &mut on_file,
     )
     .await?;
     Ok(ReviewDiffTextIndex::from_diff_text_owned(diff))
 }
 
-async fn load_working_tree_text_index_file_by_file(
+async fn load_working_tree_text_index_file_by_file<F>(
     repo_root: &Path,
     files: &[FileEntry],
-) -> color_eyre::Result<ReviewDiffTextIndex> {
+    mut on_file: F,
+) -> color_eyre::Result<ReviewDiffTextIndex>
+where
+    F: FnMut(ReviewDiffStreamedFile) + Send,
+{
     let mut diff = String::new();
     for file in files {
         let preview = load_diff_preview_for_working_tree(repo_root, file, false)
             .await
             .wrap_err_with(|| format!("failed to load preview for {}", file.path))?;
+        send_preview_diff(&mut on_file, file.path.clone(), &preview.diff);
         append_preview_diff(&mut diff, &preview.diff);
     }
     Ok(ReviewDiffTextIndex::from_diff_text_owned(diff))
 }
 
-async fn append_untracked_diffs(
+async fn append_untracked_diffs<F>(
     repo_root: &Path,
     files: &[FileEntry],
     diff: &mut String,
-) -> color_eyre::Result<()> {
+    on_file: &mut F,
+) -> color_eyre::Result<()>
+where
+    F: FnMut(ReviewDiffStreamedFile),
+{
     for file in files.iter().filter(|file| file.status == "??") {
         let preview = load_diff_preview_for_working_tree(repo_root, file, false)
             .await
             .wrap_err_with(|| format!("failed to load untracked preview for {}", file.path))?;
+        send_preview_diff(on_file, file.path.clone(), &preview.diff);
         append_preview_diff(diff, &preview.diff);
     }
     Ok(())
+}
+
+async fn stream_git_diff<F>(
+    repo_root: &Path,
+    args: &[&str],
+    on_file: &mut F,
+) -> color_eyre::Result<String>
+where
+    F: FnMut(ReviewDiffStreamedFile),
+{
+    let mut parser = DiffFileStreamParser::default();
+    let diff = git_output_streamed(repo_root, args, |chunk| {
+        parser.push_chunk(chunk, on_file);
+        Ok(())
+    })
+    .await?;
+    parser.finish(on_file);
+    Ok(diff)
+}
+
+fn send_preview_diff<F>(on_file: &mut F, path: String, diff: &str)
+where
+    F: FnMut(ReviewDiffStreamedFile),
+{
+    if diff.trim().is_empty() {
+        return;
+    }
+    on_file(ReviewDiffStreamedFile {
+        path,
+        diff: ensure_trailing_newline(diff),
+    });
+}
+
+fn ensure_trailing_newline(diff: &str) -> String {
+    let mut diff = diff.to_string();
+    if !diff.ends_with('\n') {
+        diff.push('\n');
+    }
+    diff
+}
+
+#[derive(Default)]
+struct DiffFileStreamParser {
+    current_patch: Vec<u8>,
+    current_line: Vec<u8>,
+}
+
+impl DiffFileStreamParser {
+    fn push_chunk<F>(&mut self, chunk: &[u8], on_file: &mut F)
+    where
+        F: FnMut(ReviewDiffStreamedFile),
+    {
+        let mut remaining = chunk;
+        while !remaining.is_empty() {
+            let Some(newline) = memchr::memchr(b'\n', remaining) else {
+                self.current_line.extend_from_slice(remaining);
+                break;
+            };
+            let line_end = newline + 1;
+            self.current_line.extend_from_slice(&remaining[..line_end]);
+            self.push_current_line(on_file);
+            remaining = &remaining[line_end..];
+        }
+    }
+
+    fn finish<F>(&mut self, on_file: &mut F)
+    where
+        F: FnMut(ReviewDiffStreamedFile),
+    {
+        if !self.current_line.is_empty() {
+            self.push_current_line(on_file);
+        }
+        self.finish_current_patch(on_file);
+    }
+
+    fn push_current_line<F>(&mut self, on_file: &mut F)
+    where
+        F: FnMut(ReviewDiffStreamedFile),
+    {
+        if self.current_line.starts_with(b"diff --git ") && !self.current_patch.is_empty() {
+            self.finish_current_patch(on_file);
+        }
+        self.current_patch.extend_from_slice(&self.current_line);
+        self.current_line.clear();
+    }
+
+    fn finish_current_patch<F>(&mut self, on_file: &mut F)
+    where
+        F: FnMut(ReviewDiffStreamedFile),
+    {
+        if self.current_patch.is_empty() {
+            return;
+        }
+
+        let diff = String::from_utf8_lossy(&self.current_patch).into_owned();
+        self.current_patch.clear();
+        let Some(path) = file_path_from_patch(&diff) else {
+            return;
+        };
+        on_file(ReviewDiffStreamedFile { path, diff });
+    }
 }
 
 fn append_preview_diff(combined: &mut String, patch: &str) {
@@ -331,5 +522,28 @@ mod tests {
 
         assert!(index.contains_file("src/new.rs"));
         assert!(!index.contains_file("src/old.rs"));
+    }
+
+    #[test]
+    fn stream_parser_emits_completed_files_across_chunk_boundaries() {
+        let mut parser = DiffFileStreamParser::default();
+        let mut files = Vec::new();
+        let mut on_file = |file| files.push(file);
+
+        for chunk in [
+            "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n",
+            "+++ b/src/a.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+            "diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n",
+            "@@ -0,0 +1,1 @@\n+added\n",
+        ] {
+            parser.push_chunk(chunk.as_bytes(), &mut on_file);
+        }
+        parser.finish(&mut on_file);
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "src/a.rs");
+        assert!(files[0].diff.contains("+new\n"));
+        assert_eq!(files[1].path, "src/b.rs");
+        assert!(files[1].diff.contains("+added\n"));
     }
 }

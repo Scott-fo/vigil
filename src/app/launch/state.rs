@@ -56,6 +56,7 @@ impl App {
             diff_prefetch_task: None,
             diff_prefetch_direction: Default::default(),
             diff_prefetch_anchor_file_index: None,
+            review_diff_stream_index: None,
             review_diff_text_index: None,
             review_diff_snapshot: None,
             review_diff_snapshot_request_id: 0,

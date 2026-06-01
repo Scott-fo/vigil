@@ -3,7 +3,10 @@ use std::{hint::black_box, sync::LazyLock, time::Duration};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use vigil::{
     app::{DiffLineWrapMode, DiffViewMode},
-    git::{DiffView, FileEntry, HighlightRegistry, ReviewDiffSnapshot, ReviewDiffTextIndex},
+    git::{
+        DiffView, FileEntry, HighlightRegistry, ReviewDiffPartialTextIndex, ReviewDiffSnapshot,
+        ReviewDiffTextIndex,
+    },
 };
 
 const HUGE_REVIEW_FILE_COUNT: usize = 22_000;
@@ -23,6 +26,8 @@ static HUGE_REVIEW_SNAPSHOT: LazyLock<ReviewDiffSnapshot> = LazyLock::new(|| {
 });
 static HUGE_REVIEW_TEXT_INDEX: LazyLock<ReviewDiffTextIndex> =
     LazyLock::new(|| ReviewDiffTextIndex::from_diff_text_owned(HUGE_REVIEW.patch.clone()));
+static HUGE_REVIEW_PARTIAL_TEXT_INDEX: LazyLock<ReviewDiffPartialTextIndex> =
+    LazyLock::new(|| ReviewDiffPartialTextIndex::from_diff_text_owned(HUGE_REVIEW.patch.clone()));
 static LARGE_FILE: LazyLock<LargeFileFixture> = LazyLock::new(build_large_file_fixture);
 static LARGE_FILE_SNAPSHOT: LazyLock<ReviewDiffSnapshot> = LazyLock::new(|| {
     ReviewDiffSnapshot::from_diff_text(&LARGE_FILE.patch, Some("large-file"))
@@ -170,6 +175,8 @@ fn bench_huge_review_scrolling(c: &mut Criterion) {
     assert_eq!(snapshot.file_count(), HUGE_REVIEW_FILE_COUNT);
     let text_index = &*HUGE_REVIEW_TEXT_INDEX;
     assert_eq!(text_index.file_count(), HUGE_REVIEW_FILE_COUNT);
+    let partial_text_index = &*HUGE_REVIEW_PARTIAL_TEXT_INDEX;
+    assert!(partial_text_index.contains_file(&fixture.files[0].path));
 
     let selected_file = &fixture.files[HUGE_REVIEW_FILE_COUNT / 2];
     let scroll_files = &fixture.files[0..SCROLL_SAMPLE_FILES];
@@ -196,6 +203,17 @@ fn bench_huge_review_scrolling(c: &mut Criterion) {
             |patch| {
                 let index = ReviewDiffTextIndex::from_diff_text_owned(black_box(patch));
                 black_box(index.file_count());
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group.bench_function("build_partial_text_index_22k_files_1m_lines", |b| {
+        b.iter_batched(
+            || fixture.patch.clone(),
+            |patch| {
+                let index = ReviewDiffPartialTextIndex::from_diff_text_owned(black_box(patch));
+                black_box(index.contains_file(&selected_file.path));
             },
             BatchSize::LargeInput,
         );
@@ -228,6 +246,23 @@ fn bench_huge_review_scrolling(c: &mut Criterion) {
                 let mut view = text_index
                     .build_diff_view(black_box(file))
                     .expect("scroll file should exist in text index");
+                rows = rows.saturating_add(view.display_line_count(
+                    DiffViewMode::Split,
+                    SPLIT_RENDER_WIDTH,
+                    DiffLineWrapMode::NoWrap,
+                ));
+            }
+            black_box(rows);
+        });
+    });
+
+    group.bench_function("partial_text_index_plain_views_512_files", |b| {
+        b.iter(|| {
+            let mut rows = 0usize;
+            for file in scroll_files {
+                let mut view = partial_text_index
+                    .build_diff_view(black_box(file))
+                    .expect("scroll file should exist in partial text index");
                 rows = rows.saturating_add(view.display_line_count(
                     DiffViewMode::Split,
                     SPLIT_RENDER_WIDTH,
