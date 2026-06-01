@@ -152,6 +152,23 @@ fn selected_diff_load_uses_review_snapshot_without_task() {
     assert_eq!(app.diff_view.estimated_display_line_count(), 2);
 }
 
+#[test]
+fn diff_stats_state_reports_review_snapshot_totals() {
+    let mut app = build_test_app();
+    app.review_diff_snapshot = Some(Arc::new(
+        build_review_snapshot().with_generation(app.diff_cache_generation),
+    ));
+
+    let DiffStatsState::Ready(stats) = app.diff_stats_state() else {
+        panic!("snapshot should produce ready diff stats");
+    };
+
+    assert_eq!(stats.file_count, 1);
+    assert_eq!(stats.additions, 1);
+    assert_eq!(stats.deletions, 0);
+    assert_eq!(stats.lines, 2);
+}
+
 #[tokio::test]
 async fn selected_diff_load_keeps_current_view_while_uncached_file_loads() {
     let mut app = build_test_app();

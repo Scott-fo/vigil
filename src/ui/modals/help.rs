@@ -27,6 +27,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         key_line("?", "toggle help"),
         key_line("tab", "switch sidebar / diff focus"),
         key_line("Ctrl-B", "toggle left sidebar"),
+        key_line("F2", "open diff stats"),
         key_line("ff / fg", "file search / diff search"),
         key_line("v", "toggle unified / split diff"),
         key_line("r", "refresh"),

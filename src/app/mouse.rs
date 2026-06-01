@@ -40,6 +40,7 @@ impl App {
         self.blame_modal_open
             || self.commit_modal_open
             || self.discard_target.is_some()
+            || self.diff_stats_modal_open
             || self.help_modal_open
             || self.review_summary_modal_open
             || self.theme_modal_open

@@ -73,6 +73,7 @@ impl App {
             blame_scroll: 0,
             blame_request_id: 0,
             blame_load_task: None,
+            diff_stats_modal_open: false,
             help_modal_open: false,
             theme_modal_open: false,
             theme_modal_query: String::new(),

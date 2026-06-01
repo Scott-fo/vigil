@@ -4,6 +4,7 @@ mod branch_merge;
 mod commit;
 mod commit_search;
 mod diff_search;
+mod diff_stats;
 mod discard;
 mod file_search;
 mod frame;
@@ -24,6 +25,7 @@ use self::{
     commit::render_commit_modal,
     commit_search::render_commit_search_modal,
     diff_search::render_diff_search_modal,
+    diff_stats::render_diff_stats_modal,
     discard::render_discard_modal,
     file_search::render_file_search_modal,
     help::render_help_modal,
@@ -51,6 +53,10 @@ pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
 
     if app.diff_search_modal_open {
         render_diff_search_modal(frame, app);
+    }
+
+    if app.diff_stats_modal_open {
+        render_diff_stats_modal(frame, app);
     }
 
     if app.commit_search_modal_open {

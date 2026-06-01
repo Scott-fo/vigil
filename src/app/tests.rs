@@ -6,6 +6,21 @@ fn build_test_app() -> App {
 }
 
 #[tokio::test]
+async fn f2_toggles_diff_stats_modal() {
+    let mut app = build_test_app();
+
+    app.handle_key_event(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert!(app.diff_stats_modal_open);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert!(!app.diff_stats_modal_open);
+}
+
+#[tokio::test]
 async fn global_shortcuts_use_ff_for_file_search_fg_for_diff_search_and_p_for_pull() {
     let mut app = build_test_app();
 

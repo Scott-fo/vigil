@@ -31,7 +31,7 @@ mod theme_modal;
 mod working_tree_actions;
 mod worktree;
 
-pub use self::diff::{DiffCacheKey, PreparedDiffViewport};
+pub use self::diff::{DiffCacheKey, DiffStatsState, PreparedDiffViewport};
 use self::diff::{DiffHighlightJob, DiffPrefetchDirection, DiffViewCache, DiffViewport};
 use self::diff_search::DiffSearchNavigationTarget;
 pub use self::launch::AppLaunchOptions;
@@ -158,6 +158,7 @@ pub struct App {
     pub blame_scroll: u16,
     pub blame_request_id: u64,
     blame_load_task: Option<task::JoinHandle<()>>,
+    pub diff_stats_modal_open: bool,
     pub help_modal_open: bool,
     pub theme_modal_open: bool,
     pub theme_modal_query: String,

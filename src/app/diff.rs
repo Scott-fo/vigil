@@ -4,6 +4,7 @@ mod cache;
 mod highlight;
 mod load;
 mod snapshot;
+mod stats;
 mod viewport;
 
 #[cfg(test)]
@@ -14,6 +15,7 @@ pub(super) use self::cache::{
     DiffViewCache,
 };
 pub(super) use self::highlight::DiffHighlightJob;
+pub use self::stats::DiffStatsState;
 pub(super) use self::viewport::DiffViewport;
 pub use self::viewport::PreparedDiffViewport;
 

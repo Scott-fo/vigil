@@ -34,7 +34,7 @@ pub use diff::{
     MergeConflictParseResult, MergeConflictRegion, MergeConflictResolution, ParseDiffOptions,
     ParseMergeConflictDiffFromFileResult, ParsedLine, ParsedPatch, PreNodeType,
     PrePropertiesConfig, ProcessFileConflictData, RenderDiffOptions, RenderFileOptions,
-    RenderRange, ReviewDiffSnapshot, SelectedLineRange, SelectionSide, ThemeSpec,
+    RenderRange, ReviewDiffSnapshot, ReviewDiffStats, SelectedLineRange, SelectionSide, ThemeSpec,
     VirtualFileMetrics, VirtualWindowSpecs, WindowFromScrollPositionOptions, WorkerStats,
     are_diff_line_annotations_equal, are_diff_render_options_equal, are_diff_targets_equal,
     are_file_render_options_equal, are_files_equal, are_hunk_data_equal,

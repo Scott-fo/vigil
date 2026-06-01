@@ -43,6 +43,10 @@ impl App {
                 self.help_modal_open = true;
                 handled()
             }
+            KeyCode::F(2) => {
+                self.open_diff_stats_modal();
+                handled()
+            }
             KeyCode::Char('t') => {
                 self.open_theme_modal();
                 handled()

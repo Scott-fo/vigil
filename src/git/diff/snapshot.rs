@@ -23,8 +23,19 @@ use crate::git::{
 pub struct DiffFileMetrics {
     pub split_line_count: usize,
     pub unified_line_count: usize,
+    pub addition_line_count: usize,
+    pub deletion_line_count: usize,
     pub new_side_line_count: usize,
     pub old_side_line_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReviewDiffStats {
+    pub file_count: usize,
+    pub additions: usize,
+    pub deletions: usize,
+    pub lines: usize,
+    pub split_lines: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -65,6 +76,22 @@ impl ReviewDiffSnapshot {
             .values()
             .map(|metrics| metrics.unified_line_count)
             .sum()
+    }
+
+    pub fn stats(&self) -> ReviewDiffStats {
+        self.metrics.values().fold(
+            ReviewDiffStats {
+                file_count: self.file_count(),
+                ..ReviewDiffStats::default()
+            },
+            |mut stats, metrics| {
+                stats.additions += metrics.addition_line_count;
+                stats.deletions += metrics.deletion_line_count;
+                stats.lines += metrics.unified_line_count;
+                stats.split_lines += metrics.split_line_count;
+                stats
+            },
+        )
     }
 
     pub fn contains_file(&self, path: &str) -> bool {
@@ -120,6 +147,8 @@ impl DiffFileMetrics {
         Self {
             split_line_count: file.split_line_count,
             unified_line_count: file.unified_line_count,
+            addition_line_count: file.hunks.iter().map(|hunk| hunk.addition_lines).sum(),
+            deletion_line_count: file.hunks.iter().map(|hunk| hunk.deletion_lines).sum(),
             new_side_line_count: file.addition_lines.len(),
             old_side_line_count: file.deletion_lines.len(),
         }

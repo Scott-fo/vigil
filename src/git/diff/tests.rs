@@ -299,10 +299,17 @@ fn review_diff_snapshot_builds_views_metrics_and_search_index_from_parsed_metada
         Some(DiffFileMetrics {
             split_line_count: 3,
             unified_line_count: 4,
+            addition_line_count: 2,
+            deletion_line_count: 1,
             new_side_line_count: 3,
             old_side_line_count: 2,
         })
     );
+    let stats = snapshot.stats();
+    assert_eq!(stats.file_count, 2);
+    assert_eq!(stats.additions, 3);
+    assert_eq!(stats.deletions, 2);
+    assert_eq!(stats.lines, 6);
 
     let view = snapshot
         .build_diff_view(&FileEntry {
