@@ -3,16 +3,15 @@ use tokio::task;
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum DiffHighlightJobKind {
-    Viewport(DiffViewport),
+pub(super) enum DiffHighlightJobKind {
     Full,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::app) struct DiffHighlightJob {
-    request_id: u64,
-    key: DiffCacheKey,
-    kind: DiffHighlightJobKind,
+    pub(super) request_id: u64,
+    pub(super) key: DiffCacheKey,
+    pub(super) kind: DiffHighlightJobKind,
 }
 
 impl App {
@@ -42,46 +41,7 @@ impl App {
             self.diff_highlight_complete = true;
             return;
         };
-        let Some(viewport) = self.diff_viewport else {
-            return;
-        };
-
-        let viewport_ready = self.diff_view.is_display_range_fully_highlighted(
-            viewport.mode,
-            viewport.width,
-            viewport.line_wrap,
-            viewport.start,
-            viewport.end,
-        );
-
-        if !viewport_ready {
-            let needs_new_viewport_job = !matches!(
-                self.diff_highlight_job.as_ref(),
-                Some(DiffHighlightJob {
-                    request_id,
-                    key,
-                    kind: DiffHighlightJobKind::Viewport(existing_viewport),
-                }) if *request_id == self.diff_request_id
-                    && *key == cache_key
-                    && *existing_viewport == viewport
-            );
-            if needs_new_viewport_job {
-                self.cancel_inflight_diff_highlight();
-                self.spawn_selected_diff_highlight(
-                    cache_key,
-                    file.clone(),
-                    highlight_registry,
-                    DiffHighlightJobKind::Viewport(viewport),
-                );
-            }
-            return;
-        }
-
         if self.diff_highlight_complete {
-            return;
-        }
-
-        if self.active_pane == ActivePane::Sidebar {
             return;
         }
 
@@ -115,7 +75,6 @@ impl App {
     ) {
         let request_id = self.diff_request_id;
         let sender = self.events.sender();
-        let mut diff_view = self.diff_view.clone();
         let review_mode = self.review_mode.clone();
         let repo_root = self.repo_root.clone();
         self.diff_highlight_job = Some(DiffHighlightJob {
@@ -125,48 +84,6 @@ impl App {
         });
         self.diff_highlight_task = Some(task::spawn(async move {
             let (complete, result) = match kind {
-                DiffHighlightJobKind::Viewport(viewport) => {
-                    if diff_view.has_exact_syntax_context() {
-                        let result = task::spawn_blocking(move || {
-                            diff_view.apply_exact_syntax_highlighting(
-                                file.filetype,
-                                highlight_registry.as_ref(),
-                            );
-                            Ok::<_, String>(diff_view)
-                        })
-                        .await
-                        .unwrap_or_else(|error| Err(error.to_string()));
-                        (true, result)
-                    } else {
-                        match load_exact_highlighted_diff_view(
-                            repo_root.clone(),
-                            file.clone(),
-                            review_mode.clone(),
-                            highlight_registry.clone(),
-                        )
-                        .await
-                        {
-                            Ok(Some(diff_view)) => (true, Ok(diff_view)),
-                            Ok(None) | Err(_) => {
-                                let result = task::spawn_blocking(move || {
-                                    diff_view.apply_syntax_highlighting_for_display_range(
-                                        viewport.mode,
-                                        viewport.width,
-                                        viewport.line_wrap,
-                                        viewport.start,
-                                        viewport.end,
-                                        file.filetype,
-                                        highlight_registry.as_ref(),
-                                    );
-                                    Ok::<_, String>(diff_view)
-                                })
-                                .await
-                                .unwrap_or_else(|error| Err(error.to_string()));
-                                (false, result)
-                            }
-                        }
-                    }
-                }
                 DiffHighlightJobKind::Full => {
                     let preview_result = match &review_mode {
                         ReviewMode::WorkingTree => {
@@ -220,36 +137,4 @@ impl App {
             });
         }));
     }
-}
-
-async fn load_exact_highlighted_diff_view(
-    repo_root: std::path::PathBuf,
-    file: FileEntry,
-    review_mode: ReviewMode,
-    highlight_registry: SharedHighlightRegistry,
-) -> Result<Option<git::DiffView>, String> {
-    let preview_result = match &review_mode {
-        ReviewMode::WorkingTree => {
-            git::load_diff_preview_for_working_tree(&repo_root, &file, true).await
-        }
-        ReviewMode::CommitCompare(selection) => {
-            git::load_diff_preview_for_commit_compare(&repo_root, &file, selection, true).await
-        }
-        ReviewMode::BranchCompare(selection) => {
-            git::load_diff_preview_for_branch_compare(&repo_root, &file, selection, true).await
-        }
-    };
-    let preview = preview_result.map_err(|error| error.to_string())?;
-
-    task::spawn_blocking(move || {
-        let mut diff_view = git::build_diff_view_from_preview_data(&preview, &file, None)
-            .map_err(|error| error.to_string())?;
-        if !diff_view.has_exact_syntax_context() {
-            return Ok(None);
-        }
-        diff_view.apply_exact_syntax_highlighting(file.filetype, highlight_registry.as_ref());
-        Ok(Some(diff_view))
-    })
-    .await
-    .unwrap_or_else(|error| Err(error.to_string()))
 }

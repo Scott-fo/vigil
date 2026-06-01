@@ -15,6 +15,10 @@ pub(super) use self::cache::{
     DiffViewCache,
 };
 pub(super) use self::highlight::DiffHighlightJob;
+#[cfg(test)]
+use self::highlight::DiffHighlightJobKind;
+#[cfg(test)]
+use self::load::build_snapshot_prefetch_event;
 pub use self::stats::DiffStatsState;
 pub(super) use self::viewport::DiffViewport;
 pub use self::viewport::PreparedDiffViewport;

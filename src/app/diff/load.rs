@@ -76,17 +76,10 @@ impl App {
                     .as_ref()
                     .filter(|snapshot| snapshot.contains_file(&file.path))
                     .cloned()
+                    .filter(|_| !should_prefetch_highlight)
                 {
-                    let registry = highlight_registry.clone();
                     snapshot_jobs.spawn_blocking(move || {
-                        build_snapshot_prefetch_event(
-                            generation,
-                            cache_key,
-                            file,
-                            should_prefetch_highlight,
-                            snapshot,
-                            registry,
-                        )
+                        build_snapshot_prefetch_event(generation, cache_key, file, snapshot)
                     });
                     if snapshot_jobs.len() >= DIFF_SNAPSHOT_PREFETCH_CONCURRENCY {
                         send_next_snapshot_prefetch(&mut snapshot_jobs, &sender).await;
@@ -534,32 +527,20 @@ async fn build_diff_view_from_snapshot(
     .unwrap_or_else(|error| Err(error.to_string()))
 }
 
-fn build_snapshot_prefetch_event(
+pub(super) fn build_snapshot_prefetch_event(
     generation: u64,
     key: DiffCacheKey,
     file: FileEntry,
-    should_prefetch_highlight: bool,
     snapshot: Arc<git::ReviewDiffSnapshot>,
-    registry: Option<SharedHighlightRegistry>,
 ) -> Option<DiffPrefetchedEvent> {
     let plain = snapshot.build_diff_view(&file)?;
-    let highlighted = if should_prefetch_highlight {
-        registry.map(|registry| {
-            let mut highlighted = plain.clone();
-            highlighted.apply_syntax_highlighting(file.filetype, registry.as_ref());
-            highlighted
-        })
-    } else {
-        None
-    };
-    let highlight_complete = highlighted.is_some();
 
     Some(DiffPrefetchedEvent {
         generation,
         key,
         plain,
-        highlighted,
-        highlight_complete,
+        highlighted: None,
+        highlight_complete: false,
     })
 }
 

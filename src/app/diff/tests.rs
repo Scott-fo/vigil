@@ -101,6 +101,54 @@ fn prefetched_complete_highlight_is_cached_as_complete() {
     assert!(complete);
 }
 
+#[test]
+fn snapshot_prefetch_builds_plain_diff_without_syntax_highlight() {
+    let key = build_cache_key(0);
+    let event = build_snapshot_prefetch_event(
+        12,
+        key,
+        build_file_entries(1).remove(0),
+        Arc::new(build_review_snapshot()),
+    )
+    .expect("snapshot prefetch should build");
+
+    assert_eq!(event.generation, 12);
+    assert!(event.highlighted.is_none());
+    assert!(!event.highlight_complete);
+    assert!(event.plain.has_diff_rows());
+}
+
+#[tokio::test]
+async fn diff_highlight_queues_full_file_job_while_sidebar_is_active() {
+    let mut app = build_test_app();
+    app.files = build_file_entries(1);
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    let key = app.diff_cache_key(&app.files[0]);
+    app.pending_diff_cache_key = Some(key.clone());
+    app.diff_view = build_diff_view(12);
+    app.update_diff_viewport(DiffViewMode::Unified, 120, 0, 8);
+    app.active_pane = ActivePane::Sidebar;
+    app.diff_highlight_complete = false;
+    app.highlight_registry = Some(
+        git::HighlightRegistry::new_for_filetypes(["rust"])
+            .expect("rust registry should initialize")
+            .into(),
+    );
+
+    app.maybe_queue_diff_highlight();
+
+    assert!(matches!(
+        app.diff_highlight_job.as_ref(),
+        Some(DiffHighlightJob {
+            request_id,
+            key: job_key,
+            kind: DiffHighlightJobKind::Full,
+        }) if *request_id == app.diff_request_id && *job_key == key
+    ));
+    app.cancel_inflight_diff_highlight();
+}
+
 #[tokio::test]
 async fn prefetched_current_diff_replaces_loading_view() {
     let mut app = build_test_app();
