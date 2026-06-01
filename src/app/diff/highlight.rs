@@ -124,22 +124,49 @@ impl App {
             kind: kind.clone(),
         });
         self.diff_highlight_task = Some(task::spawn(async move {
-            let complete = matches!(kind, DiffHighlightJobKind::Full);
-            let result = match kind {
-                DiffHighlightJobKind::Viewport(viewport) => task::spawn_blocking(move || {
-                    diff_view.apply_syntax_highlighting_for_display_range(
-                        viewport.mode,
-                        viewport.width,
-                        viewport.line_wrap,
-                        viewport.start,
-                        viewport.end,
-                        file.filetype,
-                        highlight_registry.as_ref(),
-                    );
-                    Ok::<_, String>(diff_view)
-                })
-                .await
-                .unwrap_or_else(|error| Err(error.to_string())),
+            let (complete, result) = match kind {
+                DiffHighlightJobKind::Viewport(viewport) => {
+                    if diff_view.has_exact_syntax_context() {
+                        let result = task::spawn_blocking(move || {
+                            diff_view.apply_exact_syntax_highlighting(
+                                file.filetype,
+                                highlight_registry.as_ref(),
+                            );
+                            Ok::<_, String>(diff_view)
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string()));
+                        (true, result)
+                    } else {
+                        match load_exact_highlighted_diff_view(
+                            repo_root.clone(),
+                            file.clone(),
+                            review_mode.clone(),
+                            highlight_registry.clone(),
+                        )
+                        .await
+                        {
+                            Ok(Some(diff_view)) => (true, Ok(diff_view)),
+                            Ok(None) | Err(_) => {
+                                let result = task::spawn_blocking(move || {
+                                    diff_view.apply_syntax_highlighting_for_display_range(
+                                        viewport.mode,
+                                        viewport.width,
+                                        viewport.line_wrap,
+                                        viewport.start,
+                                        viewport.end,
+                                        file.filetype,
+                                        highlight_registry.as_ref(),
+                                    );
+                                    Ok::<_, String>(diff_view)
+                                })
+                                .await
+                                .unwrap_or_else(|error| Err(error.to_string()));
+                                (false, result)
+                            }
+                        }
+                    }
+                }
                 DiffHighlightJobKind::Full => {
                     let preview_result = match &review_mode {
                         ReviewMode::WorkingTree => {
@@ -164,14 +191,14 @@ impl App {
                         Err(error) => {
                             let _ = sender.send(Event::DiffHighlightUpdated {
                                 request_id,
-                                complete,
+                                complete: true,
                                 result: Err(error.to_string()),
                             });
                             return;
                         }
                     };
 
-                    task::spawn_blocking(move || {
+                    let result = task::spawn_blocking(move || {
                         let mut diff_view =
                             git::build_diff_view_from_preview_data(&preview, &file, None)
                                 .map_err(|error| error.to_string())?;
@@ -182,7 +209,8 @@ impl App {
                         Ok::<_, String>(diff_view)
                     })
                     .await
-                    .unwrap_or_else(|error| Err(error.to_string()))
+                    .unwrap_or_else(|error| Err(error.to_string()));
+                    (true, result)
                 }
             };
             let _ = sender.send(Event::DiffHighlightUpdated {
@@ -192,4 +220,36 @@ impl App {
             });
         }));
     }
+}
+
+async fn load_exact_highlighted_diff_view(
+    repo_root: std::path::PathBuf,
+    file: FileEntry,
+    review_mode: ReviewMode,
+    highlight_registry: SharedHighlightRegistry,
+) -> Result<Option<git::DiffView>, String> {
+    let preview_result = match &review_mode {
+        ReviewMode::WorkingTree => {
+            git::load_diff_preview_for_working_tree(&repo_root, &file, true).await
+        }
+        ReviewMode::CommitCompare(selection) => {
+            git::load_diff_preview_for_commit_compare(&repo_root, &file, selection, true).await
+        }
+        ReviewMode::BranchCompare(selection) => {
+            git::load_diff_preview_for_branch_compare(&repo_root, &file, selection, true).await
+        }
+    };
+    let preview = preview_result.map_err(|error| error.to_string())?;
+
+    task::spawn_blocking(move || {
+        let mut diff_view = git::build_diff_view_from_preview_data(&preview, &file, None)
+            .map_err(|error| error.to_string())?;
+        if !diff_view.has_exact_syntax_context() {
+            return Ok(None);
+        }
+        diff_view.apply_exact_syntax_highlighting(file.filetype, highlight_registry.as_ref());
+        Ok(Some(diff_view))
+    })
+    .await
+    .unwrap_or_else(|error| Err(error.to_string()))
 }

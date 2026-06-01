@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{DiffLineKind, DiffLineWrapMode, DiffRow, DiffView, DiffViewMode, DisplayRowRefs};
 use crate::git::highlight::{
     HighlightRegistry, SyntaxToken, highlight_source_lines, highlight_source_lines_cached_exact,
@@ -120,27 +122,32 @@ impl DiffView {
             let row_refs = &self.display_cache.entry(mode).row_refs;
             collect_display_highlight_windows(&row_refs[start..end], self.rows.len())
         };
-        let left = left_window.and_then(|(window_start, window_end)| {
-            prepare_side_highlighting_in_row_window(
-                &self.rows,
-                HighlightSide::Left,
-                window_start,
-                window_end,
-            )
-        });
-        let right = right_window.and_then(|(window_start, window_end)| {
-            prepare_side_highlighting_in_row_window(
-                &self.rows,
-                HighlightSide::Right,
-                window_start,
-                window_end,
-            )
-        });
+        let left_source = self.old_file_source.clone();
+        let right_source = self.new_file_source.clone();
+        let rows = &self.rows;
         let (left_result, right_result) = run_optional_pair(
-            left.is_some(),
-            right.is_some(),
-            || left.and_then(|request| request.highlight(filetype, registry)),
-            || right.and_then(|request| request.highlight(filetype, registry)),
+            left_window.is_some(),
+            right_window.is_some(),
+            || {
+                prepare_display_range_highlighting(
+                    rows,
+                    HighlightSide::Left,
+                    left_window,
+                    left_source.as_ref(),
+                    filetype,
+                    registry,
+                )
+            },
+            || {
+                prepare_display_range_highlighting(
+                    rows,
+                    HighlightSide::Right,
+                    right_window,
+                    right_source.as_ref(),
+                    filetype,
+                    registry,
+                )
+            },
         );
         if let Some(result) = left_result {
             apply_completed_highlighting(&mut self.rows, result);
@@ -270,16 +277,38 @@ fn prepare_exact_side_highlighting(
     side: HighlightSide,
     highlighted_lines: &[Vec<SyntaxToken>],
 ) -> Option<CompletedHighlightSide> {
+    prepare_exact_side_highlighting_in_row_window(
+        rows,
+        side,
+        highlighted_lines,
+        0,
+        rows.len().saturating_sub(1),
+    )
+}
+
+fn prepare_exact_side_highlighting_in_row_window(
+    rows: &[DiffRow],
+    side: HighlightSide,
+    highlighted_lines: &[Vec<SyntaxToken>],
+    start: usize,
+    end: usize,
+) -> Option<CompletedHighlightSide> {
+    if rows.is_empty() || start > end {
+        return None;
+    }
     if highlighted_lines.is_empty() {
         return None;
     }
+    let start = start.min(rows.len().saturating_sub(1));
+    let end = end.min(rows.len().saturating_sub(1));
     let mut row_indices = Vec::new();
     let mut exact_row_lines = Vec::new();
 
-    for (row_index, row) in rows.iter().enumerate() {
+    for (row_offset, row) in rows[start..=end].iter().enumerate() {
         if !side.includes(row.kind) {
             continue;
         }
+        let row_index = start + row_offset;
 
         let line_number = match side {
             HighlightSide::Left => row.old_line,
@@ -299,6 +328,35 @@ fn prepare_exact_side_highlighting(
         row_indices,
         highlighted_lines: exact_row_lines,
     })
+}
+
+fn prepare_display_range_highlighting(
+    rows: &[DiffRow],
+    side: HighlightSide,
+    window: Option<(usize, usize)>,
+    exact_source: Option<&Arc<str>>,
+    filetype: &'static str,
+    registry: &HighlightRegistry,
+) -> Option<CompletedHighlightSide> {
+    let (window_start, window_end) = window?;
+
+    if let Some(exact) = exact_source
+        .and_then(|source| highlight_source_lines_cached_exact(registry, filetype, source))
+        .and_then(|highlighted_lines| {
+            prepare_exact_side_highlighting_in_row_window(
+                rows,
+                side,
+                highlighted_lines.as_ref(),
+                window_start,
+                window_end,
+            )
+        })
+    {
+        return Some(exact);
+    }
+
+    prepare_side_highlighting_in_row_window(rows, side, window_start, window_end)
+        .and_then(|request| request.highlight(filetype, registry))
 }
 
 fn prepare_side_highlighting_in_row_window(

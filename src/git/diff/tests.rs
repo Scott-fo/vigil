@@ -3335,6 +3335,75 @@ fn expanded_context_lines_render_with_exact_syntax_highlighting() {
 }
 
 #[test]
+fn viewport_highlighting_prefers_exact_context_when_available() {
+    let old_file_lines = vec![
+        "const decodeManagedCampaignsForPlanning = Schema.decodeUnknownEffect(".to_string(),
+        "  Schema.Array(KeywordPlanningManagedCampaignSchema),".to_string(),
+        ");".to_string(),
+    ];
+    let new_file_lines = vec![
+        "const decodeManagedStateForPlanning = Schema.decodeUnknownEffect(KeywordPlanningManagedStatesSchema);".to_string(),
+        String::new(),
+        "const toManagedTargetRole = (role: string): KeywordPlanningManagedTargetRole | null => {"
+            .to_string(),
+        "  switch (role) {".to_string(),
+        "    case \"skc_exact\":".to_string(),
+        "      return role;".to_string(),
+        "  }".to_string(),
+        "};".to_string(),
+    ];
+    let diff = "\
+@@ -1,3 +1,8 @@
+-const decodeManagedCampaignsForPlanning = Schema.decodeUnknownEffect(
+-  Schema.Array(KeywordPlanningManagedCampaignSchema),
+-);
++const decodeManagedStateForPlanning = Schema.decodeUnknownEffect(KeywordPlanningManagedStatesSchema);
++
++const toManagedTargetRole = (role: string): KeywordPlanningManagedTargetRole | null => {
++  switch (role) {
++    case \"skc_exact\":
++      return role;
++  }
++};
+";
+    let registry = HighlightRegistry::new_for_filetypes(["typescript"])
+        .expect("typescript registry should initialize");
+    let mut exact_view = build_diff_view_from_diff_text_with_context(
+        diff,
+        Some("typescript"),
+        Some(old_file_lines.clone()),
+        Some(new_file_lines.clone()),
+    );
+    exact_view.apply_exact_syntax_highlighting(Some("typescript"), &registry);
+
+    let mut viewport_view = build_diff_view_from_diff_text_with_context(
+        diff,
+        Some("typescript"),
+        Some(old_file_lines),
+        Some(new_file_lines),
+    );
+    viewport_view.apply_syntax_highlighting_for_display_range(
+        DiffViewMode::Unified,
+        120,
+        DiffLineWrapMode::Wrap,
+        3,
+        6,
+        Some("typescript"),
+        &registry,
+    );
+
+    let target_row = viewport_view
+        .rows
+        .iter()
+        .position(|row| row.text.starts_with("const toManagedTargetRole"))
+        .expect("target row should be present");
+    assert_eq!(
+        viewport_view.rows[target_row].syntax.right,
+        exact_view.rows[target_row].syntax.right
+    );
+}
+
+#[test]
 fn tab_expansion_tracks_columns_across_spans() {
     let spans = expand_tabs_in_spans(vec![Span::raw("ab"), Span::raw("\t"), Span::raw("cd")]);
 

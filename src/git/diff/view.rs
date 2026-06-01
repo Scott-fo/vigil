@@ -65,6 +65,10 @@ impl DiffView {
     pub fn has_diff_rows(&self) -> bool {
         !self.rows.is_empty()
     }
+
+    pub fn has_exact_syntax_context(&self) -> bool {
+        self.old_file_source.is_some() || self.new_file_source.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
