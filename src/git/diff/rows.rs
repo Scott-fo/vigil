@@ -31,6 +31,12 @@ pub(super) fn build_diff_rows(
         }
     }
 
+    let gaps = diff_gaps_from_hunks(&hunks);
+
+    (rows, hunks, gaps)
+}
+
+pub(super) fn diff_gaps_from_hunks(hunks: &[DiffHunkBlock]) -> Vec<DiffHunkGap> {
     let mut gaps = Vec::new();
     for (gap_index, pair) in hunks.windows(2).enumerate() {
         let previous = &pair[0];
@@ -46,8 +52,7 @@ pub(super) fn build_diff_rows(
             new_count,
         });
     }
-
-    (rows, hunks, gaps)
+    gaps
 }
 
 fn append_file_diff_rows(

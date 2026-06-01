@@ -75,6 +75,35 @@ fn prefetched_complete_highlight_is_cached_as_complete() {
     assert!(complete);
 }
 
+#[tokio::test]
+async fn prefetched_current_diff_replaces_loading_view() {
+    let mut app = build_test_app();
+    let key = build_cache_key(2);
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: key.file_path.clone(),
+        label: "file-2.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.pending_diff_cache_key = Some(key.clone());
+    app.diff_view = DiffView::empty("Loading diff...");
+    app.diff_load_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    let changed = app.handle_diff_prefetched(DiffPrefetchedEvent {
+        generation: app.diff_cache_generation,
+        key,
+        plain: build_diff_view(3),
+        highlighted: None,
+        highlight_complete: false,
+    });
+
+    assert!(changed);
+    assert!(app.diff_load_task.is_none());
+    assert!(app.diff_view.note.is_none());
+}
+
 #[test]
 fn diff_view_cache_touches_recent_entries_before_trimming() {
     let mut cache = DiffViewCache::default();

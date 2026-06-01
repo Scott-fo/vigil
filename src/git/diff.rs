@@ -86,7 +86,7 @@ pub use self::search::{
 pub use self::view::{
     DiffDisplayLineAnchor, DiffPreviewData, DiffSelectionPane, DiffSelectionPoint, DiffView,
     build_diff_view_from_diff_text, build_diff_view_from_diff_text_with_context,
-    build_diff_view_from_preview_data,
+    build_diff_view_from_file_metadata, build_diff_view_from_preview_data,
 };
 use self::view::{DiffHunkBlock, DiffHunkGap, DiffLineKind, DiffRow, DiffRowSyntax};
 

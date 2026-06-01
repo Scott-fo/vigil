@@ -36,6 +36,7 @@ impl App {
             .unwrap_or(0);
 
         self.sync_sidebar_state();
+        self.queue_diff_search_index_load();
         self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
         Ok(())

@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 
 use crate::git::DiffView;
 
-pub(crate) const DIFF_CACHE_CAPACITY: usize = 32;
-pub(crate) const DIFF_PREFETCH_DISTANCE: usize = 2;
+pub(crate) const DIFF_CACHE_CAPACITY: usize = 96;
+pub(crate) const DIFF_PREFETCH_DISTANCE: usize = 12;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffCacheKey {

@@ -133,6 +133,7 @@ impl App {
 
         self.sync_sidebar_state();
         self.spawn_highlight_registry_init();
+        self.queue_diff_search_index_load();
         self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
         self.queue_review_restore_for_current_snapshot();
@@ -161,6 +162,7 @@ impl App {
         self.rebuild_sidebar_items();
         self.selected_file_index = 0;
         self.sync_sidebar_state();
+        self.clear_diff_search_index();
         self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
         Ok(())

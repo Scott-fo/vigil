@@ -1,36 +1,25 @@
 # Diff Benchmarks
 
 These benchmarks compare Vigil's Rust diff parser against Pierre's TypeScript
-parser without installing third-party packages.
+parser through the published `@pierre/diffs` package.
 
-## Dependency-free Pierre baseline
+## Pierre Package Baseline
 
 Run from this repository:
 
 ```sh
+pnpm install
 bun benches/pierre_js_baseline.ts
 ```
 
-The script imports Pierre's local TypeScript source from
-`~/gitrepos/pierre/packages/diffs/src/utils/parsePatchFiles.ts` and uses the
-same generated TSX patch fixture as `diff_performance.rs`.
+The script imports public APIs from `@pierre/diffs` and uses the package's
+compiled `dist/utils` files for benchmark helpers that are not exported from the
+package root. It uses the same generated TSX patch fixture as
+`diff_performance.rs`, plus a 300-file multi-diff fixture for the loading
+benchmark.
 
-It intentionally does not install dependencies. If Pierre's workspace
-dependencies are absent, the script skips `parseDiffFromFile` because that
-source imports the external `diff` package. The parser paths that do not need
-third-party dependencies still run:
-
-- `parsePatchFiles`
-- `processFile`
-- `trimPatchContext`
-- `diffAcceptRejectHunk`
-- `computeEstimatedDiffHeights`
-- `createWindowFromScrollPosition`
-- `getMergeConflictLineTypes`
-- `parseMergeConflictDiffFromFile`
-- `resolveConflict`
-
-Set `PIERRE_ROOT=/path/to/pierre` to compare against a different checkout.
+Set `PIERRE_DIFFS_DIST=/path/to/@pierre/diffs/dist` to compare against a
+different package build.
 
 ## Rust benchmarks
 
@@ -45,6 +34,7 @@ cargo bench --bench diff_performance parse_merge_conflict_diff_from_file
 cargo bench --bench diff_performance resolve_conflict
 cargo bench --bench diff_performance collect_diff_lines
 cargo bench --bench diff_search_performance -- --noplot
+cargo bench --bench multi_diff_loading -- --noplot
 cargo bench --bench highlight_registry_init -- --noplot
 cargo bench --bench startup_paths -- --noplot
 ```
@@ -55,12 +45,13 @@ Measured on the generated `mega-dashboard.tsx` fixture:
 
 | Case | Implementation | Mean | Throughput |
 | --- | --- | ---: | ---: |
-| patch parser | Pierre `parsePatchFiles` | 0.942 ms | 664.42 MiB/s |
+| patch parser | Pierre `parsePatchFiles` | 0.917 ms | 682.21 MiB/s |
 | patch parser | Rust `parse_patch_files` | 0.650 ms | 962.59 MiB/s |
-| file parser | Pierre `processFile` | 0.756 ms | 827.30 MiB/s |
+| file parser | Pierre `processFile` | 0.734 ms | 851.93 MiB/s |
 | file parser | Rust `process_file` | 0.507 ms | 1.205 GiB/s |
-| patch context trim | Pierre `trimPatchContext` | 0.234 ms | 2.613 GiB/s |
+| patch context trim | Pierre `trimPatchContext` | 0.226 ms | 2.706 GiB/s |
 | patch context trim | Rust `trim_patch_context` | 0.186 ms | 3.282 GiB/s |
+| full-file diff | Pierre `parseDiffFromFile` | 397.819 ms | 2.04 MiB/s |
 | full-file diff | Rust `parse_diff_from_file` | 1.350 ms | 463.50 MiB/s |
 | diff iteration | Rust `collect_diff_lines_unified` | 0.168 ms | 3.642 GiB/s |
 | diff iteration | Rust `collect_diff_lines_split` | 0.168 ms | 3.646 GiB/s |
@@ -69,14 +60,13 @@ Measured on the generated 106 KiB merge-conflict fixture:
 
 | Case | Implementation | Mean | Throughput |
 | --- | --- | ---: | ---: |
-| conflict line classification | Pierre `getMergeConflictLineTypes` | 0.228 ms | 444.28 MiB/s |
+| conflict line classification | Pierre `getMergeConflictLineTypes` | 0.212 ms | 477.75 MiB/s |
 | conflict line classification | Rust `get_merge_conflict_line_types` | 14.69 us | 41.59 GiB/s |
-| conflict parser | Pierre `parseMergeConflictDiffFromFile` | 0.303 ms | 333.75 MiB/s |
+| conflict parser | Pierre `parseMergeConflictDiffFromFile` | 0.264 ms | 383.55 MiB/s |
 | conflict parser | Rust `parse_merge_conflict_diff_from_file` | 0.256 ms | 2.390 GiB/s |
 
-The direct `parseDiffFromFile` JS comparison requires Pierre's already-installed
-workspace dependencies. Do not install packages just for this benchmark unless
-the dependency risk is acceptable for the environment.
+The Pierre package baseline includes `parseDiffFromFile` because `@pierre/diffs`
+brings the required `diff` dependency into the local `pnpm` install.
 
 `diff_accept_reject_hunk` is also benchmarked, but it is not used as a direct
 speedup claim because the current Rust API returns owned `String` data while the
@@ -89,6 +79,33 @@ so it is not used as a headline speedup claim.
 `parse_merge_conflict_diff_from_file` follows Pierre's direct marker scanner
 shape, builds resolved current/incoming contents during the scan, and caches
 per-hunk unified line offsets while assembling marker rows.
+
+# Multi-Diff Loading Benchmarks
+
+`multi_diff_loading` measures a synthetic 300-file review scope with 96,000
+diff lines. It separates the cost of parsing the whole patch, building per-file
+`DiffView`s from already-parsed metadata, and the current per-file diff-text
+view path.
+
+## Latest local multi-diff results
+
+Measured against a 5,614,690-byte generated patch:
+
+| Case | Implementation | Mean | Throughput |
+| --- | --- | ---: | ---: |
+| parse multi-file patch | Pierre `parsePatchFiles` | 15.727 ms | 340.46 MiB/s |
+| parse multi-file patch | Rust `parse_patch_files` | 7.820 ms | 684.73 MiB/s |
+| build per-file views from parsed metadata | Rust `build_diff_view_from_file_metadata` | 55.478 ms | 96.52 MiB/s |
+| build per-file views from file diff text | Rust `build_diff_view_from_diff_text` | 63.583 ms | 84.21 MiB/s |
+| parse once, then build per-file views | Rust | 61.386 ms | 87.23 MiB/s |
+| build one combined view from whole patch text | Rust | 66.709 ms | 80.27 MiB/s |
+| estimate heights for all parsed files | Pierre `computeEstimatedDiffHeights` | 0.008 ms | 681504.81 MiB/s |
+
+Pierre's height estimate is intentionally not a direct rendering comparison:
+it is the fast layout pass that lets Pierre virtualize and defer heavier row
+work. The comparable direction for Vigil is to parse once per review snapshot,
+store file metadata, and build only the selected/nearby `DiffView`s from that
+metadata.
 
 # Diff Search Benchmarks
 

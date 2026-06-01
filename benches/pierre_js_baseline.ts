@@ -61,8 +61,9 @@ type ResolveConflict = (
   resolution: 'current' | 'incoming' | 'both'
 ) => unknown;
 
-const PIERRE_ROOT =
-  process.env.PIERRE_ROOT ?? `${process.env.HOME ?? '/Users/scottfo'}/gitrepos/pierre`;
+const PIERRE_DIFFS_DIST =
+  process.env.PIERRE_DIFFS_DIST ??
+  `${process.cwd()}/node_modules/@pierre/diffs/dist`;
 const FILETYPE = 'tsx';
 const WARMUP_MS = 1_000;
 const SAMPLE_COUNT = 20;
@@ -72,6 +73,12 @@ type LargeTsxFixture = {
   diff: string;
   oldFileContents: string;
   newFileContents: string;
+};
+
+type MultiFilePatchFixture = {
+  diff: string;
+  fileCount: number;
+  lineCount: number;
 };
 
 function buildLargeTsxFixture(): LargeTsxFixture {
@@ -168,6 +175,76 @@ function buildLargeTsxFixture(): LargeTsxFixture {
     oldFileContents: oldFileLines.join('\n'),
     newFileContents: newFileLines.join('\n'),
   };
+}
+
+function buildMultiFilePatchFixture(): MultiFilePatchFixture {
+  const fileCount = 300;
+  const hunksPerFile = 4;
+  const sectionsPerHunk = 10;
+  const contextLinesPerSection = 3;
+  const removedLinesPerSection = 2;
+  const addedLinesPerSection = 3;
+  const gapSize = 24;
+
+  let diff = '';
+  let lineCount = 0;
+
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+    const path = `src/review/module_${String(fileIndex).padStart(4, '0')}.rs`;
+    let oldStart = 1;
+    let newStart = 1;
+
+    diff +=
+      `diff --git a/${path} b/${path}\n` +
+      'index 0000000..1111111 100644\n' +
+      `--- a/${path}\n` +
+      `+++ b/${path}\n`;
+
+    for (let hunkIndex = 0; hunkIndex < hunksPerFile; hunkIndex++) {
+      const hunkLines: string[] = [];
+      let oldCount = 0;
+      let newCount = 0;
+
+      for (let sectionIndex = 0; sectionIndex < sectionsPerHunk; sectionIndex++) {
+        const globalIndex =
+          fileIndex * hunksPerFile * sectionsPerHunk +
+          hunkIndex * sectionsPerHunk +
+          sectionIndex;
+
+        for (let contextIndex = 0; contextIndex < contextLinesPerSection; contextIndex++) {
+          hunkLines.push(
+            ` pub fn stable_context_${globalIndex}_${contextIndex}() -> usize { ${globalIndex} + ${contextIndex} }`
+          );
+          oldCount++;
+          newCount++;
+          lineCount++;
+        }
+
+        for (let removedIndex = 0; removedIndex < removedLinesPerSection; removedIndex++) {
+          hunkLines.push(
+            `-let legacy_value_${globalIndex}_${removedIndex} = legacy_state.compute(${removedIndex});`
+          );
+          oldCount++;
+          lineCount++;
+        }
+
+        for (let addedIndex = 0; addedIndex < addedLinesPerSection; addedIndex++) {
+          hunkLines.push(
+            `+let reviewed_value_${globalIndex}_${addedIndex} = review_state.compute_with_cache(${addedIndex});`
+          );
+          newCount++;
+          lineCount++;
+        }
+      }
+
+      diff += `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@\n`;
+      diff += `${hunkLines.join('\n')}\n`;
+      oldStart += oldCount + gapSize;
+      newStart += newCount + gapSize;
+    }
+  }
+
+  return { diff, fileCount, lineCount };
 }
 
 function buildMergeConflictFixture(): string[] {
@@ -269,81 +346,38 @@ async function importPierreParsers(): Promise<{
   getMergeConflictLineTypes: GetMergeConflictLineTypes;
   parseMergeConflictDiffFromFile: ParseMergeConflictDiffFromFile;
   resolveConflict: ResolveConflict;
-  parseDiffFromFile?: ParseDiffFromFile;
+  parseDiffFromFile: ParseDiffFromFile;
 }> {
-  const parsePatchFilesModule = await import(
-    pathToFileURL(
-      `${PIERRE_ROOT}/packages/diffs/src/utils/parsePatchFiles.ts`
-    ).href
+  const packageModule = await import('@pierre/diffs');
+  const computeEstimatedDiffHeightsModule = await importPackageUtility(
+    'computeEstimatedDiffHeights'
   );
-  let parseDiffFromFile: ParseDiffFromFile | undefined;
-  try {
-    const parseDiffFromFileModule = await import(
-      pathToFileURL(
-        `${PIERRE_ROOT}/packages/diffs/src/utils/parseDiffFromFile.ts`
-      ).href
-    );
-    parseDiffFromFile = parseDiffFromFileModule.parseDiffFromFile;
-  } catch (error) {
-    console.warn(
-      `Skipping pierre parseDiffFromFile: ${(error as Error).message}`
-    );
-  }
+  const mergeConflictLineTypesModule = await importPackageUtility(
+    'getMergeConflictLineTypes'
+  );
+  const mergeConflictParserModule = await importPackageUtility(
+    'parseMergeConflictDiffFromFile'
+  );
 
   return {
-    parsePatchFiles: parsePatchFilesModule.parsePatchFiles,
-    processFile: parsePatchFilesModule.processFile,
-    trimPatchContext: (
-      await import(
-        pathToFileURL(
-          `${PIERRE_ROOT}/packages/diffs/src/utils/trimPatchContext.ts`
-        ).href
-      )
-    ).trimPatchContext,
-    diffAcceptRejectHunk: (
-      await import(
-        pathToFileURL(
-          `${PIERRE_ROOT}/packages/diffs/src/utils/diffAcceptRejectHunk.ts`
-        ).href
-      )
-    ).diffAcceptRejectHunk,
-    computeEstimatedDiffHeights: (
-      await import(
-        pathToFileURL(
-          `${PIERRE_ROOT}/packages/diffs/src/utils/computeEstimatedDiffHeights.ts`
-        ).href
-      )
-    ).computeEstimatedDiffHeights,
-    createWindowFromScrollPosition: (
-      await import(
-        pathToFileURL(
-          `${PIERRE_ROOT}/packages/diffs/src/utils/createWindowFromScrollPosition.ts`
-        ).href
-      )
-    ).createWindowFromScrollPosition,
-    getMergeConflictLineTypes: (
-      await import(
-        pathToFileURL(
-          `${PIERRE_ROOT}/packages/diffs/src/utils/getMergeConflictLineTypes.ts`
-        ).href
-      )
-    ).getMergeConflictLineTypes,
-    parseMergeConflictDiffFromFile: (
-      await import(
-        pathToFileURL(
-          `${PIERRE_ROOT}/packages/diffs/src/utils/parseMergeConflictDiffFromFile.ts`
-        ).href
-      )
-    ).parseMergeConflictDiffFromFile,
-    resolveConflict: (
-      await import(
-        pathToFileURL(
-          `${PIERRE_ROOT}/packages/diffs/src/utils/resolveConflict.ts`
-        ).href
-      )
-    ).resolveConflict,
-    parseDiffFromFile,
+    parsePatchFiles: packageModule.parsePatchFiles,
+    processFile: packageModule.processFile,
+    trimPatchContext: packageModule.trimPatchContext,
+    diffAcceptRejectHunk: packageModule.diffAcceptRejectHunk,
+    computeEstimatedDiffHeights:
+      computeEstimatedDiffHeightsModule.computeEstimatedDiffHeights as ComputeEstimatedDiffHeights,
+    createWindowFromScrollPosition: packageModule.createWindowFromScrollPosition,
+    getMergeConflictLineTypes:
+      mergeConflictLineTypesModule.getMergeConflictLineTypes as GetMergeConflictLineTypes,
+    parseMergeConflictDiffFromFile:
+      mergeConflictParserModule.parseMergeConflictDiffFromFile as ParseMergeConflictDiffFromFile,
+    resolveConflict: packageModule.resolveConflict,
+    parseDiffFromFile: packageModule.parseDiffFromFile,
   };
+}
+
+async function importPackageUtility(fileName: string): Promise<Record<string, unknown>> {
+  return import(pathToFileURL(`${PIERRE_DIFFS_DIST}/utils/${fileName}.js`).href);
 }
 
 function runTimedLoop(durationMs: number, callback: () => unknown): {
@@ -391,6 +425,17 @@ function benchmark(name: string, bytes: number, callback: () => unknown): void {
   );
 }
 
+function extractParsedFiles(parsedPatch: unknown): unknown[] {
+  if (!Array.isArray(parsedPatch)) {
+    return [];
+  }
+
+  return parsedPatch.flatMap((patch) => {
+    const files = (patch as { files?: unknown }).files;
+    return Array.isArray(files) ? files : [];
+  });
+}
+
 const {
   parsePatchFiles,
   processFile,
@@ -404,6 +449,7 @@ const {
   parseDiffFromFile,
 } = await importPierreParsers();
 const fixture = buildLargeTsxFixture();
+const multiFileFixture = buildMultiFilePatchFixture();
 const mergeConflictLines = buildMergeConflictFixture();
 const mergeConflictBytes = mergeConflictLines.join('').length;
 const mergeConflictFile: FileContents = {
@@ -427,6 +473,12 @@ const parsedPatchFile = processFile(fixture.diff, {
   isGitDiff: true,
   throwOnError: true,
 });
+const parsedMultiFilePatch = parsePatchFiles(
+  multiFileFixture.diff,
+  'multi-diff',
+  true
+);
+const parsedMultiFiles = extractParsedFiles(parsedMultiFilePatch);
 const virtualMetrics = {
   hunkLineCount: 2,
   lineHeight: 20,
@@ -434,8 +486,12 @@ const virtualMetrics = {
   spacing: 8,
 };
 
-console.log(`Pierre root: ${PIERRE_ROOT}`);
+console.log(`Pierre package: @pierre/diffs`);
+console.log(`Pierre package dist: ${PIERRE_DIFFS_DIST}`);
 console.log(`Patch bytes: ${fixture.diff.length}`);
+console.log(
+  `Multi-file patch bytes: ${multiFileFixture.diff.length}, files: ${multiFileFixture.fileCount}, lines: ${multiFileFixture.lineCount}`
+);
 console.log(`Full-file bytes: ${oldFile.contents.length + newFile.contents.length}`);
 console.log(`Merge-conflict bytes: ${mergeConflictBytes}`);
 
@@ -466,6 +522,26 @@ benchmark('pierre computeEstimatedDiffHeights', fixture.diff.length, () =>
     collapsedContextThreshold: 1,
   })
 );
+benchmark('pierre parsePatchFiles multi-file', multiFileFixture.diff.length, () =>
+  parsePatchFiles(multiFileFixture.diff, 'multi-diff', true)
+);
+benchmark(
+  'pierre computeEstimatedDiffHeights multi-file',
+  multiFileFixture.diff.length,
+  () => {
+    for (const fileDiff of parsedMultiFiles) {
+      computeEstimatedDiffHeights({
+        fileDiff,
+        metrics: virtualMetrics,
+        disableFileHeader: false,
+        hunkSeparators: 'line-info',
+        expandUnchanged: false,
+        expandedHunks: undefined,
+        collapsedContextThreshold: 1,
+      });
+    }
+  }
+);
 benchmark('pierre createWindowFromScrollPosition', 1, () =>
   createWindowFromScrollPosition({
     scrollTop: 475.25,
@@ -489,10 +565,8 @@ benchmark('pierre resolveConflict', fixture.diff.length, () =>
     'incoming'
   )
 );
-if (parseDiffFromFile != null) {
-  benchmark(
-    'pierre parseDiffFromFile',
-    oldFile.contents.length + newFile.contents.length,
-    () => parseDiffFromFile(oldFile, newFile)
-  );
-}
+benchmark(
+  'pierre parseDiffFromFile',
+  oldFile.contents.length + newFile.contents.length,
+  () => parseDiffFromFile(oldFile, newFile)
+);

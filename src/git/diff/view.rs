@@ -5,9 +5,9 @@ use super::super::{
     highlight::{HighlightRegistry, SyntaxToken},
 };
 use super::{
-    DiffDisplayCache, MergeConflictLabels, MergeConflictMarkerRowType,
+    DiffDisplayCache, FileDiffMetadata, MergeConflictLabels, MergeConflictMarkerRowType,
     ParseMergeConflictDiffFromFileResult,
-    rows::{append_file_diff_rows_with_conflicts, build_diff_rows},
+    rows::{append_file_diff_rows_with_conflicts, build_diff_rows, diff_gaps_from_hunks},
 };
 
 #[derive(Debug, Default, Clone)]
@@ -204,6 +204,34 @@ pub fn build_merge_conflict_diff_view(
         note,
         hunks,
         gaps: Vec::new(),
+        gap_expansions: HashMap::new(),
+        old_file_source: None,
+        old_exact_highlighted_lines: None,
+        new_file_lines: None,
+        new_file_source: None,
+        new_exact_highlighted_lines: None,
+        display_cache: DiffDisplayCache::default(),
+    }
+}
+
+pub fn build_diff_view_from_file_metadata(file: &FileDiffMetadata) -> DiffView {
+    let mut rows = Vec::new();
+    let mut hunks = Vec::new();
+    append_file_diff_rows_with_conflicts(
+        file,
+        &[],
+        &[],
+        &MergeConflictLabels::default(),
+        &mut rows,
+        &mut hunks,
+    );
+    let gaps = diff_gaps_from_hunks(&hunks);
+
+    DiffView {
+        rows,
+        note: None,
+        hunks,
+        gaps,
         gap_expansions: HashMap::new(),
         old_file_source: None,
         old_exact_highlighted_lines: None,

@@ -5,6 +5,8 @@ use super::super::{
 use crate::review::ReviewSeverity;
 use unicode_width::UnicodeWidthStr;
 
+const FALLBACK_DIFF_DISPLAY_WIDTH: usize = 120;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DiffViewport {
     pub(crate) mode: DiffViewMode,
@@ -30,7 +32,7 @@ impl App {
     pub(crate) fn current_diff_display_width(&self) -> usize {
         self.diff_viewport
             .map(|viewport| viewport.width)
-            .unwrap_or(usize::MAX)
+            .unwrap_or(FALLBACK_DIFF_DISPLAY_WIDTH)
     }
 
     pub(crate) fn move_diff_selection(&mut self, delta: i32) {

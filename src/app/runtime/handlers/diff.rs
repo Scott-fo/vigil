@@ -87,7 +87,10 @@ impl App {
         true
     }
 
-    pub(in crate::app) fn handle_diff_prefetched(&mut self, prefetched: DiffPrefetchedEvent) {
+    pub(in crate::app) fn handle_diff_prefetched(
+        &mut self,
+        prefetched: DiffPrefetchedEvent,
+    ) -> bool {
         let DiffPrefetchedEvent {
             generation,
             key,
@@ -96,13 +99,46 @@ impl App {
             highlight_complete,
         } = prefetched;
         if generation != self.diff_cache_generation {
-            return;
+            return false;
         }
 
         self.diff_view_cache.insert_plain(key.clone(), plain);
         if let Some(highlighted_view) = highlighted {
-            self.diff_view_cache
-                .insert_highlighted(key, highlighted_view, highlight_complete);
+            self.diff_view_cache.insert_highlighted(
+                key.clone(),
+                highlighted_view,
+                highlight_complete,
+            );
         }
+
+        if self.pending_diff_cache_key.as_ref() != Some(&key) {
+            return false;
+        }
+
+        if let Some(task) = self.diff_load_task.take() {
+            task.abort();
+        }
+
+        let loaded = if let Some((diff_view, complete)) = self.diff_view_cache.get_highlighted(&key)
+        {
+            Some((diff_view, complete))
+        } else {
+            self.diff_view_cache
+                .get_plain(&key)
+                .map(|diff_view| (diff_view, self.highlight_registry.is_none()))
+        };
+
+        let Some((mut diff_view, highlight_complete)) = loaded else {
+            return false;
+        };
+
+        let max_index =
+            diff_view.last_selectable_index(self.diff_view_mode, self.current_diff_display_width());
+        self.selected_diff_line_index = self.selected_diff_line_index.min(max_index);
+        self.diff_view = diff_view;
+        self.apply_pending_diff_search_target();
+        self.diff_highlight_complete = highlight_complete;
+        self.status_message = Some(self.current_status_message());
+        true
     }
 }

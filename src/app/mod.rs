@@ -174,6 +174,7 @@ pub struct App {
     pub diff_search_results: DiffSearchResults,
     pub diff_search_selected_index: usize,
     diff_search_index: Option<Arc<DiffSearchIndex>>,
+    diff_search_index_error: Option<String>,
     diff_search_index_request_id: u64,
     diff_search_query_request_id: u64,
     diff_search_load_task: Option<task::JoinHandle<()>>,

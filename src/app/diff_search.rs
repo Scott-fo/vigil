@@ -20,6 +20,7 @@ use crate::{
 };
 
 const DIFF_SEARCH_RESULT_LIMIT: usize = 200;
+const EMPTY_DIFF_SEARCH_MESSAGE: &str = "No searchable diff lines.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DiffSearchNavigationTarget {
@@ -82,12 +83,11 @@ impl App {
         self.find_prefix_pending = false;
         self.diff_search_modal_open = true;
         self.diff_search_query.clear();
-        self.diff_search_loading = true;
-        self.diff_search_error = None;
         self.diff_search_results = Default::default();
         self.diff_search_selected_index = 0;
-        self.diff_search_index = None;
-        self.spawn_diff_search_index_load();
+        self.cancel_diff_search_query_task();
+        self.ensure_diff_search_index_load();
+        self.refresh_diff_search_modal_status();
     }
 
     pub(in crate::app) fn close_diff_search_modal(&mut self) {
@@ -97,14 +97,47 @@ impl App {
         self.diff_search_error = None;
         self.diff_search_results = Default::default();
         self.diff_search_selected_index = 0;
-        self.diff_search_index = None;
-        self.cancel_diff_search_tasks();
+        self.cancel_diff_search_query_task();
     }
 
     pub(in crate::app) fn cancel_diff_search_tasks(&mut self) {
+        self.cancel_diff_search_index_task();
+        self.cancel_diff_search_query_task();
+    }
+
+    pub(in crate::app) fn queue_diff_search_index_load(&mut self) {
+        self.cancel_diff_search_tasks();
+        self.diff_search_index = None;
+        self.diff_search_index_error = None;
+        self.diff_search_results = Default::default();
+        self.diff_search_selected_index = 0;
+        if self.diff_search_modal_open {
+            self.diff_search_loading = true;
+            self.diff_search_error = None;
+        }
+        self.spawn_diff_search_index_load();
+    }
+
+    pub(in crate::app) fn clear_diff_search_index(&mut self) {
+        self.cancel_diff_search_tasks();
+        self.diff_search_index_request_id = self.diff_search_index_request_id.saturating_add(1);
+        self.diff_search_index = None;
+        self.diff_search_index_error = None;
+        self.diff_search_results = Default::default();
+        self.diff_search_selected_index = 0;
+        if self.diff_search_modal_open {
+            self.diff_search_loading = false;
+            self.diff_search_error = None;
+        }
+    }
+
+    fn cancel_diff_search_index_task(&mut self) {
         if let Some(task) = self.diff_search_load_task.take() {
             task.abort();
         }
+    }
+
+    fn cancel_diff_search_query_task(&mut self) {
         if let Some(task) = self.diff_search_query_task.take() {
             task.abort();
         }
@@ -115,30 +148,32 @@ impl App {
         request_id: u64,
         result: Result<git::DiffSearchIndex, String>,
     ) -> bool {
-        if request_id != self.diff_search_index_request_id || !self.diff_search_modal_open {
+        if request_id != self.diff_search_index_request_id {
             return false;
         }
 
         self.diff_search_load_task = None;
         self.diff_search_loading = false;
         match result {
-            Ok(index) if index.is_empty() => {
-                self.diff_search_index = None;
-                self.diff_search_error = Some("No searchable diff lines.".to_string());
-                self.diff_search_results = Default::default();
-            }
             Ok(index) => {
                 self.diff_search_index = Some(Arc::new(index));
-                self.diff_search_error = None;
-                self.queue_diff_search_results();
+                self.diff_search_index_error = None;
+                self.diff_search_results = Default::default();
+                if self.diff_search_modal_open {
+                    self.queue_diff_search_results();
+                }
             }
             Err(error) => {
                 self.diff_search_index = None;
-                self.diff_search_error = Some(error);
+                self.diff_search_index_error = Some(error);
                 self.diff_search_results = Default::default();
+                self.diff_search_selected_index = 0;
+                if self.diff_search_modal_open {
+                    self.refresh_diff_search_modal_status();
+                }
             }
         }
-        true
+        self.diff_search_modal_open
     }
 
     pub(in crate::app) fn handle_diff_search_results_loaded(
@@ -192,7 +227,6 @@ impl App {
     }
 
     fn spawn_diff_search_index_load(&mut self) {
-        self.cancel_diff_search_tasks();
         self.diff_search_index_request_id = self.diff_search_index_request_id.saturating_add(1);
         let request_id = self.diff_search_index_request_id;
         let repo_root = self.repo_root.clone();
@@ -209,8 +243,16 @@ impl App {
     }
 
     fn queue_diff_search_results(&mut self) {
-        if let Some(task) = self.diff_search_query_task.take() {
-            task.abort();
+        self.cancel_diff_search_query_task();
+
+        if let Some(index) = self.diff_search_index.as_ref() {
+            if index.is_empty() {
+                self.diff_search_loading = false;
+                self.diff_search_error = Some(EMPTY_DIFF_SEARCH_MESSAGE.to_string());
+                self.diff_search_results = Default::default();
+                self.diff_search_selected_index = 0;
+                return;
+            }
         }
 
         let query = self.diff_search_query.trim().to_string();
@@ -223,6 +265,7 @@ impl App {
         }
 
         let Some(index) = self.diff_search_index.clone() else {
+            self.refresh_diff_search_modal_status();
             return;
         };
 
@@ -252,6 +295,33 @@ impl App {
             .unwrap_or_else(|error| Err(error.to_string()));
             let _ = sender.send(Event::DiffSearchResultsLoaded { request_id, result });
         }));
+    }
+
+    fn ensure_diff_search_index_load(&mut self) {
+        if self.diff_search_index.is_some()
+            || self.diff_search_index_error.is_some()
+            || self.diff_search_load_task.is_some()
+        {
+            return;
+        }
+
+        self.queue_diff_search_index_load();
+    }
+
+    fn refresh_diff_search_modal_status(&mut self) {
+        if self.diff_search_load_task.is_some() {
+            self.diff_search_loading = true;
+            self.diff_search_error = None;
+            return;
+        }
+
+        self.diff_search_loading = false;
+        self.diff_search_error = self.diff_search_index_error.clone().or_else(|| {
+            match self.diff_search_index.as_ref() {
+                Some(index) if index.is_empty() => Some(EMPTY_DIFF_SEARCH_MESSAGE.to_string()),
+                _ => None,
+            }
+        });
     }
 
     fn selected_diff_search_result(&self) -> Option<DiffSearchResult> {

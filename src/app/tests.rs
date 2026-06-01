@@ -47,7 +47,72 @@ async fn global_shortcuts_use_ff_for_file_search_fg_for_diff_search_and_p_for_pu
     assert!(!app.file_search_modal_open);
     assert_eq!(app.remote_sync, Some(RemoteSyncDirection::Pull));
 
+    app.cancel_diff_search_tasks();
     app.abort_background_tasks();
+}
+
+#[tokio::test]
+async fn diff_search_index_loaded_in_background_is_reused_on_open() {
+    let mut app = build_test_app();
+
+    app.queue_diff_search_index_load();
+    let request_id = app.diff_search_index_request_id;
+    app.cancel_diff_search_tasks();
+    let index = git::DiffSearchIndex::from_diff_text(concat!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n",
+        "--- a/src/lib.rs\n",
+        "+++ b/src/lib.rs\n",
+        "@@ -1,1 +1,1 @@\n",
+        "-fn before() {}\n",
+        "+fn after() {}\n",
+    ))
+    .expect("diff search index should build");
+
+    assert!(!app.handle_diff_search_index_loaded(request_id, Ok(index)));
+    assert!(app.diff_search_index.is_some());
+
+    app.open_diff_search_modal();
+
+    assert!(app.diff_search_modal_open);
+    assert!(!app.diff_search_loading);
+    assert!(app.diff_search_error.is_none());
+    assert!(app.diff_search_load_task.is_none());
+
+    app.close_diff_search_modal();
+}
+
+#[tokio::test]
+async fn diff_search_index_survives_modal_close() {
+    let mut app = build_test_app();
+
+    app.open_diff_search_modal();
+    let request_id = app.diff_search_index_request_id;
+    app.cancel_diff_search_tasks();
+    let index = git::DiffSearchIndex::from_diff_text(concat!(
+        "diff --git a/src/main.rs b/src/main.rs\n",
+        "--- a/src/main.rs\n",
+        "+++ b/src/main.rs\n",
+        "@@ -1,1 +1,1 @@\n",
+        "-let old_value = 1;\n",
+        "+let new_value = 2;\n",
+    ))
+    .expect("diff search index should build");
+
+    assert!(app.handle_diff_search_index_loaded(request_id, Ok(index)));
+    assert!(app.diff_search_index.is_some());
+
+    app.close_diff_search_modal();
+
+    assert!(!app.diff_search_modal_open);
+    assert!(app.diff_search_index.is_some());
+
+    app.open_diff_search_modal();
+
+    assert!(!app.diff_search_loading);
+    assert!(app.diff_search_error.is_none());
+    assert!(app.diff_search_load_task.is_none());
+
+    app.close_diff_search_modal();
 }
 
 #[tokio::test]

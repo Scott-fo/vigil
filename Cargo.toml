@@ -67,6 +67,10 @@ name = "diff_search_performance"
 harness = false
 
 [[bench]]
+name = "multi_diff_loading"
+harness = false
+
+[[bench]]
 name = "git_rs_new_file_performance"
 harness = false
 

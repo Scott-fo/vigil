@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use tokio::task;
 
 use super::*;
@@ -36,32 +38,7 @@ impl App {
             return;
         }
 
-        let mut prefetch_files = Vec::new();
-        for distance in 1..=DIFF_PREFETCH_DISTANCE {
-            for candidate_index in [
-                selected_visible_index.checked_sub(distance),
-                selected_visible_index.checked_add(distance),
-            ] {
-                let Some(candidate_index) = candidate_index else {
-                    continue;
-                };
-                let Some(path) = visible_paths.get(candidate_index) else {
-                    continue;
-                };
-                let Some(file_index) = self.file_index_by_path(path) else {
-                    continue;
-                };
-                let file = self.files[file_index].clone();
-                let cache_key = self.diff_cache_key(&file);
-                let should_prefetch_highlight = self.highlight_registry.is_some()
-                    && file.filetype.is_some()
-                    && !self.diff_view_cache.has_complete_highlight(&cache_key);
-                if !should_prefetch_highlight && self.diff_view_cache.has_plain(&cache_key) {
-                    continue;
-                }
-                prefetch_files.push((cache_key, file, should_prefetch_highlight));
-            }
-        }
+        let prefetch_files = self.diff_prefetch_files(selected_visible_index, &visible_paths);
 
         if prefetch_files.is_empty() {
             return;
@@ -140,6 +117,96 @@ impl App {
                 })));
             }
         }));
+    }
+
+    fn diff_prefetch_files(
+        &self,
+        selected_visible_index: usize,
+        visible_paths: &[String],
+    ) -> Vec<(DiffCacheKey, FileEntry, bool)> {
+        let selected_path = self.selected_file().map(|file| file.path.as_str());
+        let mut seen_paths = HashSet::new();
+        let mut prefetch_files = Vec::new();
+
+        for distance in 1..=DIFF_PREFETCH_DISTANCE {
+            if let Some(path) = selected_visible_index
+                .checked_add(distance)
+                .and_then(|candidate_index| visible_paths.get(candidate_index))
+            {
+                self.push_diff_prefetch_file(
+                    path,
+                    selected_path,
+                    &mut seen_paths,
+                    &mut prefetch_files,
+                );
+            }
+
+            if let Some(path) = selected_visible_index
+                .checked_sub(distance)
+                .and_then(|candidate_index| visible_paths.get(candidate_index))
+            {
+                self.push_diff_prefetch_file(
+                    path,
+                    selected_path,
+                    &mut seen_paths,
+                    &mut prefetch_files,
+                );
+            }
+        }
+
+        let visible_start = self.sidebar_scroll.saturating_sub(DIFF_PREFETCH_DISTANCE);
+        let visible_end = self
+            .sidebar_scroll
+            .saturating_add(self.sidebar_viewport_height)
+            .saturating_add(DIFF_PREFETCH_DISTANCE)
+            .min(self.sidebar_items.len());
+
+        for item in self
+            .sidebar_items
+            .get(visible_start..visible_end)
+            .unwrap_or_default()
+        {
+            let Some(file) = item.file() else {
+                continue;
+            };
+            self.push_diff_prefetch_file(
+                &file.path,
+                selected_path,
+                &mut seen_paths,
+                &mut prefetch_files,
+            );
+        }
+
+        prefetch_files
+    }
+
+    fn push_diff_prefetch_file(
+        &self,
+        path: &str,
+        selected_path: Option<&str>,
+        seen_paths: &mut HashSet<String>,
+        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry, bool)>,
+    ) {
+        if Some(path) == selected_path || !seen_paths.insert(path.to_string()) {
+            return;
+        }
+
+        let Some(file_index) = self.file_index_by_path(path) else {
+            return;
+        };
+        let file = self.files[file_index].clone();
+        let cache_key = self.diff_cache_key(&file);
+        let has_plain = self.diff_view_cache.has_plain(&cache_key);
+        let needs_highlight = self.highlight_registry.is_some()
+            && file.filetype.is_some()
+            && !self.diff_view_cache.has_complete_highlight(&cache_key);
+
+        if has_plain && !needs_highlight {
+            return;
+        }
+
+        let should_prefetch_highlight = has_plain && needs_highlight;
+        prefetch_files.push((cache_key, file, should_prefetch_highlight));
     }
 
     pub(in crate::app) fn queue_selected_diff_load(

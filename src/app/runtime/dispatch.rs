@@ -35,7 +35,9 @@ impl App {
                 }
             }
             Event::DiffPrefetched(prefetched) => {
-                self.handle_diff_prefetched(*prefetched);
+                if self.handle_diff_prefetched(*prefetched) {
+                    self.redraw_if_running(terminal)?;
+                }
             }
             Event::WorkingTreeStatusLoaded { request_id, result } => {
                 if self.handle_working_tree_status_loaded(request_id, result) {
