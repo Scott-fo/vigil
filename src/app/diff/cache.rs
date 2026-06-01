@@ -14,7 +14,7 @@ pub(crate) enum DiffPrefetchDirection {
     Backward,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DiffCacheKey {
     pub(super) review_scope: String,
     pub(super) file_path: String,

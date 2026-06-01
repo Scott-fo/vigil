@@ -1,10 +1,18 @@
-use std::{cmp::Ordering, collections::HashSet, sync::Arc};
+use std::{cmp::Ordering, collections::HashSet, path::PathBuf, sync::Arc};
 
 use tokio::task;
 
 use super::*;
 
 const DIFF_SNAPSHOT_PREFETCH_CONCURRENCY: usize = 4;
+const DIFF_HIGHLIGHT_PREFETCH_CONCURRENCY: usize = 2;
+
+#[derive(Debug, Clone)]
+pub(in crate::app) struct DiffHighlightPrefetchFile {
+    pub(in crate::app) cache_key: DiffCacheKey,
+    pub(in crate::app) file: FileEntry,
+    pub(in crate::app) plain: DiffView,
+}
 
 impl App {
     pub(super) fn build_diff_cache_key(review_mode: &ReviewMode, file: &FileEntry) -> DiffCacheKey {
@@ -55,9 +63,15 @@ impl App {
             return;
         }
 
-        let prefetch_files = self.diff_prefetch_files(selected_visible_index, &visible_paths);
+        let highlight_prefetch_files = self.diff_visible_highlight_prefetch_files();
+        let highlight_prefetch_keys = highlight_prefetch_files
+            .iter()
+            .map(|job| job.cache_key.clone())
+            .collect::<HashSet<_>>();
+        let mut prefetch_files = self.diff_prefetch_files(selected_visible_index, &visible_paths);
+        prefetch_files.retain(|(cache_key, _)| !highlight_prefetch_keys.contains(cache_key));
 
-        if prefetch_files.is_empty() {
+        if highlight_prefetch_files.is_empty() && prefetch_files.is_empty() {
             return;
         }
 
@@ -72,19 +86,41 @@ impl App {
         let sender = self.events.sender();
 
         self.diff_prefetch_task = Some(task::spawn(async move {
+            let mut highlight_jobs = task::JoinSet::new();
+            for job in highlight_prefetch_files {
+                let repo_root = repo_root.clone();
+                let review_mode = review_mode.clone();
+                let highlight_registry = highlight_registry.clone();
+                highlight_jobs.spawn(async move {
+                    build_highlight_prefetch_event(
+                        generation,
+                        job.cache_key,
+                        job.file,
+                        job.plain,
+                        repo_root,
+                        review_mode,
+                        highlight_registry?,
+                    )
+                    .await
+                });
+                if highlight_jobs.len() >= DIFF_HIGHLIGHT_PREFETCH_CONCURRENCY {
+                    send_next_prefetch(&mut highlight_jobs, &sender).await;
+                }
+            }
+            drain_prefetches(&mut highlight_jobs, &sender).await;
+
             let mut memory_jobs = task::JoinSet::new();
-            for (cache_key, file, should_prefetch_highlight) in prefetch_files {
+            for (cache_key, file) in prefetch_files {
                 if let Some(snapshot) = review_diff_snapshot
                     .as_ref()
                     .filter(|snapshot| snapshot.contains_file(&file.path))
                     .cloned()
-                    .filter(|_| !should_prefetch_highlight)
                 {
                     memory_jobs.spawn_blocking(move || {
                         build_snapshot_prefetch_event(generation, cache_key, file, snapshot)
                     });
                     if memory_jobs.len() >= DIFF_SNAPSHOT_PREFETCH_CONCURRENCY {
-                        send_next_memory_prefetch(&mut memory_jobs, &sender).await;
+                        send_next_prefetch(&mut memory_jobs, &sender).await;
                     }
                     continue;
                 }
@@ -93,13 +129,12 @@ impl App {
                     .as_ref()
                     .filter(|text_index| text_index.contains_file(&file.path))
                     .cloned()
-                    .filter(|_| !should_prefetch_highlight)
                 {
                     memory_jobs.spawn_blocking(move || {
                         build_text_index_prefetch_event(generation, cache_key, file, text_index)
                     });
                     if memory_jobs.len() >= DIFF_SNAPSHOT_PREFETCH_CONCURRENCY {
-                        send_next_memory_prefetch(&mut memory_jobs, &sender).await;
+                        send_next_prefetch(&mut memory_jobs, &sender).await;
                     }
                     continue;
                 }
@@ -108,31 +143,19 @@ impl App {
                     continue;
                 }
 
-                let include_exact_context = should_prefetch_highlight;
                 let preview_result = match &review_mode {
                     ReviewMode::WorkingTree => {
-                        git::load_diff_preview_for_working_tree(
-                            &repo_root,
-                            &file,
-                            include_exact_context,
-                        )
-                        .await
+                        git::load_diff_preview_for_working_tree(&repo_root, &file, false).await
                     }
                     ReviewMode::CommitCompare(selection) => {
                         git::load_diff_preview_for_commit_compare(
-                            &repo_root,
-                            &file,
-                            selection,
-                            include_exact_context,
+                            &repo_root, &file, selection, false,
                         )
                         .await
                     }
                     ReviewMode::BranchCompare(selection) => {
                         git::load_diff_preview_for_branch_compare(
-                            &repo_root,
-                            &file,
-                            selection,
-                            include_exact_context,
+                            &repo_root, &file, selection, false,
                         )
                         .await
                     }
@@ -142,37 +165,25 @@ impl App {
                     continue;
                 };
 
-                let registry = highlight_registry.clone();
                 let build_result = task::spawn_blocking(move || {
                     let plain = git::build_diff_view_from_preview_data(&preview, &file, None)?;
-                    let highlighted = if should_prefetch_highlight {
-                        registry.map(|registry| {
-                            let mut highlighted = plain.clone();
-                            highlighted
-                                .apply_exact_syntax_highlighting(file.filetype, registry.as_ref());
-                            highlighted
-                        })
-                    } else {
-                        None
-                    };
-                    Ok::<_, color_eyre::Report>((plain, highlighted))
+                    Ok::<_, color_eyre::Report>(plain)
                 })
                 .await;
 
-                let Ok(Ok((plain_view, highlighted_view))) = build_result else {
+                let Ok(Ok(plain_view)) = build_result else {
                     continue;
                 };
-                let highlight_complete = highlighted_view.is_some();
 
                 let _ = sender.send(Event::DiffPrefetched(Box::new(DiffPrefetchedEvent {
                     generation,
                     key: cache_key,
                     plain: plain_view,
-                    highlighted: highlighted_view,
-                    highlight_complete,
+                    highlighted: None,
+                    highlight_complete: false,
                 })));
             }
-            drain_memory_prefetches(&mut memory_jobs, &sender).await;
+            drain_prefetches(&mut memory_jobs, &sender).await;
         }));
     }
 
@@ -186,7 +197,7 @@ impl App {
         &self,
         selected_visible_index: usize,
         visible_paths: &[String],
-    ) -> Vec<(DiffCacheKey, FileEntry, bool)> {
+    ) -> Vec<(DiffCacheKey, FileEntry)> {
         let selected_path = self.selected_file().map(|file| file.path.as_str());
         let mut seen_paths = HashSet::new();
         let mut prefetch_files = Vec::new();
@@ -294,7 +305,7 @@ impl App {
         distance: usize,
         selected_path: Option<&str>,
         seen_paths: &mut HashSet<String>,
-        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry, bool)>,
+        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry)>,
     ) {
         for offset in 1..=distance {
             self.push_diff_prefetch_offset(
@@ -315,7 +326,7 @@ impl App {
         offset: isize,
         selected_path: Option<&str>,
         seen_paths: &mut HashSet<String>,
-        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry, bool)>,
+        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry)>,
     ) {
         let Some(candidate_index) = selected_visible_index.checked_add_signed(offset) else {
             return;
@@ -331,7 +342,7 @@ impl App {
         path: &str,
         selected_path: Option<&str>,
         seen_paths: &mut HashSet<String>,
-        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry, bool)>,
+        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry)>,
     ) {
         if Some(path) == selected_path || !seen_paths.insert(path.to_string()) {
             return;
@@ -343,17 +354,74 @@ impl App {
         let file = self.files[file_index].clone();
         let cache_key = self.diff_cache_key(&file);
         let has_plain = self.diff_view_cache.has_plain(&cache_key);
-        let needs_highlight = self.highlight_registry.is_some()
-            && file.filetype.is_some()
-            && !self.diff_view_cache.has_complete_highlight(&cache_key);
 
-        if has_plain && !needs_highlight {
+        if has_plain {
             return;
         }
 
-        let should_prefetch_highlight =
-            has_plain && needs_highlight && prefetch_files.len() < DIFF_PREFETCH_DISTANCE;
-        prefetch_files.push((cache_key, file, should_prefetch_highlight));
+        prefetch_files.push((cache_key, file));
+    }
+
+    pub(in crate::app) fn diff_visible_highlight_prefetch_files(
+        &mut self,
+    ) -> Vec<DiffHighlightPrefetchFile> {
+        if self.highlight_registry.is_none()
+            || self.diff_highlight_task.is_some()
+            || !self.diff_highlight_complete
+        {
+            return Vec::new();
+        }
+
+        let Some(selected_file) = self.selected_file() else {
+            return Vec::new();
+        };
+        let selected_path = selected_file.path.clone();
+
+        let visible_start = self.sidebar_scroll;
+        let visible_end = self
+            .sidebar_scroll
+            .saturating_add(self.sidebar_viewport_height)
+            .min(self.sidebar_items.len());
+        let mut candidates = self
+            .sidebar_items
+            .get(visible_start..visible_end)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, item)| {
+                let file = item.file()?;
+                (file.path != selected_path).then_some((visible_start + offset, file.path.clone()))
+            })
+            .collect::<Vec<_>>();
+
+        candidates.sort_by_key(|(row, _)| row.abs_diff(self.selected_sidebar_row));
+
+        let mut jobs = Vec::new();
+        for (_, path) in candidates {
+            let Some(file_index) = self.file_index_by_path(&path) else {
+                continue;
+            };
+            let file = self.files[file_index].clone();
+            if file.filetype.is_none() {
+                continue;
+            }
+
+            let cache_key = self.diff_cache_key(&file);
+            if self.diff_view_cache.has_complete_highlight(&cache_key) {
+                continue;
+            }
+
+            let Some(plain) = self.diff_view_cache.get_plain(&cache_key) else {
+                continue;
+            };
+            jobs.push(DiffHighlightPrefetchFile {
+                cache_key,
+                file,
+                plain,
+            });
+        }
+
+        jobs
     }
 
     pub(in crate::app) fn queue_selected_diff_load(
@@ -671,7 +739,79 @@ pub(super) fn build_text_index_prefetch_event(
     })
 }
 
-async fn send_next_memory_prefetch(
+async fn build_highlight_prefetch_event(
+    generation: u64,
+    key: DiffCacheKey,
+    file: FileEntry,
+    plain: DiffView,
+    repo_root: PathBuf,
+    review_mode: ReviewMode,
+    highlight_registry: SharedHighlightRegistry,
+) -> Option<DiffPrefetchedEvent> {
+    let highlighted = if file.status.contains('U') {
+        let preview = match &review_mode {
+            ReviewMode::WorkingTree => {
+                git::load_diff_preview_for_working_tree(&repo_root, &file, true).await
+            }
+            ReviewMode::CommitCompare(selection) => {
+                git::load_diff_preview_for_commit_compare(&repo_root, &file, selection, true).await
+            }
+            ReviewMode::BranchCompare(selection) => {
+                git::load_diff_preview_for_branch_compare(&repo_root, &file, selection, true).await
+            }
+        }
+        .ok()?;
+
+        let file_for_highlight = file.clone();
+        task::spawn_blocking(move || {
+            let mut highlighted =
+                git::build_diff_view_from_preview_data(&preview, &file_for_highlight, None)?;
+            highlighted.apply_exact_syntax_highlighting(
+                file_for_highlight.filetype,
+                highlight_registry.as_ref(),
+            );
+            Ok::<_, color_eyre::Report>(highlighted)
+        })
+        .await
+        .ok()?
+        .ok()?
+    } else {
+        let context = match &review_mode {
+            ReviewMode::WorkingTree => {
+                git::load_diff_exact_context_for_working_tree(&repo_root, &file).await
+            }
+            ReviewMode::CommitCompare(selection) => {
+                git::load_diff_exact_context_for_commit_compare(&repo_root, &file, selection).await
+            }
+            ReviewMode::BranchCompare(selection) => {
+                git::load_diff_exact_context_for_branch_compare(&repo_root, &file, selection).await
+            }
+        }
+        .ok()?;
+
+        let filetype = file.filetype;
+        let registry = highlight_registry.clone();
+        let plain_for_highlight = plain.clone();
+        task::spawn_blocking(move || {
+            let mut highlighted = plain_for_highlight.with_exact_context(context);
+            highlighted.apply_exact_syntax_highlighting(filetype, registry.as_ref());
+            Ok::<_, color_eyre::Report>(highlighted)
+        })
+        .await
+        .ok()?
+        .ok()?
+    };
+
+    Some(DiffPrefetchedEvent {
+        generation,
+        key,
+        plain,
+        highlighted: Some(highlighted),
+        highlight_complete: true,
+    })
+}
+
+async fn send_next_prefetch(
     jobs: &mut task::JoinSet<Option<DiffPrefetchedEvent>>,
     sender: &tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
@@ -684,11 +824,11 @@ async fn send_next_memory_prefetch(
     let _ = sender.send(Event::DiffPrefetched(Box::new(prefetched)));
 }
 
-async fn drain_memory_prefetches(
+async fn drain_prefetches(
     jobs: &mut task::JoinSet<Option<DiffPrefetchedEvent>>,
     sender: &tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     while !jobs.is_empty() {
-        send_next_memory_prefetch(jobs, sender).await;
+        send_next_prefetch(jobs, sender).await;
     }
 }

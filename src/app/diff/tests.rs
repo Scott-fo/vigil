@@ -550,13 +550,74 @@ fn directional_prefetch_prioritizes_movement_direction() {
         prefetch_files
             .iter()
             .take(DIFF_DIRECTIONAL_PREFETCH_DISTANCE)
-            .all(|(_, file, _)| file.path != "src/file-9.rs")
+            .all(|(_, file)| file.path != "src/file-9.rs")
     );
     assert!(
         prefetch_files
             .iter()
-            .any(|(_, file, _)| file.path == "src/file-9.rs")
+            .any(|(_, file)| file.path == "src/file-9.rs")
     );
+}
+
+#[test]
+fn visible_highlight_prefetch_prioritizes_cached_rows_by_distance() {
+    let mut app = build_test_app();
+    app.files = build_file_entries(8);
+    app.rebuild_sidebar_items();
+    app.selected_file_index = 3;
+    app.sync_sidebar_state();
+    app.sidebar_scroll = 0;
+    app.sidebar_viewport_height = 10;
+    app.diff_highlight_complete = true;
+    app.highlight_registry = Some(
+        git::HighlightRegistry::new_for_filetypes([])
+            .expect("empty registry should initialize")
+            .into(),
+    );
+
+    for index in [1, 2, 3, 4, 5] {
+        app.diff_view_cache
+            .insert_plain(app.diff_cache_key(&app.files[index]), build_diff_view(2));
+    }
+
+    let jobs = app.diff_visible_highlight_prefetch_files();
+    let paths = jobs
+        .iter()
+        .map(|job| job.file.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths,
+        vec![
+            "src/file-2.rs",
+            "src/file-4.rs",
+            "src/file-1.rs",
+            "src/file-5.rs"
+        ]
+    );
+}
+
+#[test]
+fn visible_highlight_prefetch_waits_for_selected_highlight() {
+    let mut app = build_test_app();
+    app.files = build_file_entries(3);
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.sidebar_viewport_height = 10;
+    app.diff_highlight_complete = false;
+    app.highlight_registry = Some(
+        git::HighlightRegistry::new_for_filetypes([])
+            .expect("empty registry should initialize")
+            .into(),
+    );
+    app.diff_view_cache
+        .insert_plain(app.diff_cache_key(&app.files[1]), build_diff_view(2));
+
+    assert!(app.diff_visible_highlight_prefetch_files().is_empty());
+
+    app.diff_highlight_complete = true;
+
+    assert_eq!(app.diff_visible_highlight_prefetch_files().len(), 1);
 }
 
 #[tokio::test]

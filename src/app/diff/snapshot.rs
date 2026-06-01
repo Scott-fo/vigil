@@ -145,6 +145,7 @@ impl App {
         };
 
         if selected_file.path != path {
+            let mut cached_visible_plain = false;
             if self.streamed_path_is_near_sidebar(&path)
                 && let Some(file_index) = self.file_index_by_path(&path)
             {
@@ -157,7 +158,11 @@ impl App {
                         .and_then(|stream_index| stream_index.build_diff_view(&file))
                 {
                     self.diff_view_cache.insert_plain(cache_key, diff_view);
+                    cached_visible_plain = true;
                 }
+            }
+            if cached_visible_plain && self.diff_highlight_complete {
+                self.spawn_diff_prefetch();
             }
             return false;
         }
