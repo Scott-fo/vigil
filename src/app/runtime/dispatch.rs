@@ -48,6 +48,15 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
+            Event::ReviewDiffTextIndexLoaded {
+                request_id,
+                generation,
+                result,
+            } => {
+                if self.handle_review_diff_text_index_loaded(request_id, generation, result) {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
             Event::ReviewDiffStatsLoaded {
                 request_id,
                 generation,

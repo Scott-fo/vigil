@@ -64,12 +64,13 @@ impl App {
         let generation = self.diff_cache_generation;
         let review_mode = self.review_mode.clone();
         let review_diff_snapshot = self.review_diff_snapshot.clone();
+        let review_diff_text_index = self.review_diff_text_index.clone();
         let repo_root = self.repo_root.clone();
         let highlight_registry = self.highlight_registry.clone();
         let sender = self.events.sender();
 
         self.diff_prefetch_task = Some(task::spawn(async move {
-            let mut snapshot_jobs = task::JoinSet::new();
+            let mut memory_jobs = task::JoinSet::new();
             for (cache_key, file, should_prefetch_highlight) in prefetch_files {
                 if let Some(snapshot) = review_diff_snapshot
                     .as_ref()
@@ -77,11 +78,26 @@ impl App {
                     .cloned()
                     .filter(|_| !should_prefetch_highlight)
                 {
-                    snapshot_jobs.spawn_blocking(move || {
+                    memory_jobs.spawn_blocking(move || {
                         build_snapshot_prefetch_event(generation, cache_key, file, snapshot)
                     });
-                    if snapshot_jobs.len() >= DIFF_SNAPSHOT_PREFETCH_CONCURRENCY {
-                        send_next_snapshot_prefetch(&mut snapshot_jobs, &sender).await;
+                    if memory_jobs.len() >= DIFF_SNAPSHOT_PREFETCH_CONCURRENCY {
+                        send_next_memory_prefetch(&mut memory_jobs, &sender).await;
+                    }
+                    continue;
+                }
+
+                if let Some(text_index) = review_diff_text_index
+                    .as_ref()
+                    .filter(|text_index| text_index.contains_file(&file.path))
+                    .cloned()
+                    .filter(|_| !should_prefetch_highlight)
+                {
+                    memory_jobs.spawn_blocking(move || {
+                        build_text_index_prefetch_event(generation, cache_key, file, text_index)
+                    });
+                    if memory_jobs.len() >= DIFF_SNAPSHOT_PREFETCH_CONCURRENCY {
+                        send_next_memory_prefetch(&mut memory_jobs, &sender).await;
                     }
                     continue;
                 }
@@ -150,7 +166,7 @@ impl App {
                     highlight_complete,
                 })));
             }
-            drain_snapshot_prefetches(&mut snapshot_jobs, &sender).await;
+            drain_memory_prefetches(&mut memory_jobs, &sender).await;
         }));
     }
 
@@ -382,6 +398,19 @@ impl App {
             return;
         }
 
+        if self.load_selected_diff_from_review_text_index_cache(&file, &cache_key) {
+            return;
+        }
+
+        if self.review_diff_text_index.is_none()
+            && self.review_diff_snapshot_task.is_some()
+            && !file.status.contains('U')
+        {
+            self.diff_view = DiffView::empty("");
+            self.status_message = Some(self.current_status_message());
+            return;
+        }
+
         if show_loading && !self.diff_view.has_diff_rows() {
             self.diff_view = DiffView::empty("Loading diff...");
         }
@@ -470,6 +499,55 @@ impl App {
         true
     }
 
+    pub(in crate::app) fn load_selected_diff_from_review_text_index(&mut self) -> bool {
+        let Some(file) = self.selected_file().cloned() else {
+            return false;
+        };
+        let cache_key = self.diff_cache_key(&file);
+
+        if self.diff_view_cache.get_highlighted(&cache_key).is_some()
+            || self.diff_view_cache.get_plain(&cache_key).is_some()
+        {
+            return false;
+        }
+
+        self.load_selected_diff_from_review_text_index_cache(&file, &cache_key)
+    }
+
+    fn load_selected_diff_from_review_text_index_cache(
+        &mut self,
+        file: &FileEntry,
+        cache_key: &DiffCacheKey,
+    ) -> bool {
+        let Some(text_index) = self
+            .review_diff_text_index
+            .as_ref()
+            .filter(|text_index| text_index.contains_file(&file.path))
+        else {
+            return false;
+        };
+
+        let Some(diff_view) = text_index.build_diff_view(file) else {
+            return false;
+        };
+        self.diff_view_cache
+            .insert_plain(cache_key.clone(), diff_view.clone());
+
+        if self.pending_diff_cache_key.as_ref() != Some(cache_key) {
+            return false;
+        }
+
+        if let Some(task) = self.diff_load_task.take() {
+            task.abort();
+        }
+
+        self.diff_view = diff_view;
+        self.apply_pending_diff_search_target();
+        self.diff_highlight_complete = self.highlight_registry.is_none() || file.filetype.is_none();
+        self.status_message = Some(self.current_status_message());
+        true
+    }
+
     pub(in crate::app) fn cancel_inflight_diff_load(&mut self) {
         self.cancel_inflight_selected_diff_load();
         self.cancel_inflight_diff_prefetch();
@@ -502,7 +580,24 @@ pub(super) fn build_snapshot_prefetch_event(
     })
 }
 
-async fn send_next_snapshot_prefetch(
+pub(super) fn build_text_index_prefetch_event(
+    generation: u64,
+    key: DiffCacheKey,
+    file: FileEntry,
+    text_index: Arc<git::ReviewDiffTextIndex>,
+) -> Option<DiffPrefetchedEvent> {
+    let plain = text_index.build_diff_view(&file)?;
+
+    Some(DiffPrefetchedEvent {
+        generation,
+        key,
+        plain,
+        highlighted: None,
+        highlight_complete: false,
+    })
+}
+
+async fn send_next_memory_prefetch(
     jobs: &mut task::JoinSet<Option<DiffPrefetchedEvent>>,
     sender: &tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
@@ -515,11 +610,11 @@ async fn send_next_snapshot_prefetch(
     let _ = sender.send(Event::DiffPrefetched(Box::new(prefetched)));
 }
 
-async fn drain_snapshot_prefetches(
+async fn drain_memory_prefetches(
     jobs: &mut task::JoinSet<Option<DiffPrefetchedEvent>>,
     sender: &tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     while !jobs.is_empty() {
-        send_next_snapshot_prefetch(jobs, sender).await;
+        send_next_memory_prefetch(jobs, sender).await;
     }
 }

@@ -66,6 +66,20 @@ fn build_large_review_snapshot(line_count: usize) -> git::ReviewDiffSnapshot {
         .expect("large snapshot fixture should parse")
 }
 
+fn build_review_text_index() -> git::ReviewDiffTextIndex {
+    git::ReviewDiffTextIndex::from_diff_text_owned(
+        concat!(
+            "diff --git a/src/file-0.rs b/src/file-0.rs\n",
+            "--- a/src/file-0.rs\n",
+            "+++ b/src/file-0.rs\n",
+            "@@ -1,1 +1,2 @@\n",
+            " fn existing() {}\n",
+            "+fn from_text_index() {}\n",
+        )
+        .to_string(),
+    )
+}
+
 fn build_file_entries(count: usize) -> Vec<FileEntry> {
     (0..count)
         .map(|index| FileEntry {
@@ -241,6 +255,51 @@ fn selected_large_diff_load_uses_review_snapshot_without_loading_task() {
     assert!(app.diff_load_task.is_none());
     assert!(app.diff_view.note.is_none());
     assert!(app.diff_view.has_diff_rows());
+}
+
+#[test]
+fn selected_diff_load_uses_review_text_index_without_task() {
+    let mut app = build_test_app();
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/file-0.rs".to_string(),
+        label: "file-0.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.review_diff_text_index = Some(Arc::new(build_review_text_index()));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_none());
+    assert!(app.diff_view.note.is_none());
+    assert!(app.diff_view.has_diff_rows());
+}
+
+#[tokio::test]
+async fn selected_diff_waits_for_inflight_whole_diff_without_stale_or_per_file_task() {
+    let mut app = build_test_app();
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/file-0.rs".to_string(),
+        label: "file-0.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.diff_view = build_diff_view(2);
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_none());
+    assert!(!app.diff_view.has_diff_rows());
+    assert_eq!(app.diff_view.note.as_deref(), Some(""));
+
+    app.cancel_inflight_review_diff_snapshot();
 }
 
 #[test]

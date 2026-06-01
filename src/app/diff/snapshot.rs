@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use color_eyre::eyre::WrapErr;
 use tokio::task;
 
 use super::*;
@@ -7,6 +8,7 @@ use super::*;
 impl App {
     pub(in crate::app) fn queue_review_diff_snapshot_load(&mut self) {
         self.cancel_inflight_review_diff_snapshot();
+        self.review_diff_text_index = None;
         self.review_diff_snapshot = None;
 
         if self.files.is_empty() {
@@ -25,7 +27,36 @@ impl App {
         let sender = self.events.sender();
 
         self.review_diff_snapshot_task = Some(task::spawn(async move {
-            let result = load_review_diff_snapshot(&repo_root, &files, &review_mode)
+            let text_index = match load_review_diff_text_index(&repo_root, &files, &review_mode)
+                .await
+                .map(Arc::new)
+            {
+                Ok(text_index) => {
+                    let _ = sender.send(Event::ReviewDiffTextIndexLoaded {
+                        request_id,
+                        generation,
+                        result: Ok(Arc::clone(&text_index)),
+                    });
+                    text_index
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    let _ = sender.send(Event::ReviewDiffTextIndexLoaded {
+                        request_id,
+                        generation,
+                        result: Err(error.clone()),
+                    });
+                    let _ = sender.send(Event::ReviewDiffSnapshotLoaded {
+                        request_id,
+                        generation,
+                        result: Err(error),
+                    });
+                    return;
+                }
+            };
+
+            let cache_key_prefix = review_diff_snapshot_cache_key_prefix(&review_mode);
+            let result = build_review_diff_snapshot_from_text_index(text_index, cache_key_prefix)
                 .await
                 .map(|snapshot| snapshot.with_generation(generation))
                 .map_err(|error| error.to_string());
@@ -47,7 +78,35 @@ impl App {
         self.cancel_inflight_review_diff_snapshot();
         self.review_diff_snapshot_request_id =
             self.review_diff_snapshot_request_id.saturating_add(1);
+        self.review_diff_text_index = None;
         self.review_diff_snapshot = None;
+    }
+
+    pub(in crate::app) fn handle_review_diff_text_index_loaded(
+        &mut self,
+        request_id: u64,
+        generation: u64,
+        result: Result<Arc<git::ReviewDiffTextIndex>, String>,
+    ) -> bool {
+        if request_id != self.review_diff_snapshot_request_id
+            || generation != self.diff_cache_generation
+        {
+            return false;
+        }
+
+        match result {
+            Ok(text_index) => {
+                self.review_diff_text_index = Some(text_index);
+                let changed = self.load_selected_diff_from_review_text_index();
+                self.spawn_diff_prefetch();
+                changed
+            }
+            Err(error) => {
+                self.review_diff_text_index = None;
+                self.status_message = Some(format!("review diff text index failed: {error}"));
+                false
+            }
+        }
     }
 
     pub(in crate::app) fn handle_review_diff_snapshot_loaded(
@@ -126,20 +185,39 @@ impl App {
     }
 }
 
-async fn load_review_diff_snapshot(
+async fn load_review_diff_text_index(
     repo_root: &std::path::Path,
     files: &[git::FileEntry],
     review_mode: &ReviewMode,
-) -> color_eyre::Result<git::ReviewDiffSnapshot> {
+) -> color_eyre::Result<git::ReviewDiffTextIndex> {
     match review_mode {
         ReviewMode::WorkingTree => {
-            git::load_review_diff_snapshot_for_working_tree(repo_root, files).await
+            git::load_review_diff_text_index_for_working_tree(repo_root, files).await
         }
         ReviewMode::CommitCompare(selection) => {
-            git::load_review_diff_snapshot_for_commit_compare(repo_root, selection).await
+            git::load_review_diff_text_index_for_commit_compare(repo_root, selection).await
         }
         ReviewMode::BranchCompare(selection) => {
-            git::load_review_diff_snapshot_for_branch_compare(repo_root, selection).await
+            git::load_review_diff_text_index_for_branch_compare(repo_root, selection).await
         }
+    }
+}
+
+async fn build_review_diff_snapshot_from_text_index(
+    text_index: Arc<git::ReviewDiffTextIndex>,
+    cache_key_prefix: &'static str,
+) -> color_eyre::Result<git::ReviewDiffSnapshot> {
+    task::spawn_blocking(move || {
+        git::ReviewDiffSnapshot::from_diff_text(text_index.diff_text(), Some(cache_key_prefix))
+    })
+    .await
+    .wrap_err("review diff snapshot parse task failed")?
+}
+
+fn review_diff_snapshot_cache_key_prefix(review_mode: &ReviewMode) -> &'static str {
+    match review_mode {
+        ReviewMode::WorkingTree => "working-tree",
+        ReviewMode::CommitCompare(_) => "commit",
+        ReviewMode::BranchCompare(_) => "branch",
     }
 }

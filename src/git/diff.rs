@@ -19,6 +19,7 @@ mod rows;
 mod search;
 mod snapshot;
 mod stats;
+mod text_index;
 mod view;
 
 pub(super) use self::display::{
@@ -92,6 +93,10 @@ pub use self::snapshot::{
 pub use self::stats::{
     ReviewDiffStats, load_review_diff_stats_for_branch_compare,
     load_review_diff_stats_for_commit_compare, load_review_diff_stats_for_working_tree,
+};
+pub use self::text_index::{
+    ReviewDiffTextIndex, load_review_diff_text_index_for_branch_compare,
+    load_review_diff_text_index_for_commit_compare, load_review_diff_text_index_for_working_tree,
 };
 pub use self::view::{
     DiffDisplayLineAnchor, DiffPreviewData, DiffSelectionPane, DiffSelectionPoint, DiffView,

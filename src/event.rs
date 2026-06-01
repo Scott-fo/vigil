@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crossterm::event::Event as CrosstermEvent;
 
@@ -7,7 +7,7 @@ use crate::{
     git::{
         BlameCommitDetails, BranchCompareRefs, BranchMergeOutcome, CommitSearchEntry,
         DiffSearchIndex, DiffSearchResults, DiffView, ReviewDiffSnapshot, ReviewDiffStats,
-        SharedHighlightRegistry, WorkingTreeStatus, WorktreeEntry,
+        ReviewDiffTextIndex, SharedHighlightRegistry, WorkingTreeStatus, WorktreeEntry,
     },
     review::PersistedReview,
     watcher::RepoWatcher,
@@ -45,6 +45,11 @@ pub enum Event {
         request_id: u64,
         generation: u64,
         result: Result<ReviewDiffSnapshot, String>,
+    },
+    ReviewDiffTextIndexLoaded {
+        request_id: u64,
+        generation: u64,
+        result: Result<Arc<ReviewDiffTextIndex>, String>,
     },
     ReviewDiffStatsLoaded {
         request_id: u64,
