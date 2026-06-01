@@ -12,7 +12,7 @@ use tokio::task;
 use super::{
     DiffPreviewData, DiffSearchIndex, DiffView, FileDiffMetadata,
     build_diff_view_from_file_metadata, parse_patch_files,
-    preview::load_diff_preview_for_working_tree,
+    preview::load_diff_preview_for_working_tree, stats::ReviewDiffStats,
 };
 use crate::git::{
     BranchCompareSelection, CommitCompareSelection, FileEntry, command::git_output,
@@ -27,15 +27,6 @@ pub struct DiffFileMetrics {
     pub deletion_line_count: usize,
     pub new_side_line_count: usize,
     pub old_side_line_count: usize,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ReviewDiffStats {
-    pub file_count: usize,
-    pub additions: usize,
-    pub deletions: usize,
-    pub lines: usize,
-    pub split_lines: usize,
 }
 
 #[derive(Debug, Clone, Default)]

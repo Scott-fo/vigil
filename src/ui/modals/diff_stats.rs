@@ -47,18 +47,14 @@ pub(super) fn render_diff_stats_modal(frame: &mut Frame, app: &App) {
                 width,
                 Style::new().fg(text_muted_color()),
             ),
-            Line::default(),
-            muted_line("Parsed from the current review snapshot."),
         ],
         DiffStatsState::Loading { file_count } => vec![
             stat_line("Files", file_count, width, Style::new().fg(text_color())),
             separator_line(width),
             Line::from(Span::styled(
-                "Diff metrics are warming in the background...",
+                "Diff metrics are loading in the background...",
                 Style::new().fg(warning_color()),
             )),
-            Line::default(),
-            muted_line("Open again when the review snapshot is ready."),
         ],
         DiffStatsState::Unavailable { file_count } => vec![
             stat_line("Files", file_count, width, Style::new().fg(text_color())),
@@ -67,8 +63,6 @@ pub(super) fn render_diff_stats_modal(frame: &mut Frame, app: &App) {
                 "No parsed diff metrics are available yet.",
                 Style::new().fg(text_muted_color()),
             )),
-            Line::default(),
-            muted_line("Metrics appear after the review snapshot loads."),
         ],
     };
     lines.push(muted_line("Esc, Enter, q, or F2 closes."));

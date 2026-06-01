@@ -18,6 +18,7 @@ mod resolution;
 mod rows;
 mod search;
 mod snapshot;
+mod stats;
 mod view;
 
 pub(super) use self::display::{
@@ -85,9 +86,12 @@ pub use self::search::{
     load_diff_search_index_for_working_tree,
 };
 pub use self::snapshot::{
-    DiffFileMetrics, ReviewDiffSnapshot, ReviewDiffStats,
-    load_review_diff_snapshot_for_branch_compare, load_review_diff_snapshot_for_commit_compare,
-    load_review_diff_snapshot_for_working_tree,
+    DiffFileMetrics, ReviewDiffSnapshot, load_review_diff_snapshot_for_branch_compare,
+    load_review_diff_snapshot_for_commit_compare, load_review_diff_snapshot_for_working_tree,
+};
+pub use self::stats::{
+    ReviewDiffStats, load_review_diff_stats_for_branch_compare,
+    load_review_diff_stats_for_commit_compare, load_review_diff_stats_for_working_tree,
 };
 pub use self::view::{
     DiffDisplayLineAnchor, DiffPreviewData, DiffSelectionPane, DiffSelectionPoint, DiffView,

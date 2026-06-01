@@ -65,6 +65,8 @@ impl App {
         self.review_diff_snapshot_task = None;
         match result {
             Ok(snapshot) => {
+                self.review_diff_stats = Some(snapshot.stats());
+                self.review_diff_stats_error = None;
                 self.review_diff_snapshot = Some(Arc::new(snapshot));
                 self.queue_diff_search_index_load();
                 let changed = self.load_selected_diff_from_review_snapshot();

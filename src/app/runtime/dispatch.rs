@@ -48,6 +48,15 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
+            Event::ReviewDiffStatsLoaded {
+                request_id,
+                generation,
+                result,
+            } => {
+                if self.handle_review_diff_stats_loaded(request_id, generation, result) {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
             Event::WorkingTreeStatusLoaded { request_id, result } => {
                 if self.handle_working_tree_status_loaded(request_id, result) {
                     self.redraw_if_running(terminal)?;

@@ -23,6 +23,7 @@ impl App {
 
         self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
         self.clear_review_diff_snapshot();
+        self.clear_review_diff_stats();
         self.diff_view_cache.clear();
         self.pending_diff_cache_key = None;
         self.diff_prefetch_direction = Default::default();
@@ -39,6 +40,7 @@ impl App {
             .unwrap_or(0);
 
         self.sync_sidebar_state();
+        self.queue_review_diff_stats_load();
         self.queue_review_diff_snapshot_load();
         self.queue_diff_search_index_load();
         self.queue_selected_diff_load(true, true);

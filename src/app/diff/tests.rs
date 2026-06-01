@@ -221,6 +221,27 @@ fn diff_stats_state_reports_review_snapshot_totals() {
     assert_eq!(stats.lines, 2);
 }
 
+#[test]
+fn diff_stats_state_reports_fast_stats_before_snapshot() {
+    let mut app = build_test_app();
+    app.review_diff_stats = Some(git::ReviewDiffStats {
+        file_count: 3,
+        additions: 21,
+        deletions: 8,
+        lines: 29,
+        split_lines: 29,
+    });
+
+    let DiffStatsState::Ready(stats) = app.diff_stats_state() else {
+        panic!("background stats should produce ready diff stats");
+    };
+
+    assert_eq!(stats.file_count, 3);
+    assert_eq!(stats.additions, 21);
+    assert_eq!(stats.deletions, 8);
+    assert_eq!(stats.lines, 29);
+}
+
 #[tokio::test]
 async fn selected_diff_load_keeps_current_view_while_uncached_file_loads() {
     let mut app = build_test_app();
