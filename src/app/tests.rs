@@ -82,6 +82,28 @@ async fn diff_search_index_loaded_in_background_is_reused_on_open() {
 }
 
 #[tokio::test]
+async fn diff_search_tab_toggles_literal_and_fuzzy_modes() {
+    let mut app = build_test_app();
+    app.diff_search_modal_open = true;
+
+    assert_eq!(app.diff_search_mode, git::DiffSearchMode::Literal);
+
+    assert!(
+        app.handle_diff_search_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            .await
+            .unwrap()
+    );
+    assert_eq!(app.diff_search_mode, git::DiffSearchMode::Fuzzy);
+
+    assert!(
+        app.handle_diff_search_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            .await
+            .unwrap()
+    );
+    assert_eq!(app.diff_search_mode, git::DiffSearchMode::Literal);
+}
+
+#[tokio::test]
 async fn diff_search_index_survives_modal_close() {
     let mut app = build_test_app();
 

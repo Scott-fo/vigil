@@ -15,10 +15,6 @@ use std::{
 };
 
 use color_eyre::eyre::WrapErr;
-use nucleo_matcher::{
-    Config, Matcher, Utf32Str,
-    pattern::{CaseMatching, Normalization, Pattern},
-};
 use tokio::task;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -32,6 +28,8 @@ use super::{
     DiffPreviewData, FileDiffMetadata, Hunk, HunkContent, ParsedPatch, line_without_ending,
     preview::load_diff_preview_for_working_tree,
 };
+
+mod case_insensitive_memmem;
 
 const DIFF_SEARCH_PREVIEW_CONTEXT_LINES: usize = 4;
 
@@ -63,6 +61,7 @@ struct IndexedDiffLine {
 pub struct DiffSearchOptions {
     pub limit: usize,
     pub include_context: bool,
+    pub mode: DiffSearchMode,
 }
 
 impl Default for DiffSearchOptions {
@@ -70,6 +69,34 @@ impl Default for DiffSearchOptions {
         Self {
             limit: 80,
             include_context: true,
+            mode: DiffSearchMode::Literal,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum DiffSearchMode {
+    /// Treat the query as literal text. Whitespace-separated terms may appear
+    /// with separators between them, so `render status` matches
+    /// `render_status`.
+    #[default]
+    Literal,
+    /// Score candidate lines with neo_frizbee's fuzzy matcher.
+    Fuzzy,
+}
+
+impl DiffSearchMode {
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Literal => Self::Fuzzy,
+            Self::Fuzzy => Self::Literal,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Literal => "literal",
+            Self::Fuzzy => "fuzzy",
         }
     }
 }
@@ -120,22 +147,8 @@ pub enum DiffSearchLineKind {
     Deletion,
 }
 
-#[derive(Debug, Clone)]
-pub struct DiffSearchMatcher {
-    matcher: Matcher,
-    char_buf: Vec<char>,
-    indices: Vec<u32>,
-}
-
-impl Default for DiffSearchMatcher {
-    fn default() -> Self {
-        Self {
-            matcher: Matcher::new(Config::DEFAULT),
-            char_buf: Vec::new(),
-            indices: Vec::new(),
-        }
-    }
-}
+#[derive(Debug, Default, Clone)]
+pub struct DiffSearchMatcher;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RankedLine {
@@ -220,32 +233,85 @@ impl DiffSearchIndex {
         &self,
         query: &str,
         options: DiffSearchOptions,
-        matcher: &mut DiffSearchMatcher,
+        _matcher: &mut DiffSearchMatcher,
     ) -> DiffSearchResults {
-        let query = query.trim();
+        let (mode, query) = match normalize_search_query(query, options.mode) {
+            Some(query) => query,
+            None => return DiffSearchResults::default(),
+        };
+
         if query.is_empty() || options.limit == 0 || self.lines.is_empty() {
             return DiffSearchResults::default();
         }
 
-        let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-        if pattern.atoms.is_empty() {
-            return DiffSearchResults::default();
+        match mode {
+            DiffSearchMode::Literal => self.search_literal(query, options),
+            DiffSearchMode::Fuzzy => self.search_fuzzy(query, options),
         }
+    }
+
+    fn search_literal(&self, query: &str, options: DiffSearchOptions) -> DiffSearchResults {
+        let Some(query) = LiteralDiffSearchQuery::new(query) else {
+            return DiffSearchResults::default();
+        };
 
         let mut total_matched = 0usize;
-        let mut top = BinaryHeap::with_capacity(options.limit.saturating_add(1));
+        let mut items = Vec::with_capacity(options.limit.min(self.lines.len()));
         for (line_index, line) in self.lines.iter().enumerate() {
             if !options.include_context && line.kind == DiffSearchLineKind::Context {
                 continue;
             }
 
-            let haystack = Utf32Str::new(&line.text, &mut matcher.char_buf);
-            let Some(score) = pattern.score(haystack, &mut matcher.matcher) else {
+            if items.len() < options.limit {
+                if let Some(match_ranges) = query.match_ranges(&line.text) {
+                    total_matched = total_matched.saturating_add(1);
+                    let score = literal_match_score(&line.text, &match_ranges);
+                    items.push(self.search_result_from_ranges(line_index, match_ranges, score));
+                }
+            } else if query.is_match(&line.text) {
+                total_matched = total_matched.saturating_add(1);
+            }
+        }
+
+        DiffSearchResults {
+            total_matched,
+            items,
+        }
+    }
+
+    fn search_fuzzy(&self, query: &str, options: DiffSearchOptions) -> DiffSearchResults {
+        let config = fuzzy_search_config(query);
+        let mut searchable_lines = Vec::with_capacity(self.lines.len());
+        let mut line_indices = Vec::with_capacity(self.lines.len());
+        for (line_index, line) in self.lines.iter().enumerate() {
+            if !options.include_context && line.kind == DiffSearchLineKind::Context {
+                continue;
+            }
+            searchable_lines.push(line.text.as_ref());
+            line_indices.push(line_index);
+        }
+
+        if searchable_lines.is_empty() {
+            return DiffSearchResults::default();
+        }
+
+        let min_score = fuzzy_min_score(query);
+        let mut total_matched = 0usize;
+        let mut top = BinaryHeap::with_capacity(options.limit.saturating_add(1));
+        for matched in neo_frizbee::match_list(query, &searchable_lines, &config) {
+            if matched.score < min_score {
+                continue;
+            }
+
+            let Some(line_index) = line_indices.get(matched.index as usize).copied() else {
                 continue;
             };
 
             total_matched = total_matched.saturating_add(1);
-            let ranked = RankedLine { score, line_index };
+            let ranked = RankedLine {
+                score: matched.score.into(),
+                line_index,
+            };
             if top.len() < options.limit {
                 top.push(Reverse(ranked));
             } else if let Some(worst) = top.peek()
@@ -269,7 +335,11 @@ impl DiffSearchIndex {
 
         let items = ranked
             .into_iter()
-            .map(|ranked| self.search_result(ranked, &pattern, matcher))
+            .filter_map(|ranked| {
+                let line = &self.lines[ranked.line_index];
+                let match_ranges = fuzzy_match_ranges(query, &line.text, &config)?;
+                Some(self.search_result_from_ranges(ranked.line_index, match_ranges, ranked.score))
+            })
             .collect();
 
         DiffSearchResults {
@@ -402,18 +472,13 @@ impl DiffSearchIndex {
         });
     }
 
-    fn search_result(
+    fn search_result_from_ranges(
         &self,
-        ranked: RankedLine,
-        pattern: &Pattern,
-        matcher: &mut DiffSearchMatcher,
+        line_index: usize,
+        match_ranges: Vec<Range<usize>>,
+        score: u32,
     ) -> DiffSearchResult {
-        let line = &self.lines[ranked.line_index];
-        matcher.indices.clear();
-        let haystack = Utf32Str::new(&line.text, &mut matcher.char_buf);
-        let _ = pattern.indices(haystack, &mut matcher.matcher, &mut matcher.indices);
-        matcher.indices.sort_unstable();
-        matcher.indices.dedup();
+        let line = &self.lines[line_index];
 
         DiffSearchResult {
             file_path: self.files[line.file_index].path.to_string(),
@@ -425,10 +490,10 @@ impl DiffSearchIndex {
             old_line: line.old_line,
             new_line: line.new_line,
             line: line.text.to_string(),
-            match_ranges: char_indices_to_byte_ranges(&line.text, &matcher.indices),
+            match_ranges,
             syntax_ranges: Vec::new(),
-            preview_lines: self.preview_lines_for(ranked.line_index),
-            score: ranked.score,
+            preview_lines: self.preview_lines_for(line_index),
+            score,
         }
     }
 
@@ -605,6 +670,277 @@ async fn index_from_diff_text(diff: String) -> color_eyre::Result<DiffSearchInde
         .wrap_err("diff search index parse task failed")?
 }
 
+fn normalize_search_query(query: &str, mode: DiffSearchMode) -> Option<(DiffSearchMode, &str)> {
+    let mut query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+
+    if let Some(stripped) = query.strip_prefix('\'') {
+        query = stripped.trim_start();
+        return (!query.is_empty()).then_some((DiffSearchMode::Literal, query));
+    }
+
+    Some((mode, query))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LiteralDiffSearchQuery {
+    tokens: Vec<LiteralDiffSearchToken>,
+    case_insensitive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LiteralDiffSearchToken {
+    bytes: Box<[u8]>,
+    use_packed_pair: bool,
+}
+
+impl LiteralDiffSearchQuery {
+    fn new(query: &str) -> Option<Self> {
+        let case_insensitive = uses_ascii_case_insensitive_literal_search(query);
+        let tokens = query
+            .split_whitespace()
+            .filter(|token| !token.is_empty())
+            .map(|token| {
+                let bytes = if case_insensitive {
+                    token.as_bytes().to_ascii_lowercase().into_boxed_slice()
+                } else {
+                    token.as_bytes().to_vec().into_boxed_slice()
+                };
+                let use_packed_pair = case_insensitive
+                    && case_insensitive_memmem::should_use_packed_pair_for_needle(&bytes);
+                LiteralDiffSearchToken {
+                    bytes,
+                    use_packed_pair,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        (!tokens.is_empty()).then_some(Self {
+            tokens,
+            case_insensitive,
+        })
+    }
+
+    fn is_match(&self, text: &str) -> bool {
+        self.tokens
+            .iter()
+            .all(|token| literal_token_matches(text.as_bytes(), token, self.case_insensitive))
+    }
+
+    fn match_ranges(&self, text: &str) -> Option<Vec<Range<usize>>> {
+        let haystack = text.as_bytes();
+        let mut ranges = Vec::new();
+        for token in &self.tokens {
+            if !literal_token_matches(haystack, token, self.case_insensitive) {
+                return None;
+            }
+
+            let mut start = 0usize;
+            let mut found = false;
+            while start < haystack.len() {
+                let Some(match_start) =
+                    find_literal_token_at(haystack, &token.bytes, self.case_insensitive, start)
+                else {
+                    break;
+                };
+
+                found = true;
+                ranges.push(match_start..match_start + token.bytes.len());
+                start = match_start.saturating_add(1);
+            }
+
+            if !found {
+                return None;
+            }
+        }
+
+        Some(normalize_literal_match_ranges(text, ranges))
+    }
+}
+
+fn literal_token_matches(
+    haystack: &[u8],
+    token: &LiteralDiffSearchToken,
+    case_insensitive: bool,
+) -> bool {
+    if case_insensitive {
+        if token.use_packed_pair && haystack.len() >= token.bytes.len().saturating_add(32) {
+            case_insensitive_memmem::search_packed_pair(haystack, &token.bytes)
+        } else {
+            ascii_case_insensitive_find(haystack, &token.bytes).is_some()
+        }
+    } else {
+        memchr::memmem::find(haystack, &token.bytes).is_some()
+    }
+}
+
+fn uses_ascii_case_insensitive_literal_search(query: &str) -> bool {
+    query.is_ascii() && !query.bytes().any(|byte| byte.is_ascii_uppercase())
+}
+
+fn find_literal_token_at(
+    haystack: &[u8],
+    needle: &[u8],
+    case_insensitive: bool,
+    start: usize,
+) -> Option<usize> {
+    if needle.is_empty() || start > haystack.len() {
+        return None;
+    }
+
+    let haystack = &haystack[start..];
+    let found = if case_insensitive {
+        ascii_case_insensitive_find(haystack, needle)
+    } else {
+        memchr::memmem::find(haystack, needle)
+    };
+    found.map(|position| start + position)
+}
+
+fn ascii_case_insensitive_find(haystack: &[u8], needle_lower: &[u8]) -> Option<usize> {
+    let needle_len = needle_lower.len();
+    if needle_len == 0 {
+        return Some(0);
+    }
+
+    if haystack.len() < needle_len {
+        return None;
+    }
+
+    let first_lower = needle_lower[0];
+    let first_upper = first_lower.to_ascii_uppercase();
+    let search_end = haystack.len() - needle_len;
+
+    if first_lower == first_upper {
+        for position in memchr::memchr_iter(first_lower, &haystack[..=search_end]) {
+            if ascii_case_eq(&haystack[position..position + needle_len], needle_lower) {
+                return Some(position);
+            }
+        }
+    } else {
+        for position in memchr::memchr2_iter(first_lower, first_upper, &haystack[..=search_end]) {
+            if ascii_case_eq(&haystack[position..position + needle_len], needle_lower) {
+                return Some(position);
+            }
+        }
+    }
+
+    None
+}
+
+fn ascii_case_eq(left: &[u8], right_lower: &[u8]) -> bool {
+    left.len() == right_lower.len()
+        && left
+            .iter()
+            .zip(right_lower)
+            .all(|(&left, &right)| left == right || left.eq_ignore_ascii_case(&right))
+}
+
+fn normalize_literal_match_ranges(text: &str, ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    let ranges = if text.is_ascii() {
+        ranges
+    } else {
+        expand_byte_ranges_to_grapheme_boundaries(text, ranges)
+    };
+    merge_byte_ranges(ranges)
+}
+
+fn expand_byte_ranges_to_grapheme_boundaries(
+    text: &str,
+    ranges: Vec<Range<usize>>,
+) -> Vec<Range<usize>> {
+    let clusters = text
+        .grapheme_indices(true)
+        .map(|(start, cluster)| start..start + cluster.len())
+        .collect::<Vec<_>>();
+    let mut expanded = Vec::with_capacity(ranges.len());
+
+    for range in ranges {
+        let start_index = clusters.partition_point(|cluster| cluster.end <= range.start);
+        let end_index = clusters.partition_point(|cluster| cluster.start < range.end);
+        if start_index >= end_index {
+            continue;
+        }
+        expanded.push(clusters[start_index].start..clusters[end_index - 1].end);
+    }
+
+    expanded
+}
+
+fn merge_byte_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    ranges.retain(|range| range.start < range.end);
+    ranges.sort_by(|left, right| {
+        left.start
+            .cmp(&right.start)
+            .then_with(|| left.end.cmp(&right.end))
+    });
+
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if let Some(last) = merged.last_mut()
+            && range.start <= last.end
+        {
+            last.end = last.end.max(range.end);
+            continue;
+        }
+        merged.push(range);
+    }
+    merged
+}
+
+fn literal_match_score(text: &str, ranges: &[Range<usize>]) -> u32 {
+    let matched_bytes = ranges
+        .iter()
+        .map(|range| range.end.saturating_sub(range.start))
+        .sum::<usize>();
+    let first_match = ranges.first().map_or(text.len(), |range| range.start);
+    matched_bytes
+        .saturating_mul(1_000)
+        .saturating_sub(first_match)
+        .saturating_sub(text.len() / 8)
+        .min(u32::MAX as usize) as u32
+}
+
+fn fuzzy_search_config(query: &str) -> neo_frizbee::Config {
+    let has_uppercase = query.bytes().any(|byte| byte.is_ascii_uppercase());
+    neo_frizbee::Config {
+        max_typos: Some((query.len() / 3).min(2) as u16),
+        sort: false,
+        scoring: neo_frizbee::Scoring {
+            exact_match_bonus: 100,
+            prefix_bonus: 0,
+            capitalization_bonus: if has_uppercase { 4 } else { 0 },
+            ..neo_frizbee::Scoring::default()
+        },
+        ..neo_frizbee::Config::default()
+    }
+}
+
+fn fuzzy_min_score(query: &str) -> u16 {
+    let perfect_score = query.len().saturating_mul(16).min(u16::MAX as usize) as u16;
+    perfect_score / 2
+}
+
+fn fuzzy_match_ranges(
+    query: &str,
+    text: &str,
+    config: &neo_frizbee::Config,
+) -> Option<Vec<Range<usize>>> {
+    let mut matched = neo_frizbee::match_list_indices(query, &[text], config)
+        .into_iter()
+        .next()?;
+    matched.indices.sort_unstable();
+    matched.indices.dedup();
+    let indices = matched
+        .indices
+        .into_iter()
+        .map(|index| index as u32)
+        .collect::<Vec<_>>();
+    Some(char_indices_to_byte_ranges(text, &indices))
+}
+
 fn char_indices_to_byte_ranges(text: &str, indices: &[u32]) -> Vec<Range<usize>> {
     if indices.is_empty() {
         return Vec::new();
@@ -760,6 +1096,71 @@ mod tests {
 
         assert_eq!(results.total_matched, 4);
         assert_eq!(results.items.len(), 2);
+    }
+
+    #[test]
+    fn literal_search_matches_space_separated_terms_across_separators() {
+        let results = search(
+            concat!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n",
+                "--- a/src/lib.rs\n",
+                "+++ b/src/lib.rs\n",
+                "@@ -0,0 +1,1 @@\n",
+                "+let render_status_line = true;\n",
+            ),
+            "render status line",
+        );
+
+        assert_eq!(results.total_matched, 1);
+        let line = &results.items[0].line;
+        let ranges = results.items[0]
+            .match_ranges
+            .iter()
+            .map(|range| &line[range.clone()])
+            .collect::<Vec<_>>();
+        assert_eq!(ranges, vec!["render", "status", "line"]);
+    }
+
+    #[test]
+    fn fuzzy_search_can_be_selected_with_options() {
+        let diff = concat!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n",
+            "--- a/src/lib.rs\n",
+            "+++ b/src/lib.rs\n",
+            "@@ -0,0 +1,1 @@\n",
+            "+fn dashboard_parser() {}\n",
+        );
+        let index = DiffSearchIndex::from_diff_text(diff).expect("diff should parse");
+        let mut matcher = DiffSearchMatcher;
+        let results = index.search(
+            "dashbord parser",
+            DiffSearchOptions {
+                mode: DiffSearchMode::Fuzzy,
+                ..DiffSearchOptions::default()
+            },
+            &mut matcher,
+        );
+
+        assert_eq!(results.total_matched, 1);
+        assert_eq!(results.items[0].new_line, Some(1));
+        assert!(!results.items[0].match_ranges.is_empty());
+    }
+
+    #[test]
+    fn literal_search_does_not_fall_back_to_fuzzy() {
+        let results = search(
+            concat!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n",
+                "--- a/src/lib.rs\n",
+                "+++ b/src/lib.rs\n",
+                "@@ -0,0 +1,1 @@\n",
+                "+fn dashboard_parser() {}\n",
+            ),
+            "dashbord parser",
+        );
+
+        assert_eq!(results.total_matched, 0);
+        assert!(results.items.is_empty());
     }
 
     #[test]

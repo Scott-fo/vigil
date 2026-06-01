@@ -61,6 +61,9 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.move_diff_search_selection(-1);
             }
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.toggle_diff_search_mode();
+            }
             KeyCode::Backspace => {
                 self.diff_search_query.pop();
                 self.queue_diff_search_results();
@@ -85,6 +88,7 @@ impl App {
         self.diff_search_query.clear();
         self.diff_search_results = Default::default();
         self.diff_search_selected_index = 0;
+        self.diff_search_mode = Default::default();
         self.cancel_diff_search_query_task();
         self.ensure_diff_search_index_load();
         self.refresh_diff_search_modal_status();
@@ -301,6 +305,7 @@ impl App {
         let request_id = self.diff_search_query_request_id;
         let sender = self.events.sender();
         let highlight_registry = self.highlight_registry.clone();
+        let mode = self.diff_search_mode;
         self.diff_search_loading = true;
 
         self.diff_search_query_task = Some(task::spawn(async move {
@@ -311,6 +316,8 @@ impl App {
                     DiffSearchOptions {
                         limit: DIFF_SEARCH_RESULT_LIMIT,
                         include_context: true,
+                        mode,
+                        ..DiffSearchOptions::default()
                     },
                     &mut matcher,
                 );
@@ -389,6 +396,13 @@ impl App {
             self.diff_search_results.items.len(),
             delta,
         );
+    }
+
+    fn toggle_diff_search_mode(&mut self) {
+        self.diff_search_mode = self.diff_search_mode.toggle();
+        self.diff_search_results = Default::default();
+        self.diff_search_selected_index = 0;
+        self.queue_diff_search_results();
     }
 }
 

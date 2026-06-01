@@ -1188,6 +1188,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "neo_frizbee"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "728e0731ad3a0083b9f72a82df72c298641ba970d4e308e0897ec4c89212c31d"
+dependencies = [
+ "itertools 0.14.0",
+ "raw-cpuid",
+]
+
+[[package]]
 name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1632,6 +1642,15 @@ dependencies = [
  "time",
  "unicode-segmentation",
  "unicode-width",
+]
+
+[[package]]
+name = "raw-cpuid"
+version = "11.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "498cd0dc59d73224351ee52a95fee0f1a617a2eae0e7d9d720cc622c73a54186"
+dependencies = [
+ "bitflags 2.11.0",
 ]
 
 [[package]]
@@ -2558,6 +2577,8 @@ dependencies = [
  "crossterm 0.28.1",
  "devicons",
  "futures",
+ "memchr",
+ "neo_frizbee",
  "notify",
  "nucleo-matcher",
  "ratatui",

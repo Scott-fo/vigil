@@ -39,8 +39,8 @@ use crate::{
     event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{
         self, BlameCommitDetails, BlameTarget, BranchCompareSelection, CommitCompareSelection,
-        CommitSearchEntry, DiffSearchIndex, DiffSearchResults, DiffSelectionPoint, DiffView,
-        FileEntry, ReviewDiffSnapshot, SharedHighlightRegistry, WorktreeEntry,
+        CommitSearchEntry, DiffSearchIndex, DiffSearchMode, DiffSearchResults, DiffSelectionPoint,
+        DiffView, FileEntry, ReviewDiffSnapshot, SharedHighlightRegistry, WorktreeEntry,
     },
     review::ReviewReport,
     sidebar::SidebarItem,
@@ -177,6 +177,7 @@ pub struct App {
     pub diff_search_error: Option<String>,
     pub diff_search_results: DiffSearchResults,
     pub diff_search_selected_index: usize,
+    pub diff_search_mode: DiffSearchMode,
     diff_search_index: Option<Arc<DiffSearchIndex>>,
     diff_search_index_error: Option<String>,
     diff_search_index_request_id: u64,

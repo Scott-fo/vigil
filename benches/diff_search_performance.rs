@@ -1,7 +1,7 @@
 use std::{hint::black_box, sync::LazyLock};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use vigil::git::{DiffSearchIndex, DiffSearchMatcher, DiffSearchOptions};
+use vigil::git::{DiffSearchIndex, DiffSearchMatcher, DiffSearchMode, DiffSearchOptions};
 
 const FILE_COUNT: usize = 1_000;
 const LINES_PER_FILE: usize = 1_000;
@@ -68,6 +68,7 @@ fn bench_diff_search(c: &mut Criterion) {
     let options = DiffSearchOptions {
         limit: SEARCH_LIMIT,
         include_context: true,
+        ..DiffSearchOptions::default()
     };
 
     group.bench_function("search_top_50_common_query", |b| {
@@ -82,6 +83,20 @@ fn bench_diff_search(c: &mut Criterion) {
         let mut matcher = DiffSearchMatcher::default();
         b.iter(|| {
             let results = index.search(black_box("target needle 997000"), options, &mut matcher);
+            black_box(results.items.len());
+        });
+    });
+
+    let fuzzy_options = DiffSearchOptions {
+        mode: DiffSearchMode::Fuzzy,
+        ..options
+    };
+
+    group.bench_function("search_top_50_fuzzy_query", |b| {
+        let mut matcher = DiffSearchMatcher::default();
+        b.iter(|| {
+            let results =
+                index.search(black_box("render status line"), fuzzy_options, &mut matcher);
             black_box(results.items.len());
         });
     });

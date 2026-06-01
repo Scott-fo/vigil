@@ -92,6 +92,7 @@ impl App {
             diff_search_error: None,
             diff_search_results: Default::default(),
             diff_search_selected_index: 0,
+            diff_search_mode: Default::default(),
             diff_search_index: None,
             diff_search_index_error: None,
             diff_search_index_request_id: 0,

@@ -71,7 +71,10 @@ pub(super) fn render_diff_search_modal(frame: &mut Frame, app: &App) {
 
     let footer = Paragraph::new(Text::from(vec![
         Line::from(Span::styled(
-            "j/k select. Enter jumps to line. Esc closes.",
+            format!(
+                "Tab toggles mode. {} search. j/k select. Enter jumps. Esc closes.",
+                app.diff_search_mode.label()
+            ),
             Style::new().fg(text_muted_color()),
         )),
         Line::from(Span::styled(
