@@ -340,6 +340,60 @@ async fn selected_diff_waits_for_inflight_whole_diff_without_stale_or_per_file_t
 }
 
 #[tokio::test]
+async fn commit_refresh_keeps_selected_diff_visible_while_whole_diff_streams() {
+    let mut app = build_test_app();
+    app.review_mode = ReviewMode::CommitCompare(CommitCompareSelection {
+        base_ref: "HEAD~1".to_string(),
+        commit_hash: "HEAD".to_string(),
+        short_hash: "abc123".to_string(),
+        subject: "test commit".to_string(),
+    });
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/file-0.rs".to_string(),
+        label: "file-0.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.pending_diff_cache_key = Some(app.diff_cache_key(&app.files[0]));
+    app.diff_view = build_diff_view(2);
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_none());
+    assert!(app.diff_view.has_diff_rows());
+    assert!(app.diff_view.note.is_none());
+    app.cancel_inflight_review_diff_snapshot();
+}
+
+#[test]
+fn text_index_loaded_recovers_selected_diff_from_existing_plain_cache() {
+    let mut app = build_test_app();
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/file-0.rs".to_string(),
+        label: "file-0.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    let cache_key = app.diff_cache_key(&app.files[0]);
+    app.pending_diff_cache_key = Some(cache_key.clone());
+    app.diff_view = DiffView::empty("");
+    app.diff_view_cache
+        .insert_plain(cache_key, build_diff_view(2));
+    app.review_diff_text_index = Some(Arc::new(build_review_text_index()));
+
+    assert!(app.load_selected_diff_from_review_text_index());
+    assert!(app.diff_view.has_diff_rows());
+    assert!(app.diff_view.note.is_none());
+}
+
+#[tokio::test]
 async fn streamed_current_file_wakes_blank_diff_while_snapshot_is_inflight() {
     let mut app = build_test_app();
     app.files = vec![FileEntry {

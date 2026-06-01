@@ -123,7 +123,6 @@ impl App {
         self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
         self.repo_loading = false;
         self.diff_view_cache.clear();
-        self.pending_diff_cache_key = None;
         self.diff_prefetch_direction = Default::default();
         self.diff_prefetch_anchor_file_index = None;
         self.files = files;

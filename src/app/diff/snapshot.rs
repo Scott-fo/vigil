@@ -163,10 +163,6 @@ impl App {
         }
 
         let cache_key = self.diff_cache_key(&selected_file);
-        if self.diff_view_cache.has_plain(&cache_key) {
-            return false;
-        }
-
         self.load_selected_diff_from_review_stream_cache(&selected_file, &cache_key)
     }
 

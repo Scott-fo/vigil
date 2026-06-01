@@ -361,6 +361,7 @@ impl App {
         show_loading: bool,
         reset_viewport: bool,
     ) {
+        let previously_pending_cache_key = self.pending_diff_cache_key.clone();
         self.update_diff_prefetch_direction();
         self.cancel_inflight_selected_diff_load();
         self.clear_diff_text_selection();
@@ -416,7 +417,15 @@ impl App {
             && self.review_diff_snapshot_task.is_some()
             && !file.status.contains('U')
         {
-            self.diff_view = DiffView::empty("");
+            let can_keep_current_review_diff = matches!(
+                self.review_mode,
+                ReviewMode::CommitCompare(_) | ReviewMode::BranchCompare(_)
+            ) && previously_pending_cache_key.as_ref()
+                == Some(&cache_key)
+                && self.diff_view.has_diff_rows();
+            if !can_keep_current_review_diff {
+                self.diff_view = DiffView::empty("");
+            }
             self.status_message = Some(self.current_status_message());
             return;
         }
@@ -548,6 +557,27 @@ impl App {
             return false;
         };
         let cache_key = self.diff_cache_key(&file);
+
+        if self.pending_diff_cache_key.as_ref() == Some(&cache_key) {
+            if let Some((diff_view, highlight_complete)) =
+                self.diff_view_cache.get_highlighted(&cache_key)
+            {
+                self.diff_view = diff_view;
+                self.apply_pending_diff_search_target();
+                self.diff_highlight_complete = highlight_complete;
+                self.status_message = Some(self.current_status_message());
+                return true;
+            }
+
+            if let Some(diff_view) = self.diff_view_cache.get_plain(&cache_key) {
+                self.diff_view = diff_view;
+                self.apply_pending_diff_search_target();
+                self.diff_highlight_complete =
+                    self.highlight_registry.is_none() || file.filetype.is_none();
+                self.status_message = Some(self.current_status_message());
+                return true;
+            }
+        }
 
         if self.diff_view_cache.get_highlighted(&cache_key).is_some()
             || self.diff_view_cache.get_plain(&cache_key).is_some()
