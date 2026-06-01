@@ -32,7 +32,7 @@ mod working_tree_actions;
 mod worktree;
 
 pub use self::diff::{DiffCacheKey, PreparedDiffViewport};
-use self::diff::{DiffHighlightJob, DiffViewCache, DiffViewport};
+use self::diff::{DiffHighlightJob, DiffPrefetchDirection, DiffViewCache, DiffViewport};
 use self::diff_search::DiffSearchNavigationTarget;
 pub use self::launch::AppLaunchOptions;
 use crate::{
@@ -138,6 +138,8 @@ pub struct App {
     diff_viewport: Option<DiffViewport>,
     background_tasks: Vec<task::JoinHandle<()>>,
     diff_prefetch_task: Option<task::JoinHandle<()>>,
+    diff_prefetch_direction: DiffPrefetchDirection,
+    diff_prefetch_anchor_file_index: Option<usize>,
     review_diff_snapshot: Option<Arc<ReviewDiffSnapshot>>,
     review_diff_snapshot_request_id: u64,
     review_diff_snapshot_task: Option<task::JoinHandle<()>>,

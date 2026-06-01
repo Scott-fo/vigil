@@ -4,6 +4,15 @@ use crate::git::DiffView;
 
 pub(crate) const DIFF_CACHE_CAPACITY: usize = 96;
 pub(crate) const DIFF_PREFETCH_DISTANCE: usize = 12;
+pub(crate) const DIFF_DIRECTIONAL_PREFETCH_DISTANCE: usize = 96;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiffPrefetchDirection {
+    #[default]
+    Neutral,
+    Forward,
+    Backward,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffCacheKey {

@@ -25,6 +25,8 @@ impl App {
         self.clear_review_diff_snapshot();
         self.diff_view_cache.clear();
         self.pending_diff_cache_key = None;
+        self.diff_prefetch_direction = Default::default();
+        self.diff_prefetch_anchor_file_index = None;
         self.rebuild_sidebar_items();
 
         self.selected_file_index = previously_selected

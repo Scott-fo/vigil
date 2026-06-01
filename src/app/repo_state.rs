@@ -123,6 +123,8 @@ impl App {
         self.repo_loading = false;
         self.diff_view_cache.clear();
         self.pending_diff_cache_key = None;
+        self.diff_prefetch_direction = Default::default();
+        self.diff_prefetch_anchor_file_index = None;
         self.files = files;
         self.rebuild_sidebar_items();
 
@@ -162,6 +164,8 @@ impl App {
         self.repo_watcher = None;
         self.repo_watcher_loading = false;
         self.files.clear();
+        self.diff_prefetch_direction = Default::default();
+        self.diff_prefetch_anchor_file_index = None;
         self.rebuild_sidebar_items();
         self.selected_file_index = 0;
         self.sync_sidebar_state();

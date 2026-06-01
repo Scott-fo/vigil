@@ -49,6 +49,17 @@ fn build_review_snapshot() -> git::ReviewDiffSnapshot {
     .expect("snapshot fixture should parse")
 }
 
+fn build_file_entries(count: usize) -> Vec<FileEntry> {
+    (0..count)
+        .map(|index| FileEntry {
+            status: "M ".to_string(),
+            path: format!("src/file-{index}.rs"),
+            label: format!("file-{index}.rs"),
+            filetype: Some("rust"),
+        })
+        .collect()
+}
+
 #[tokio::test]
 async fn registry_ready_does_not_restart_inflight_diff_load() {
     let mut app = build_test_app();
@@ -139,6 +150,55 @@ fn selected_diff_load_uses_review_snapshot_without_task() {
     assert!(app.diff_load_task.is_none());
     assert!(app.diff_view.note.is_none());
     assert_eq!(app.diff_view.estimated_display_line_count(), 2);
+}
+
+#[tokio::test]
+async fn selected_diff_load_keeps_current_view_while_uncached_file_loads() {
+    let mut app = build_test_app();
+    app.files = build_file_entries(2);
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.diff_view = build_diff_view(3);
+    app.selected_file_index = 1;
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_some());
+    assert!(app.diff_view.note.is_none());
+    assert!(app.diff_view.has_diff_rows());
+
+    app.cancel_inflight_diff_load();
+}
+
+#[test]
+fn directional_prefetch_prioritizes_movement_direction() {
+    let mut app = build_test_app();
+    app.files = build_file_entries(140);
+    app.rebuild_sidebar_items();
+    app.selected_file_index = 10;
+    app.sync_sidebar_state();
+    app.review_diff_snapshot = Some(Arc::new(git::ReviewDiffSnapshot::default()));
+    app.diff_prefetch_direction = DiffPrefetchDirection::Forward;
+
+    let visible_paths = app.visible_file_paths();
+    let selected_visible_index = app
+        .selected_visible_file_index()
+        .expect("selected file should be visible");
+    let prefetch_files = app.diff_prefetch_files(selected_visible_index, &visible_paths);
+
+    assert_eq!(prefetch_files[0].1.path, "src/file-11.rs");
+    assert_eq!(prefetch_files[1].1.path, "src/file-12.rs");
+    assert!(
+        prefetch_files
+            .iter()
+            .take(DIFF_DIRECTIONAL_PREFETCH_DISTANCE)
+            .all(|(_, file, _)| file.path != "src/file-9.rs")
+    );
+    assert!(
+        prefetch_files
+            .iter()
+            .any(|(_, file, _)| file.path == "src/file-9.rs")
+    );
 }
 
 #[tokio::test]

@@ -61,6 +61,10 @@ impl DiffView {
             display_cache: DiffDisplayCache::default(),
         }
     }
+
+    pub fn has_diff_rows(&self) -> bool {
+        !self.rows.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -53,6 +53,8 @@ impl App {
             diff_viewport: None::<DiffViewport>,
             background_tasks: Vec::new(),
             diff_prefetch_task: None,
+            diff_prefetch_direction: Default::default(),
+            diff_prefetch_anchor_file_index: None,
             review_diff_snapshot: None,
             review_diff_snapshot_request_id: 0,
             review_diff_snapshot_task: None,

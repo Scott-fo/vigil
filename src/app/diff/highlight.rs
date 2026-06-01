@@ -80,6 +80,10 @@ impl App {
             return;
         }
 
+        if self.active_pane == ActivePane::Sidebar {
+            return;
+        }
+
         let full_inflight = matches!(
             self.diff_highlight_job.as_ref(),
             Some(DiffHighlightJob {

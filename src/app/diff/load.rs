@@ -1,8 +1,11 @@
-use std::collections::HashSet;
+use std::{cmp::Ordering, collections::HashSet, sync::Arc};
 
 use tokio::task;
 
 use super::*;
+
+const SNAPSHOT_SYNC_BUILD_LINE_LIMIT: usize = 2_000;
+const DIFF_SNAPSHOT_PREFETCH_CONCURRENCY: usize = 4;
 
 impl App {
     pub(super) fn build_diff_cache_key(review_mode: &ReviewMode, file: &FileEntry) -> DiffCacheKey {
@@ -26,6 +29,19 @@ impl App {
 
     pub(in crate::app) fn diff_cache_key(&self, file: &FileEntry) -> DiffCacheKey {
         Self::build_diff_cache_key(&self.review_mode, file)
+    }
+
+    fn update_diff_prefetch_direction(&mut self) {
+        let current_index = self.selected_file_index;
+        self.diff_prefetch_direction = match self.diff_prefetch_anchor_file_index {
+            Some(previous_index) => match current_index.cmp(&previous_index) {
+                Ordering::Greater => DiffPrefetchDirection::Forward,
+                Ordering::Less => DiffPrefetchDirection::Backward,
+                Ordering::Equal => self.diff_prefetch_direction,
+            },
+            None => DiffPrefetchDirection::Neutral,
+        };
+        self.diff_prefetch_anchor_file_index = Some(current_index);
     }
 
     pub(in crate::app) fn spawn_diff_prefetch(&mut self) {
@@ -54,6 +70,7 @@ impl App {
         let sender = self.events.sender();
 
         self.diff_prefetch_task = Some(task::spawn(async move {
+            let mut snapshot_jobs = task::JoinSet::new();
             for (cache_key, file, should_prefetch_highlight) in prefetch_files {
                 if let Some(snapshot) = review_diff_snapshot
                     .as_ref()
@@ -61,39 +78,19 @@ impl App {
                     .cloned()
                 {
                     let registry = highlight_registry.clone();
-                    let build_file = file.clone();
-                    let build_result = task::spawn_blocking(move || {
-                        let plain = snapshot
-                            .build_diff_view(&build_file)
-                            .ok_or_else(|| color_eyre::eyre::eyre!("missing snapshot file"))?;
-                        let highlighted = if should_prefetch_highlight {
-                            registry.map(|registry| {
-                                let mut highlighted = plain.clone();
-                                highlighted.apply_syntax_highlighting(
-                                    build_file.filetype,
-                                    registry.as_ref(),
-                                );
-                                highlighted
-                            })
-                        } else {
-                            None
-                        };
-                        Ok::<_, color_eyre::Report>((plain, highlighted))
-                    })
-                    .await;
-
-                    let Ok(Ok((plain_view, highlighted_view))) = build_result else {
-                        continue;
-                    };
-                    let highlight_complete = highlighted_view.is_some();
-
-                    let _ = sender.send(Event::DiffPrefetched(Box::new(DiffPrefetchedEvent {
-                        generation,
-                        key: cache_key,
-                        plain: plain_view,
-                        highlighted: highlighted_view,
-                        highlight_complete,
-                    })));
+                    snapshot_jobs.spawn_blocking(move || {
+                        build_snapshot_prefetch_event(
+                            generation,
+                            cache_key,
+                            file,
+                            should_prefetch_highlight,
+                            snapshot,
+                            registry,
+                        )
+                    });
+                    if snapshot_jobs.len() >= DIFF_SNAPSHOT_PREFETCH_CONCURRENCY {
+                        send_next_snapshot_prefetch(&mut snapshot_jobs, &sender).await;
+                    }
                     continue;
                 }
 
@@ -161,6 +158,7 @@ impl App {
                     highlight_complete,
                 })));
             }
+            drain_snapshot_prefetches(&mut snapshot_jobs, &sender).await;
         }));
     }
 
@@ -170,7 +168,7 @@ impl App {
         }
     }
 
-    fn diff_prefetch_files(
+    pub(in crate::app) fn diff_prefetch_files(
         &self,
         selected_visible_index: usize,
         visible_paths: &[String],
@@ -179,29 +177,72 @@ impl App {
         let mut seen_paths = HashSet::new();
         let mut prefetch_files = Vec::new();
 
-        for distance in 1..=DIFF_PREFETCH_DISTANCE {
-            if let Some(path) = selected_visible_index
-                .checked_add(distance)
-                .and_then(|candidate_index| visible_paths.get(candidate_index))
-            {
-                self.push_diff_prefetch_file(
-                    path,
+        let directional_distance = if self.review_diff_snapshot.is_some() {
+            DIFF_DIRECTIONAL_PREFETCH_DISTANCE
+        } else {
+            DIFF_PREFETCH_DISTANCE
+        };
+
+        match self.diff_prefetch_direction {
+            DiffPrefetchDirection::Forward => {
+                self.push_diff_prefetch_range(
+                    selected_visible_index,
+                    visible_paths,
+                    1,
+                    directional_distance,
+                    selected_path,
+                    &mut seen_paths,
+                    &mut prefetch_files,
+                );
+                self.push_diff_prefetch_range(
+                    selected_visible_index,
+                    visible_paths,
+                    -1,
+                    DIFF_PREFETCH_DISTANCE,
                     selected_path,
                     &mut seen_paths,
                     &mut prefetch_files,
                 );
             }
-
-            if let Some(path) = selected_visible_index
-                .checked_sub(distance)
-                .and_then(|candidate_index| visible_paths.get(candidate_index))
-            {
-                self.push_diff_prefetch_file(
-                    path,
+            DiffPrefetchDirection::Backward => {
+                self.push_diff_prefetch_range(
+                    selected_visible_index,
+                    visible_paths,
+                    -1,
+                    directional_distance,
                     selected_path,
                     &mut seen_paths,
                     &mut prefetch_files,
                 );
+                self.push_diff_prefetch_range(
+                    selected_visible_index,
+                    visible_paths,
+                    1,
+                    DIFF_PREFETCH_DISTANCE,
+                    selected_path,
+                    &mut seen_paths,
+                    &mut prefetch_files,
+                );
+            }
+            DiffPrefetchDirection::Neutral => {
+                for distance in 1..=DIFF_PREFETCH_DISTANCE {
+                    self.push_diff_prefetch_offset(
+                        selected_visible_index,
+                        visible_paths,
+                        distance as isize,
+                        selected_path,
+                        &mut seen_paths,
+                        &mut prefetch_files,
+                    );
+                    self.push_diff_prefetch_offset(
+                        selected_visible_index,
+                        visible_paths,
+                        -(distance as isize),
+                        selected_path,
+                        &mut seen_paths,
+                        &mut prefetch_files,
+                    );
+                }
             }
         }
 
@@ -231,6 +272,46 @@ impl App {
         prefetch_files
     }
 
+    fn push_diff_prefetch_range(
+        &self,
+        selected_visible_index: usize,
+        visible_paths: &[String],
+        direction: isize,
+        distance: usize,
+        selected_path: Option<&str>,
+        seen_paths: &mut HashSet<String>,
+        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry, bool)>,
+    ) {
+        for offset in 1..=distance {
+            self.push_diff_prefetch_offset(
+                selected_visible_index,
+                visible_paths,
+                direction * offset as isize,
+                selected_path,
+                seen_paths,
+                prefetch_files,
+            );
+        }
+    }
+
+    fn push_diff_prefetch_offset(
+        &self,
+        selected_visible_index: usize,
+        visible_paths: &[String],
+        offset: isize,
+        selected_path: Option<&str>,
+        seen_paths: &mut HashSet<String>,
+        prefetch_files: &mut Vec<(DiffCacheKey, FileEntry, bool)>,
+    ) {
+        let Some(candidate_index) = selected_visible_index.checked_add_signed(offset) else {
+            return;
+        };
+        let Some(path) = visible_paths.get(candidate_index) else {
+            return;
+        };
+        self.push_diff_prefetch_file(path, selected_path, seen_paths, prefetch_files);
+    }
+
     fn push_diff_prefetch_file(
         &self,
         path: &str,
@@ -256,7 +337,8 @@ impl App {
             return;
         }
 
-        let should_prefetch_highlight = has_plain && needs_highlight;
+        let should_prefetch_highlight =
+            has_plain && needs_highlight && prefetch_files.len() < DIFF_PREFETCH_DISTANCE;
         prefetch_files.push((cache_key, file, should_prefetch_highlight));
     }
 
@@ -265,7 +347,8 @@ impl App {
         show_loading: bool,
         reset_viewport: bool,
     ) {
-        self.cancel_inflight_diff_load();
+        self.update_diff_prefetch_direction();
+        self.cancel_inflight_selected_diff_load();
         self.clear_diff_text_selection();
         self.diff_request_id = self.diff_request_id.saturating_add(1);
         let request_id = self.diff_request_id;
@@ -288,6 +371,7 @@ impl App {
             self.diff_view_cache.get_highlighted(&cache_key)
         {
             self.diff_view = diff_view;
+            self.apply_pending_diff_search_target();
             self.diff_highlight_complete = highlight_complete;
             self.status_message = Some(self.current_status_message());
             self.spawn_diff_prefetch();
@@ -296,23 +380,22 @@ impl App {
 
         if let Some(plain_diff_view) = self.diff_view_cache.get_plain(&cache_key) {
             self.diff_view = plain_diff_view;
+            self.apply_pending_diff_search_target();
             self.status_message = Some(self.current_status_message());
             self.spawn_diff_prefetch();
             return;
         }
 
-        if let Some(diff_view) = self.build_diff_view_from_review_snapshot(&file) {
-            self.diff_view_cache
-                .insert_plain(cache_key.clone(), diff_view.clone());
-            self.diff_view = diff_view;
-            self.diff_highlight_complete =
-                self.highlight_registry.is_none() || file.filetype.is_none();
-            self.status_message = Some(self.current_status_message());
-            self.spawn_diff_prefetch();
+        if self.queue_selected_diff_from_review_snapshot(
+            request_id,
+            &file,
+            &cache_key,
+            show_loading,
+        ) {
             return;
         }
 
-        if show_loading {
+        if show_loading && !self.diff_view.has_diff_rows() {
             self.diff_view = DiffView::empty("Loading diff...");
         }
 
@@ -374,13 +457,130 @@ impl App {
         }));
     }
 
+    fn queue_selected_diff_from_review_snapshot(
+        &mut self,
+        request_id: u64,
+        file: &FileEntry,
+        cache_key: &DiffCacheKey,
+        show_loading: bool,
+    ) -> bool {
+        let Some(snapshot) = self
+            .review_diff_snapshot
+            .as_ref()
+            .filter(|snapshot| snapshot.contains_file(&file.path))
+            .cloned()
+        else {
+            return false;
+        };
+
+        let line_count = snapshot
+            .metrics_for_file(&file.path)
+            .map(|metrics| metrics.unified_line_count.max(metrics.split_line_count))
+            .unwrap_or_default();
+
+        if line_count <= SNAPSHOT_SYNC_BUILD_LINE_LIMIT {
+            let Some(diff_view) = snapshot.build_diff_view(file) else {
+                return false;
+            };
+            self.diff_view_cache
+                .insert_plain(cache_key.clone(), diff_view.clone());
+            self.diff_view = diff_view;
+            self.apply_pending_diff_search_target();
+            self.diff_highlight_complete =
+                self.highlight_registry.is_none() || file.filetype.is_none();
+            self.status_message = Some(self.current_status_message());
+            self.spawn_diff_prefetch();
+            return true;
+        }
+
+        if show_loading && !self.diff_view.has_diff_rows() {
+            self.diff_view = DiffView::empty("Loading diff...");
+        }
+
+        let sender = self.events.sender();
+        let build_file = file.clone();
+        self.diff_load_task = Some(task::spawn(async move {
+            let result = build_diff_view_from_snapshot(snapshot, build_file).await;
+            let _ = sender.send(Event::DiffLoaded { request_id, result });
+        }));
+        true
+    }
+
     pub(in crate::app) fn cancel_inflight_diff_load(&mut self) {
+        self.cancel_inflight_selected_diff_load();
+        self.cancel_inflight_diff_prefetch();
+    }
+
+    fn cancel_inflight_selected_diff_load(&mut self) {
         if let Some(task) = self.diff_load_task.take() {
             task.abort();
         }
         self.cancel_inflight_diff_highlight();
-        self.cancel_inflight_diff_prefetch();
         self.pending_diff_cache_key = None;
         self.diff_highlight_complete = false;
+    }
+}
+
+async fn build_diff_view_from_snapshot(
+    snapshot: Arc<git::ReviewDiffSnapshot>,
+    file: FileEntry,
+) -> Result<DiffView, String> {
+    task::spawn_blocking(move || {
+        snapshot
+            .build_diff_view(&file)
+            .ok_or_else(|| format!("missing diff snapshot for {}", file.path))
+    })
+    .await
+    .unwrap_or_else(|error| Err(error.to_string()))
+}
+
+fn build_snapshot_prefetch_event(
+    generation: u64,
+    key: DiffCacheKey,
+    file: FileEntry,
+    should_prefetch_highlight: bool,
+    snapshot: Arc<git::ReviewDiffSnapshot>,
+    registry: Option<SharedHighlightRegistry>,
+) -> Option<DiffPrefetchedEvent> {
+    let plain = snapshot.build_diff_view(&file)?;
+    let highlighted = if should_prefetch_highlight {
+        registry.map(|registry| {
+            let mut highlighted = plain.clone();
+            highlighted.apply_syntax_highlighting(file.filetype, registry.as_ref());
+            highlighted
+        })
+    } else {
+        None
+    };
+    let highlight_complete = highlighted.is_some();
+
+    Some(DiffPrefetchedEvent {
+        generation,
+        key,
+        plain,
+        highlighted,
+        highlight_complete,
+    })
+}
+
+async fn send_next_snapshot_prefetch(
+    jobs: &mut task::JoinSet<Option<DiffPrefetchedEvent>>,
+    sender: &tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let Some(joined) = jobs.join_next().await else {
+        return;
+    };
+    let Ok(Some(prefetched)) = joined else {
+        return;
+    };
+    let _ = sender.send(Event::DiffPrefetched(Box::new(prefetched)));
+}
+
+async fn drain_snapshot_prefetches(
+    jobs: &mut task::JoinSet<Option<DiffPrefetchedEvent>>,
+    sender: &tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    while !jobs.is_empty() {
+        send_next_snapshot_prefetch(jobs, sender).await;
     }
 }
