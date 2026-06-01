@@ -174,6 +174,16 @@ impl DiffSearchIndex {
         index
     }
 
+    pub(super) fn from_file_metadata<'a>(
+        files: impl IntoIterator<Item = &'a FileDiffMetadata>,
+    ) -> Self {
+        let mut index = Self::default();
+        for file in files {
+            index.push_file(file);
+        }
+        index
+    }
+
     pub fn append_preview_data(&mut self, preview: &DiffPreviewData) -> color_eyre::Result<()> {
         if let Some(merge_conflict) = &preview.merge_conflict {
             self.push_file(&merge_conflict.file_diff);

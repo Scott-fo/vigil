@@ -50,8 +50,8 @@ pub(super) fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
 fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let diff_focused = app.active_pane == ActivePane::Diff;
     let mode = app.diff_view_mode;
-    if !diff_focused && app.diff_text_selection.is_none() && app.review_report.is_none() {
-        render_diff_body_windowed(frame, app, area, mode);
+    if app.diff_text_selection.is_none() && app.review_report.is_none() {
+        render_diff_body_windowed(frame, app, area, mode, diff_focused);
         return;
     }
 
@@ -97,6 +97,7 @@ fn render_diff_body_windowed(
     app: &mut App,
     area: Rect,
     mode: crate::app::DiffViewMode,
+    diff_focused: bool,
 ) {
     if area.width == 0 || area.height == 0 {
         let paragraph = Paragraph::new(Text::default())
@@ -110,14 +111,35 @@ fn render_diff_body_windowed(
     let height = area.height as usize;
     let estimated_line_count = app.diff_view.estimated_display_line_count();
     let max_start = estimated_line_count.saturating_sub(height);
+    let selected_index = app
+        .selected_diff_line_index
+        .min(estimated_line_count.saturating_sub(1));
+    if diff_focused && selected_index < app.diff_scroll as usize {
+        app.diff_scroll = selected_index.min(u16::MAX as usize) as u16;
+    } else if diff_focused {
+        let visible_end = (app.diff_scroll as usize).saturating_add(height);
+        if selected_index >= visible_end {
+            app.diff_scroll = selected_index
+                .saturating_add(1)
+                .saturating_sub(height)
+                .min(u16::MAX as usize) as u16;
+        }
+    }
+
     let visual_start = (app.diff_scroll as usize).min(max_start);
     let visual_end = visual_start.saturating_add(height);
     app.diff_scroll = visual_start.min(u16::MAX as usize) as u16;
     app.update_diff_viewport(mode, width, visual_start, visual_end);
 
-    let visible_lines = app
-        .diff_view
-        .rendered_lines_window(mode, width, visual_start, visual_end);
+    let mut visible_lines =
+        app.diff_view
+            .rendered_lines_window(mode, width, visual_start, visual_end);
+    if diff_focused && selected_index >= visual_start && selected_index < visual_end {
+        let offset = selected_index - visual_start;
+        if let Some(line) = visible_lines.get_mut(offset) {
+            *line = highlight_line(line);
+        }
+    }
     let paragraph = Paragraph::new(Text::from(visible_lines))
         .style(Style::new().fg(text_color()).bg(panel_color()))
         .scroll((0, 0));

@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use ratatui::text::{Line, Span};
 
+use crate::git::FileEntry;
+
 use super::super::highlight::HighlightRegistry;
 use super::full_file::{FullDiffOp, compute_full_diff_ops, split_file_contents_owned};
 use super::preview::create_untracked_file_diff;
@@ -267,6 +269,54 @@ index 1111111..2222222 100644
             },
         ]
     );
+}
+
+#[test]
+fn review_diff_snapshot_builds_views_metrics_and_search_index_from_parsed_metadata() {
+    let diff = concat!(
+        "diff --git a/src/a.rs b/src/a.rs\n",
+        "--- a/src/a.rs\n",
+        "+++ b/src/a.rs\n",
+        "@@ -1,2 +1,3 @@\n",
+        " fn keep() {}\n",
+        "-fn old() {}\n",
+        "+fn new() {}\n",
+        "+fn extra() {}\n",
+        "diff --git a/src/b.rs b/src/b.rs\n",
+        "--- a/src/b.rs\n",
+        "+++ b/src/b.rs\n",
+        "@@ -1,1 +1,1 @@\n",
+        "-let before = 1;\n",
+        "+let after = 2;\n",
+    );
+    let snapshot = ReviewDiffSnapshot::from_diff_text(diff, Some("snapshot"))
+        .expect("snapshot diff should parse");
+
+    assert_eq!(snapshot.file_count(), 2);
+    assert_eq!(snapshot.line_count(), 6);
+    assert_eq!(
+        snapshot.metrics_for_file("src/a.rs"),
+        Some(DiffFileMetrics {
+            split_line_count: 3,
+            unified_line_count: 4,
+            new_side_line_count: 3,
+            old_side_line_count: 2,
+        })
+    );
+
+    let view = snapshot
+        .build_diff_view(&FileEntry {
+            status: "M ".to_string(),
+            path: "src/a.rs".to_string(),
+            label: "a.rs".to_string(),
+            filetype: Some("rust"),
+        })
+        .expect("snapshot should build a file view");
+    assert_eq!(view.estimated_display_line_count(), 4);
+
+    let index = snapshot.build_search_index();
+    assert_eq!(index.file_count(), 2);
+    assert_eq!(index.line_count(), 6);
 }
 
 #[test]

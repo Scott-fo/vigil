@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
-use crate::event::DiffPrefetchedEvent;
+use crate::event::{DiffPrefetchedEvent, Event};
 use crate::review::{
     ReviewFinding, ReviewFindingState, ReviewReport, ReviewSeverity, ReviewSide, ReviewSummary,
     ReviewVerdict,
@@ -32,6 +32,21 @@ fn build_diff_view(line_count: usize) -> DiffView {
         diff.push_str(&format!("+fn line_{index}() {{}}\n"));
     }
     git::build_diff_view_from_diff_text(&diff, Some("rust"))
+}
+
+fn build_review_snapshot() -> git::ReviewDiffSnapshot {
+    git::ReviewDiffSnapshot::from_diff_text(
+        concat!(
+            "diff --git a/src/file-0.rs b/src/file-0.rs\n",
+            "--- a/src/file-0.rs\n",
+            "+++ b/src/file-0.rs\n",
+            "@@ -1,1 +1,2 @@\n",
+            " fn existing() {}\n",
+            "+fn from_snapshot() {}\n",
+        ),
+        Some("test-snapshot"),
+    )
+    .expect("snapshot fixture should parse")
 }
 
 #[tokio::test]
@@ -102,6 +117,72 @@ async fn prefetched_current_diff_replaces_loading_view() {
     assert!(changed);
     assert!(app.diff_load_task.is_none());
     assert!(app.diff_view.note.is_none());
+}
+
+#[test]
+fn selected_diff_load_uses_review_snapshot_without_task() {
+    let mut app = build_test_app();
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/file-0.rs".to_string(),
+        label: "file-0.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.review_diff_snapshot = Some(Arc::new(
+        build_review_snapshot().with_generation(app.diff_cache_generation),
+    ));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_none());
+    assert!(app.diff_view.note.is_none());
+    assert_eq!(app.diff_view.estimated_display_line_count(), 2);
+}
+
+#[tokio::test]
+async fn diff_search_index_builds_from_review_snapshot() {
+    let mut app = build_test_app();
+    app.review_diff_snapshot = Some(Arc::new(
+        build_review_snapshot().with_generation(app.diff_cache_generation),
+    ));
+
+    app.queue_diff_search_index_load();
+    let request_id = app.diff_search_index_request_id;
+    let event = app
+        .events
+        .next()
+        .await
+        .expect("search index event should be emitted");
+
+    let Event::DiffSearchIndexLoaded {
+        request_id: event_request_id,
+        result,
+    } = event
+    else {
+        panic!("expected diff search index event");
+    };
+    assert_eq!(event_request_id, request_id);
+    let index = result.expect("snapshot should produce a search index");
+    assert_eq!(index.file_count(), 1);
+    assert_eq!(index.line_count(), 2);
+}
+
+#[tokio::test]
+async fn diff_search_modal_waits_for_inflight_review_snapshot() {
+    let mut app = build_test_app();
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    app.open_diff_search_modal();
+
+    assert!(app.diff_search_modal_open);
+    assert!(app.diff_search_loading);
+    assert!(app.diff_search_load_task.is_none());
+
+    app.cancel_inflight_review_diff_snapshot();
 }
 
 #[test]

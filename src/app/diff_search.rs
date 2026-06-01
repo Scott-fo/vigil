@@ -115,6 +115,13 @@ impl App {
             self.diff_search_loading = true;
             self.diff_search_error = None;
         }
+        if self.spawn_diff_search_index_load_from_review_snapshot() {
+            return;
+        }
+        if self.review_diff_snapshot_task.is_some() {
+            self.diff_search_index_request_id = self.diff_search_index_request_id.saturating_add(1);
+            return;
+        }
         self.spawn_diff_search_index_load();
     }
 
@@ -242,6 +249,27 @@ impl App {
         }));
     }
 
+    fn spawn_diff_search_index_load_from_review_snapshot(&mut self) -> bool {
+        let Some(snapshot) = self.review_diff_snapshot.clone() else {
+            return false;
+        };
+        if snapshot.generation() != self.diff_cache_generation {
+            return false;
+        }
+
+        self.diff_search_index_request_id = self.diff_search_index_request_id.saturating_add(1);
+        let request_id = self.diff_search_index_request_id;
+        let sender = self.events.sender();
+        self.diff_search_load_task = Some(task::spawn(async move {
+            let result =
+                task::spawn_blocking(move || Ok::<_, String>(snapshot.build_search_index()))
+                    .await
+                    .unwrap_or_else(|error| Err(error.to_string()));
+            let _ = sender.send(Event::DiffSearchIndexLoaded { request_id, result });
+        }));
+        true
+    }
+
     fn queue_diff_search_results(&mut self) {
         self.cancel_diff_search_query_task();
 
@@ -309,7 +337,11 @@ impl App {
     }
 
     fn refresh_diff_search_modal_status(&mut self) {
-        if self.diff_search_load_task.is_some() {
+        if self.diff_search_load_task.is_some()
+            || (self.diff_search_index.is_none()
+                && self.diff_search_index_error.is_none()
+                && self.review_diff_snapshot_task.is_some())
+        {
             self.diff_search_loading = true;
             self.diff_search_error = None;
             return;

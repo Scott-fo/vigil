@@ -83,9 +83,9 @@ per-hunk unified line offsets while assembling marker rows.
 # Multi-Diff Loading Benchmarks
 
 `multi_diff_loading` measures a synthetic 300-file review scope with 96,000
-diff lines. It separates the cost of parsing the whole patch, building per-file
-`DiffView`s from already-parsed metadata, and the current per-file diff-text
-view path.
+diff lines. It separates the cost of parsing the whole patch, building a review
+snapshot, building per-file `DiffView`s from already-parsed metadata, deriving
+the search index from that snapshot, and the older per-file diff-text view path.
 
 ## Latest local multi-diff results
 
@@ -94,18 +94,22 @@ Measured against a 5,614,690-byte generated patch:
 | Case | Implementation | Mean | Throughput |
 | --- | --- | ---: | ---: |
 | parse multi-file patch | Pierre `parsePatchFiles` | 15.727 ms | 340.46 MiB/s |
-| parse multi-file patch | Rust `parse_patch_files` | 7.820 ms | 684.73 MiB/s |
-| build per-file views from parsed metadata | Rust `build_diff_view_from_file_metadata` | 55.478 ms | 96.52 MiB/s |
-| build per-file views from file diff text | Rust `build_diff_view_from_diff_text` | 63.583 ms | 84.21 MiB/s |
-| parse once, then build per-file views | Rust | 61.386 ms | 87.23 MiB/s |
-| build one combined view from whole patch text | Rust | 66.709 ms | 80.27 MiB/s |
+| parse multi-file patch | Rust `parse_patch_files` | 7.563 ms | 708.00 MiB/s |
+| build review snapshot from whole patch | Rust `ReviewDiffSnapshot` | 7.510 ms | 712.99 MiB/s |
+| build per-file views from parsed metadata | Rust `build_diff_view_from_file_metadata` | 54.921 ms | 97.50 MiB/s |
+| build per-file views from review snapshot lookup | Rust `ReviewDiffSnapshot::build_diff_view` | 54.366 ms | 98.49 MiB/s |
+| build search index from review snapshot | Rust `ReviewDiffSnapshot::build_search_index` | 2.415 ms | 2.17 GiB/s |
+| build per-file views from file diff text | Rust `build_diff_view_from_diff_text` | 61.456 ms | 87.13 MiB/s |
+| parse once, then build per-file views | Rust | 62.163 ms | 86.14 MiB/s |
+| build one combined view from whole patch text | Rust | 67.060 ms | 79.85 MiB/s |
 | estimate heights for all parsed files | Pierre `computeEstimatedDiffHeights` | 0.008 ms | 681504.81 MiB/s |
 
 Pierre's height estimate is intentionally not a direct rendering comparison:
 it is the fast layout pass that lets Pierre virtualize and defer heavier row
-work. The comparable direction for Vigil is to parse once per review snapshot,
-store file metadata, and build only the selected/nearby `DiffView`s from that
-metadata.
+work. Vigil now follows the same broad shape for review-scope loading: parse
+once per review snapshot, store file metadata and cheap metrics, derive the
+search index from that metadata, and build only the selected/nearby `DiffView`s
+from the snapshot.
 
 # Diff Search Benchmarks
 

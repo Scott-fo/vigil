@@ -118,6 +118,7 @@ impl App {
         files: Vec<git::FileEntry>,
     ) {
         self.invalidate_review_snapshot();
+        self.clear_review_diff_snapshot();
         self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
         self.repo_loading = false;
         self.diff_view_cache.clear();
@@ -133,6 +134,7 @@ impl App {
 
         self.sync_sidebar_state();
         self.spawn_highlight_registry_init();
+        self.queue_review_diff_snapshot_load();
         self.queue_diff_search_index_load();
         self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
@@ -154,6 +156,7 @@ impl App {
 
     fn enter_repo_error_state(&mut self, error: String) -> color_eyre::Result<()> {
         self.invalidate_review_snapshot();
+        self.clear_review_diff_snapshot();
         self.repo_error = Some(error);
         self.repo_loading = false;
         self.repo_watcher = None;

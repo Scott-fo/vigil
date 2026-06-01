@@ -24,7 +24,7 @@ impl App {
         }
     }
 
-    fn diff_cache_key(&self, file: &FileEntry) -> DiffCacheKey {
+    pub(in crate::app) fn diff_cache_key(&self, file: &FileEntry) -> DiffCacheKey {
         Self::build_diff_cache_key(&self.review_mode, file)
     }
 
@@ -48,12 +48,55 @@ impl App {
 
         let generation = self.diff_cache_generation;
         let review_mode = self.review_mode.clone();
+        let review_diff_snapshot = self.review_diff_snapshot.clone();
         let repo_root = self.repo_root.clone();
         let highlight_registry = self.highlight_registry.clone();
         let sender = self.events.sender();
 
         self.diff_prefetch_task = Some(task::spawn(async move {
             for (cache_key, file, should_prefetch_highlight) in prefetch_files {
+                if let Some(snapshot) = review_diff_snapshot
+                    .as_ref()
+                    .filter(|snapshot| snapshot.contains_file(&file.path))
+                    .cloned()
+                {
+                    let registry = highlight_registry.clone();
+                    let build_file = file.clone();
+                    let build_result = task::spawn_blocking(move || {
+                        let plain = snapshot
+                            .build_diff_view(&build_file)
+                            .ok_or_else(|| color_eyre::eyre::eyre!("missing snapshot file"))?;
+                        let highlighted = if should_prefetch_highlight {
+                            registry.map(|registry| {
+                                let mut highlighted = plain.clone();
+                                highlighted.apply_syntax_highlighting(
+                                    build_file.filetype,
+                                    registry.as_ref(),
+                                );
+                                highlighted
+                            })
+                        } else {
+                            None
+                        };
+                        Ok::<_, color_eyre::Report>((plain, highlighted))
+                    })
+                    .await;
+
+                    let Ok(Ok((plain_view, highlighted_view))) = build_result else {
+                        continue;
+                    };
+                    let highlight_complete = highlighted_view.is_some();
+
+                    let _ = sender.send(Event::DiffPrefetched(Box::new(DiffPrefetchedEvent {
+                        generation,
+                        key: cache_key,
+                        plain: plain_view,
+                        highlighted: highlighted_view,
+                        highlight_complete,
+                    })));
+                    continue;
+                }
+
                 let include_exact_context = should_prefetch_highlight;
                 let preview_result = match &review_mode {
                     ReviewMode::WorkingTree => {
@@ -253,6 +296,17 @@ impl App {
 
         if let Some(plain_diff_view) = self.diff_view_cache.get_plain(&cache_key) {
             self.diff_view = plain_diff_view;
+            self.status_message = Some(self.current_status_message());
+            self.spawn_diff_prefetch();
+            return;
+        }
+
+        if let Some(diff_view) = self.build_diff_view_from_review_snapshot(&file) {
+            self.diff_view_cache
+                .insert_plain(cache_key.clone(), diff_view.clone());
+            self.diff_view = diff_view;
+            self.diff_highlight_complete =
+                self.highlight_registry.is_none() || file.filetype.is_none();
             self.status_message = Some(self.current_status_message());
             self.spawn_diff_prefetch();
             return;

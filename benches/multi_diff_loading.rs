@@ -4,8 +4,8 @@ use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use vigil::{
     app::DiffViewMode,
     git::{
-        FileDiffMetadata, build_diff_view_from_diff_text, build_diff_view_from_file_metadata,
-        parse_patch_files,
+        FileDiffMetadata, FileEntry, ReviewDiffSnapshot, build_diff_view_from_diff_text,
+        build_diff_view_from_file_metadata, parse_patch_files,
     },
 };
 
@@ -24,6 +24,20 @@ static PARSED_FILES: LazyLock<Vec<FileDiffMetadata>> = LazyLock::new(|| {
         .expect("multi-file patch fixture should parse")
         .into_iter()
         .flat_map(|patch| patch.files)
+        .collect()
+});
+static REVIEW_SNAPSHOT: LazyLock<ReviewDiffSnapshot> = LazyLock::new(|| {
+    ReviewDiffSnapshot::from_diff_text(&MULTI_FILE_DIFF.patch, Some("multi-diff"))
+        .expect("multi-file patch fixture should parse as review snapshot")
+});
+static FILE_ENTRIES: LazyLock<Vec<FileEntry>> = LazyLock::new(|| {
+    (0..FILE_COUNT)
+        .map(|file_index| FileEntry {
+            status: "M ".to_string(),
+            path: format!("src/review/module_{file_index:04}.rs"),
+            label: format!("module_{file_index:04}.rs"),
+            filetype: Some("rust"),
+        })
         .collect()
 });
 
@@ -141,6 +155,24 @@ fn bench_multi_diff_loading(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("build_views_from_review_snapshot_lookup", |b| {
+        b.iter(|| {
+            let line_count = rendered_line_count(FILE_ENTRIES.iter().map(|file| {
+                REVIEW_SNAPSHOT
+                    .build_diff_view(black_box(file))
+                    .expect("fixture file should exist in snapshot")
+            }));
+            black_box(line_count);
+        });
+    });
+
+    group.bench_function("build_search_index_from_review_snapshot", |b| {
+        b.iter(|| {
+            let index = REVIEW_SNAPSHOT.build_search_index();
+            black_box((index.file_count(), index.line_count()));
+        });
+    });
+
     group.bench_function("build_views_from_file_diff_text", |b| {
         b.iter(|| {
             let line_count = rendered_line_count(
@@ -164,6 +196,15 @@ fn bench_multi_diff_loading(c: &mut Criterion) {
                     .map(|file| build_diff_view_from_file_metadata(black_box(file))),
             );
             black_box(line_count);
+        });
+    });
+
+    group.bench_function("build_review_snapshot_from_multi_file_patch", |b| {
+        b.iter(|| {
+            let snapshot =
+                ReviewDiffSnapshot::from_diff_text(black_box(&fixture.patch), Some("multi-diff"))
+                    .expect("multi-file patch fixture should parse");
+            black_box((snapshot.file_count(), snapshot.line_count()));
         });
     });
 

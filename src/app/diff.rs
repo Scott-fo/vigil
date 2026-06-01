@@ -3,6 +3,7 @@ use super::*;
 mod cache;
 mod highlight;
 mod load;
+mod snapshot;
 mod viewport;
 
 #[cfg(test)]
