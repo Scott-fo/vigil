@@ -340,6 +340,60 @@ async fn selected_diff_waits_for_inflight_whole_diff_without_stale_or_per_file_t
 }
 
 #[tokio::test]
+async fn branch_compare_initial_file_loads_selected_preview_while_whole_diff_streams() {
+    let mut app = build_test_app();
+    app.review_mode = ReviewMode::BranchCompare(BranchCompareSelection {
+        source_ref: "feature".to_string(),
+        destination_ref: "main".to_string(),
+    });
+    app.files = vec![FileEntry {
+        status: "M ".to_string(),
+        path: "src/file-0.rs".to_string(),
+        label: "file-0.rs".to_string(),
+        filetype: Some("rust"),
+    }];
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_some());
+    assert_eq!(app.diff_view.note.as_deref(), Some("Loading diff..."));
+
+    app.cancel_inflight_diff_load();
+    app.cancel_inflight_review_diff_snapshot();
+}
+
+#[tokio::test]
+async fn branch_compare_same_scope_navigation_still_waits_for_whole_diff_stream() {
+    let mut app = build_test_app();
+    app.review_mode = ReviewMode::BranchCompare(BranchCompareSelection {
+        source_ref: "feature".to_string(),
+        destination_ref: "main".to_string(),
+    });
+    app.files = build_file_entries(2);
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.pending_diff_cache_key = Some(app.diff_cache_key(&app.files[0]));
+    app.selected_file_index = 1;
+    app.sync_sidebar_state();
+    app.diff_view = DiffView::empty("");
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.diff_load_task.is_none());
+    assert_eq!(app.diff_view.note.as_deref(), Some(""));
+
+    app.cancel_inflight_review_diff_snapshot();
+}
+
+#[tokio::test]
 async fn commit_refresh_keeps_selected_diff_visible_while_whole_diff_streams() {
     let mut app = build_test_app();
     app.review_mode = ReviewMode::CommitCompare(CommitCompareSelection {

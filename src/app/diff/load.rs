@@ -362,6 +362,25 @@ impl App {
         prefetch_files.push((cache_key, file));
     }
 
+    fn should_load_selected_preview_while_review_diff_streams(
+        &self,
+        previously_pending_cache_key: Option<&DiffCacheKey>,
+        cache_key: &DiffCacheKey,
+    ) -> bool {
+        if !matches!(
+            self.review_mode,
+            ReviewMode::CommitCompare(_) | ReviewMode::BranchCompare(_)
+        ) {
+            return false;
+        }
+
+        match previously_pending_cache_key {
+            None => true,
+            Some(previous) if previous == cache_key => true,
+            Some(previous) => previous.review_scope != cache_key.review_scope,
+        }
+    }
+
     pub(in crate::app) fn diff_visible_highlight_prefetch_files(
         &mut self,
     ) -> Vec<DiffHighlightPrefetchFile> {
@@ -492,10 +511,20 @@ impl App {
                 == Some(&cache_key)
                 && self.diff_view.has_diff_rows();
             if !can_keep_current_review_diff {
-                self.diff_view = DiffView::empty("");
+                let should_load_selected_preview = self
+                    .should_load_selected_preview_while_review_diff_streams(
+                        previously_pending_cache_key.as_ref(),
+                        &cache_key,
+                    );
+                if !should_load_selected_preview {
+                    self.diff_view = DiffView::empty("");
+                    self.status_message = Some(self.current_status_message());
+                    return;
+                }
+            } else {
+                self.status_message = Some(self.current_status_message());
+                return;
             }
-            self.status_message = Some(self.current_status_message());
-            return;
         }
 
         if show_loading && !self.diff_view.has_diff_rows() {
