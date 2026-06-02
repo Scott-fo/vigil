@@ -333,9 +333,10 @@ async fn working_tree_status_event_applies_files_and_queues_plain_diff_load() {
         Some("src/main.rs")
     );
     assert_eq!(app.status_message.as_deref(), Some("1 changed file"));
-    assert!(app.diff_load_task.is_none());
+    assert!(app.diff_load_task.is_some());
     assert!(app.review_diff_snapshot_task.is_some());
     assert!(!app.diff_view.has_diff_rows());
+    assert_eq!(app.diff_view.note.as_deref(), Some("Loading diff..."));
     assert!(app.highlight_registry_loading);
 
     app.cancel_inflight_diff_load();

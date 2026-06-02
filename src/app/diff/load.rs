@@ -367,13 +367,6 @@ impl App {
         previously_pending_cache_key: Option<&DiffCacheKey>,
         cache_key: &DiffCacheKey,
     ) -> bool {
-        if !matches!(
-            self.review_mode,
-            ReviewMode::CommitCompare(_) | ReviewMode::BranchCompare(_)
-        ) {
-            return false;
-        }
-
         match previously_pending_cache_key {
             None => true,
             Some(previous) if previous == cache_key => true,
