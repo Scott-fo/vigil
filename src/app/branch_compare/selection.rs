@@ -53,52 +53,77 @@ impl App {
     }
 
     pub(in crate::app) fn sync_branch_compare_selection_after_query_change(&mut self) {
-        let filtered = self.filtered_branch_compare_refs();
-        let current_ref = match self.branch_compare_active_field {
-            BranchCompareField::Source => &mut self.branch_compare_source_ref,
-            BranchCompareField::Destination => &mut self.branch_compare_destination_ref,
-        };
-        let current_index = match self.branch_compare_active_field {
-            BranchCompareField::Source => &mut self.branch_compare_selected_source_index,
-            BranchCompareField::Destination => &mut self.branch_compare_selected_destination_index,
-        };
+        let filtered = self.filtered_branch_compare_ref_indices();
 
         if filtered.is_empty() {
-            *current_ref = None;
-            *current_index = 0;
+            match self.branch_compare_active_field {
+                BranchCompareField::Source => {
+                    self.branch_compare_source_ref = None;
+                    self.branch_compare_selected_source_index = 0;
+                }
+                BranchCompareField::Destination => {
+                    self.branch_compare_destination_ref = None;
+                    self.branch_compare_selected_destination_index = 0;
+                }
+            }
             return;
         }
 
-        if let Some(existing) = current_ref.as_ref()
-            && let Some(index) = filtered.iter().position(|ref_name| ref_name == existing)
+        let existing_ref = match self.branch_compare_active_field {
+            BranchCompareField::Source => self.branch_compare_source_ref.as_deref(),
+            BranchCompareField::Destination => self.branch_compare_destination_ref.as_deref(),
+        };
+
+        if let Some(existing) = existing_ref
+            && let Some(index) = filtered.iter().position(|ref_index| {
+                self.branch_compare_available_refs[*ref_index].as_str() == existing
+            })
         {
-            *current_index = index;
+            match self.branch_compare_active_field {
+                BranchCompareField::Source => self.branch_compare_selected_source_index = index,
+                BranchCompareField::Destination => {
+                    self.branch_compare_selected_destination_index = index;
+                }
+            }
             return;
         }
 
-        *current_ref = filtered.first().cloned();
-        *current_index = 0;
+        let first_ref = self.branch_compare_available_refs[filtered[0]].clone();
+        match self.branch_compare_active_field {
+            BranchCompareField::Source => {
+                self.branch_compare_source_ref = Some(first_ref);
+                self.branch_compare_selected_source_index = 0;
+            }
+            BranchCompareField::Destination => {
+                self.branch_compare_destination_ref = Some(first_ref);
+                self.branch_compare_selected_destination_index = 0;
+            }
+        }
     }
 
     pub(in crate::app) fn move_branch_compare_selection(&mut self, delta: i32) {
-        let filtered = self.filtered_branch_compare_refs();
+        let filtered = self.filtered_branch_compare_ref_indices();
         if filtered.is_empty() {
             return;
         }
 
-        let current_index = match self.branch_compare_active_field {
-            BranchCompareField::Source => &mut self.branch_compare_selected_source_index,
-            BranchCompareField::Destination => &mut self.branch_compare_selected_destination_index,
+        let selected_index = match self.branch_compare_active_field {
+            BranchCompareField::Source => self.branch_compare_selected_source_index,
+            BranchCompareField::Destination => self.branch_compare_selected_destination_index,
         };
-        let current_ref = match self.branch_compare_active_field {
-            BranchCompareField::Source => &mut self.branch_compare_source_ref,
-            BranchCompareField::Destination => &mut self.branch_compare_destination_ref,
-        };
+        let next_index = move_index(selected_index, filtered.len(), delta);
+        let next_ref = self.branch_compare_available_refs[filtered[next_index]].clone();
 
-        let next_index = move_index(*current_index, filtered.len(), delta);
-
-        *current_index = next_index;
-        *current_ref = filtered.get(next_index).cloned();
+        match self.branch_compare_active_field {
+            BranchCompareField::Source => {
+                self.branch_compare_selected_source_index = next_index;
+                self.branch_compare_source_ref = Some(next_ref);
+            }
+            BranchCompareField::Destination => {
+                self.branch_compare_selected_destination_index = next_index;
+                self.branch_compare_destination_ref = Some(next_ref);
+            }
+        }
     }
 }
 

@@ -25,6 +25,7 @@ mod help_modal;
 mod input;
 mod keyboard;
 mod launch;
+mod modal_lookup;
 mod mouse;
 mod navigation;
 mod repo_state;
@@ -39,6 +40,7 @@ pub use self::diff::{DiffCacheKey, DiffStatsState, PreparedDiffViewport};
 use self::diff::{DiffHighlightJob, DiffPrefetchDirection, DiffViewCache, DiffViewport};
 use self::diff_search::DiffSearchNavigationTarget;
 pub use self::launch::AppLaunchOptions;
+use self::modal_lookup::ModalLookupIndex;
 use crate::{
     event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{
@@ -245,6 +247,7 @@ pub struct App {
     pub commit_search_error: Option<String>,
     pub commit_search_selected_index: usize,
     pub commit_search_matcher: Matcher,
+    commit_search_index: ModalLookupIndex,
     pub branch_compare_modal_open: bool,
     pub branch_compare_loading: bool,
     pub branch_compare_error: Option<String>,
@@ -257,6 +260,7 @@ pub struct App {
     pub branch_compare_selected_source_index: usize,
     pub branch_compare_selected_destination_index: usize,
     pub branch_compare_matcher: Matcher,
+    branch_compare_ref_index: ModalLookupIndex,
     pub branch_merge_target: Option<git::BranchMergeRequest>,
     pub branch_merge_loading: bool,
     pub branch_merge_error: Option<String>,

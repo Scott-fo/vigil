@@ -50,11 +50,13 @@ impl App {
         match result {
             Ok(branch_compare_refs) => {
                 self.branch_compare_available_refs = branch_compare_refs.refs;
+                self.rebuild_branch_compare_ref_index();
                 self.branch_compare_error = None;
                 self.seed_branch_compare_selection(branch_compare_refs.current_ref.as_deref());
             }
             Err(error) => {
                 self.branch_compare_available_refs.clear();
+                self.branch_compare_ref_index.clear();
                 self.branch_compare_error = Some(error);
                 self.branch_compare_selected_source_index = 0;
                 self.branch_compare_selected_destination_index = 0;
@@ -72,6 +74,7 @@ impl App {
         self.branch_compare_error = None;
         self.branch_compare_active_field = BranchCompareField::Source;
         self.branch_compare_available_refs.clear();
+        self.branch_compare_ref_index.clear();
         self.branch_compare_source_query.clear();
         self.branch_compare_destination_query.clear();
         self.branch_compare_source_ref = None;

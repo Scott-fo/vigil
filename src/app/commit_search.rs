@@ -1,21 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use tokio::task;
 
 use super::input::is_plain_text_key;
 use super::navigation::{clamp_index, move_index};
 use super::*;
-
-struct CommitSearchCandidate {
-    index: usize,
-    haystack: String,
-}
-
-impl AsRef<str> for CommitSearchCandidate {
-    fn as_ref(&self) -> &str {
-        &self.haystack
-    }
-}
 
 impl App {
     pub(super) async fn handle_commit_search_key(
@@ -70,11 +58,13 @@ impl App {
         match result {
             Ok(entries) => {
                 self.commit_search_entries = entries;
+                self.rebuild_commit_search_index();
                 self.commit_search_error = None;
                 self.clamp_commit_search_selection();
             }
             Err(error) => {
                 self.commit_search_entries.clear();
+                self.commit_search_index.clear();
                 self.commit_search_error = Some(error);
                 self.commit_search_selected_index = 0;
             }
@@ -89,6 +79,7 @@ impl App {
         self.commit_search_modal_open = true;
         self.commit_search_query.clear();
         self.commit_search_entries.clear();
+        self.commit_search_index.clear();
         self.commit_search_loading = true;
         self.commit_search_error = None;
         self.commit_search_selected_index = 0;
@@ -111,27 +102,10 @@ impl App {
     }
 
     pub fn filtered_commit_search_indices(&mut self) -> Vec<usize> {
-        let query = self.commit_search_query.trim().to_ascii_lowercase();
-        if query.is_empty() {
-            return (0..self.commit_search_entries.len()).collect();
-        }
+        self.sync_commit_search_index();
 
-        let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
-        let candidates = self
-            .commit_search_entries
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| CommitSearchCandidate {
-                index,
-                haystack: format!("{} {} {}", entry.short_hash, entry.hash, entry.subject),
-            })
-            .collect::<Vec<_>>();
-
-        pattern
-            .match_list(candidates, &mut self.commit_search_matcher)
-            .into_iter()
-            .map(|(candidate, _score)| candidate.index)
-            .collect()
+        self.commit_search_index
+            .matching_indices(&self.commit_search_query, &mut self.commit_search_matcher)
     }
 
     pub(super) fn clamp_commit_search_selection(&mut self) {
@@ -165,6 +139,28 @@ impl App {
         });
         self.refresh().await
     }
+
+    fn sync_commit_search_index(&mut self) {
+        if !self
+            .commit_search_index
+            .is_aligned_with(self.commit_search_entries.len())
+        {
+            self.rebuild_commit_search_index();
+        }
+    }
+
+    fn rebuild_commit_search_index(&mut self) {
+        let haystacks = self
+            .commit_search_entries
+            .iter()
+            .map(commit_search_haystack)
+            .collect();
+        self.commit_search_index.replace(haystacks);
+    }
+}
+
+fn commit_search_haystack(entry: &CommitSearchEntry) -> String {
+    format!("{} {} {}", entry.short_hash, entry.hash, entry.subject)
 }
 
 #[cfg(test)]

@@ -69,3 +69,26 @@ fn branch_compare_query_change_preserves_matching_selection() {
     );
     assert_eq!(app.branch_compare_selected_source_index, 0);
 }
+
+#[test]
+fn branch_compare_exact_query_syntax_does_not_fall_back_to_fuzzy() {
+    let mut app = build_test_app();
+    app.branch_compare_available_refs = vec![
+        "feature/refactor".to_string(),
+        "feature/render-pipeline".to_string(),
+        "release/1.0".to_string(),
+    ];
+    app.branch_compare_active_field = BranchCompareField::Source;
+
+    app.branch_compare_source_query = "fr".to_string();
+    assert!(!app.filtered_branch_compare_refs().is_empty());
+
+    app.branch_compare_source_query = "'fr".to_string();
+    assert_eq!(app.filtered_branch_compare_refs(), Vec::<String>::new());
+
+    app.branch_compare_source_query = "'release".to_string();
+    assert_eq!(
+        app.filtered_branch_compare_refs(),
+        vec!["release/1.0".to_string()]
+    );
+}
