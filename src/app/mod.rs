@@ -38,7 +38,7 @@ mod worktree;
 
 pub use self::diff::{DiffCacheKey, DiffStatsState, PreparedDiffViewport};
 use self::diff::{DiffHighlightJob, DiffPrefetchDirection, DiffViewCache, DiffViewport};
-use self::diff_search::DiffSearchNavigationTarget;
+use self::diff_search::{DiffSearchIndexReadiness, DiffSearchNavigationTarget};
 pub use self::launch::AppLaunchOptions;
 use self::modal_lookup::ModalLookupIndex;
 use crate::{
@@ -233,6 +233,7 @@ pub struct App {
     pub diff_search_selected_index: usize,
     pub diff_search_mode: DiffSearchMode,
     diff_search_index: Option<Arc<DiffSearchIndex>>,
+    diff_search_index_readiness: Option<DiffSearchIndexReadiness>,
     diff_search_index_error: Option<String>,
     diff_search_index_request_id: u64,
     diff_search_query_request_id: u64,

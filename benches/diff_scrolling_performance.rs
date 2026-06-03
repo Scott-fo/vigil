@@ -4,8 +4,8 @@ use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_mai
 use vigil::{
     app::{DiffLineWrapMode, DiffViewMode},
     git::{
-        DiffView, FileEntry, HighlightRegistry, ReviewDiffPartialTextIndex, ReviewDiffSnapshot,
-        ReviewDiffTextIndex,
+        DiffSearchIndex, DiffSearchMatcher, DiffSearchOptions, DiffView, FileEntry,
+        HighlightRegistry, ReviewDiffPartialTextIndex, ReviewDiffSnapshot, ReviewDiffTextIndex,
     },
 };
 
@@ -18,6 +18,8 @@ const LARGE_FILE_SECTIONS: usize = 5_000;
 const SPLIT_RENDER_WIDTH: usize = 160;
 const VIEWPORT_HEIGHT: usize = 40;
 const FILETYPE: Option<&'static str> = Some("rust");
+const SEARCH_QUERY: &str = "reviewed value 0";
+const SEARCH_LIMIT: usize = 50;
 
 static HUGE_REVIEW: LazyLock<HugeReviewFixture> = LazyLock::new(build_huge_review_fixture);
 static HUGE_REVIEW_SNAPSHOT: LazyLock<ReviewDiffSnapshot> = LazyLock::new(|| {
@@ -39,6 +41,7 @@ static HIGHLIGHT_REGISTRY: LazyLock<HighlightRegistry> = LazyLock::new(|| {
 
 struct HugeReviewFixture {
     patch: String,
+    first_file_patch: String,
     files: Vec<FileEntry>,
     diff_line_count: usize,
 }
@@ -52,10 +55,12 @@ fn build_huge_review_fixture() -> HugeReviewFixture {
     let diff_lines =
         HUGE_REVIEW_FILE_COUNT * HUGE_REVIEW_SECTIONS_PER_FILE * HUGE_REVIEW_DIFF_LINES_PER_SECTION;
     let mut patch = String::with_capacity(diff_lines * 80);
+    let mut first_file_patch = String::new();
     let mut files = Vec::with_capacity(HUGE_REVIEW_FILE_COUNT);
 
     for file_index in 0..HUGE_REVIEW_FILE_COUNT {
         let path = format!("src/review/module_{file_index:05}.rs");
+        let file_start = patch.len();
         push_file_header(&mut patch, &path);
 
         let old_count = HUGE_REVIEW_SECTIONS_PER_FILE * 3;
@@ -80,6 +85,10 @@ fn build_huge_review_fixture() -> HugeReviewFixture {
             ));
         }
 
+        if file_index == 0 {
+            first_file_patch = patch[file_start..].to_string();
+        }
+
         files.push(FileEntry {
             status: "M ".to_string(),
             path: path.clone(),
@@ -90,6 +99,7 @@ fn build_huge_review_fixture() -> HugeReviewFixture {
 
     HugeReviewFixture {
         patch,
+        first_file_patch,
         files,
         diff_line_count: diff_lines,
     }
@@ -194,6 +204,54 @@ fn bench_huge_review_scrolling(c: &mut Criterion) {
                 ReviewDiffSnapshot::from_diff_text(black_box(&fixture.patch), Some("bench"))
                     .expect("huge review fixture should parse");
             black_box((snapshot.file_count(), snapshot.line_count()));
+        });
+    });
+
+    let search_options = DiffSearchOptions {
+        limit: SEARCH_LIMIT,
+        ..DiffSearchOptions::default()
+    };
+
+    group.throughput(Throughput::Bytes(fixture.first_file_patch.len() as u64));
+    group.bench_function("first_search_from_first_streamed_file", |b| {
+        b.iter_batched(
+            || fixture.first_file_patch.clone(),
+            |patch| {
+                let mut index = DiffSearchIndex::default();
+                index
+                    .append_diff_text(black_box(&patch))
+                    .expect("first streamed file should index");
+                let mut matcher = DiffSearchMatcher::default();
+                let results = index.search(SEARCH_QUERY, search_options, &mut matcher);
+                black_box((index.line_count(), results.items.len()));
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group.throughput(Throughput::Bytes(fixture.patch.len() as u64));
+    group.bench_function("complete_search_index_from_whole_diff_text", |b| {
+        b.iter(|| {
+            let index = DiffSearchIndex::from_diff_text(black_box(&fixture.patch))
+                .expect("huge review fixture should build a search index");
+            black_box((index.file_count(), index.line_count()));
+        });
+    });
+
+    group.bench_function("first_search_after_whole_diff_text_index", |b| {
+        b.iter(|| {
+            let index = DiffSearchIndex::from_diff_text(black_box(&fixture.patch))
+                .expect("huge review fixture should build a search index");
+            let mut matcher = DiffSearchMatcher::default();
+            let results = index.search(SEARCH_QUERY, search_options, &mut matcher);
+            black_box((index.line_count(), results.items.len()));
+        });
+    });
+
+    group.bench_function("complete_search_index_from_review_snapshot", |b| {
+        b.iter(|| {
+            let index = snapshot.build_search_index();
+            black_box((index.file_count(), index.line_count()));
         });
     });
 

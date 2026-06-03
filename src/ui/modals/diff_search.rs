@@ -61,6 +61,8 @@ pub(super) fn render_diff_search_modal(frame: &mut Frame, app: &App) {
         render_list_message(frame, list_inner, diff_search_loading_message(app));
     } else if app.diff_search_query.trim().is_empty() {
         render_list_message(frame, list_inner, "Type a query to search changed lines.");
+    } else if app.diff_search_results.items.is_empty() && app.diff_search_is_indexing_partial() {
+        render_list_message(frame, list_inner, app.diff_search_partial_loading_message());
     } else if app.diff_search_results.items.is_empty() {
         render_list_message(frame, list_inner, "No matching diff lines.");
     } else {
@@ -158,6 +160,9 @@ fn diff_search_display_entries(results: &[DiffSearchResult]) -> Vec<DiffSearchDi
 }
 
 fn diff_search_loading_message(app: &App) -> &'static str {
+    if app.diff_search_is_indexing_partial() && !app.diff_search_query.trim().is_empty() {
+        return app.diff_search_partial_loading_message();
+    }
     if app.diff_search_query.trim().is_empty() {
         "Indexing changed diff lines..."
     } else {
