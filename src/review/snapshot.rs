@@ -1,3 +1,11 @@
+//! Review snapshot construction and identity.
+//!
+//! A review snapshot captures the repository coordinates needed to run or
+//! restore a Codex review. Working-tree reviews are anchored to the current
+//! checkout because `HEAD` is the base being reviewed. Commit and branch
+//! comparison reviews are anchored to the compared endpoints and patch content,
+//! so the branch that happens to have Vigil open does not affect their identity.
+
 use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -292,6 +300,31 @@ fn snapshot_id(
     files: &[String],
     patch: &str,
 ) -> color_eyre::Result<String> {
+    match scope {
+        ReviewScope::WorkingTree => legacy_working_tree_snapshot_id(
+            repo_root,
+            worktree_root,
+            head_sha,
+            branch,
+            scope,
+            files,
+            patch,
+        ),
+        ReviewScope::CommitCompare { .. } | ReviewScope::BranchCompare { .. } => {
+            compare_snapshot_id(repo_root, worktree_root, scope, files, patch)
+        }
+    }
+}
+
+fn legacy_working_tree_snapshot_id(
+    repo_root: &Path,
+    worktree_root: &Path,
+    head_sha: Option<&str>,
+    branch: Option<&str>,
+    scope: &ReviewScope,
+    files: &[String],
+    patch: &str,
+) -> color_eyre::Result<String> {
     let mut input = String::new();
     input.push_str(&repo_root.display().to_string());
     input.push('\n');
@@ -309,6 +342,81 @@ fn snapshot_id(
     }
     input.push_str(patch);
     Ok(format!("v1-{:016x}", fnv1a64(input.as_bytes())))
+}
+
+fn compare_snapshot_id(
+    repo_root: &Path,
+    worktree_root: &Path,
+    scope: &ReviewScope,
+    files: &[String],
+    patch: &str,
+) -> color_eyre::Result<String> {
+    let mut input = String::new();
+    input.push_str(&repo_root.display().to_string());
+    input.push('\n');
+    input.push_str(&worktree_root.display().to_string());
+    input.push('\n');
+    input.push_str(&scope_identity_json(scope)?);
+    input.push('\n');
+    for file in files {
+        input.push_str(file);
+        input.push('\n');
+    }
+    input.push_str(patch);
+    Ok(format!("v2-{:016x}", fnv1a64(input.as_bytes())))
+}
+
+fn scope_identity_json(scope: &ReviewScope) -> color_eyre::Result<String> {
+    Ok(serde_json::to_string(&ReviewScopeIdentity::from(scope))?)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+enum ReviewScopeIdentity<'a> {
+    WorkingTree,
+    CommitCompare {
+        base_ref: &'a str,
+        base_sha: Option<&'a str>,
+        commit_hash: &'a str,
+    },
+    BranchCompare {
+        source_ref: &'a str,
+        source_sha: Option<&'a str>,
+        destination_ref: &'a str,
+        destination_sha: Option<&'a str>,
+        merge_base: Option<&'a str>,
+    },
+}
+
+impl<'a> From<&'a ReviewScope> for ReviewScopeIdentity<'a> {
+    fn from(scope: &'a ReviewScope) -> Self {
+        match scope {
+            ReviewScope::WorkingTree => Self::WorkingTree,
+            ReviewScope::CommitCompare {
+                base_ref,
+                base_sha,
+                commit_hash,
+                ..
+            } => Self::CommitCompare {
+                base_ref,
+                base_sha: base_sha.as_deref(),
+                commit_hash,
+            },
+            ReviewScope::BranchCompare {
+                source_ref,
+                source_sha,
+                destination_ref,
+                destination_sha,
+                merge_base,
+            } => Self::BranchCompare {
+                source_ref,
+                source_sha: source_sha.as_deref(),
+                destination_ref,
+                destination_sha: destination_sha.as_deref(),
+                merge_base: merge_base.as_deref(),
+            },
+        }
+    }
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -358,5 +466,144 @@ mod tests {
 
         assert_eq!(first, second);
         assert!(first.starts_with("v1-"));
+    }
+
+    #[test]
+    fn working_tree_snapshot_hash_tracks_checked_out_base() {
+        let scope = ReviewScope::WorkingTree;
+        let files = vec!["src/lib.rs".to_string()];
+        let first = snapshot_id(
+            Path::new("/repo"),
+            Path::new("/repo"),
+            Some("abc"),
+            Some("main"),
+            &scope,
+            &files,
+            "diff",
+        )
+        .expect("hash");
+        let second = snapshot_id(
+            Path::new("/repo"),
+            Path::new("/repo"),
+            Some("def"),
+            Some("feature"),
+            &scope,
+            &files,
+            "diff",
+        )
+        .expect("hash");
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn commit_compare_snapshot_hash_ignores_checked_out_branch() {
+        let scope = ReviewScope::CommitCompare {
+            base_ref: "base".to_string(),
+            base_sha: Some("base-sha".to_string()),
+            commit_hash: "commit-sha".to_string(),
+            short_hash: "commit".to_string(),
+            subject: "display-only subject".to_string(),
+        };
+        let files = vec!["src/lib.rs".to_string()];
+        let first = snapshot_id(
+            Path::new("/repo"),
+            Path::new("/repo"),
+            Some("ambient-a"),
+            Some("branch-a"),
+            &scope,
+            &files,
+            "diff",
+        )
+        .expect("hash");
+        let second = snapshot_id(
+            Path::new("/repo"),
+            Path::new("/repo"),
+            Some("ambient-b"),
+            Some("branch-b"),
+            &scope,
+            &files,
+            "diff",
+        )
+        .expect("hash");
+
+        assert_eq!(first, second);
+        assert!(first.starts_with("v2-"));
+    }
+
+    #[test]
+    fn branch_compare_snapshot_hash_ignores_checked_out_branch() {
+        let scope = ReviewScope::BranchCompare {
+            source_ref: "feature".to_string(),
+            source_sha: Some("source-sha".to_string()),
+            destination_ref: "main".to_string(),
+            destination_sha: Some("destination-sha".to_string()),
+            merge_base: Some("merge-base".to_string()),
+        };
+        let files = vec!["src/lib.rs".to_string()];
+        let first = snapshot_id(
+            Path::new("/repo"),
+            Path::new("/repo"),
+            Some("ambient-a"),
+            Some("branch-a"),
+            &scope,
+            &files,
+            "diff",
+        )
+        .expect("hash");
+        let second = snapshot_id(
+            Path::new("/repo"),
+            Path::new("/repo"),
+            Some("ambient-b"),
+            Some("branch-b"),
+            &scope,
+            &files,
+            "diff",
+        )
+        .expect("hash");
+
+        assert_eq!(first, second);
+        assert!(first.starts_with("v2-"));
+    }
+
+    #[test]
+    fn branch_compare_snapshot_hash_tracks_compared_endpoint() {
+        let files = vec!["src/lib.rs".to_string()];
+        let first_scope = ReviewScope::BranchCompare {
+            source_ref: "feature".to_string(),
+            source_sha: Some("source-sha".to_string()),
+            destination_ref: "main".to_string(),
+            destination_sha: Some("destination-sha".to_string()),
+            merge_base: Some("merge-base".to_string()),
+        };
+        let second_scope = ReviewScope::BranchCompare {
+            source_ref: "feature".to_string(),
+            source_sha: Some("new-source-sha".to_string()),
+            destination_ref: "main".to_string(),
+            destination_sha: Some("destination-sha".to_string()),
+            merge_base: Some("merge-base".to_string()),
+        };
+        let first = snapshot_id(
+            Path::new("/repo"),
+            Path::new("/repo"),
+            Some("ambient"),
+            Some("branch"),
+            &first_scope,
+            &files,
+            "diff",
+        )
+        .expect("hash");
+        let second = snapshot_id(
+            Path::new("/repo"),
+            Path::new("/repo"),
+            Some("ambient"),
+            Some("branch"),
+            &second_scope,
+            &files,
+            "diff",
+        )
+        .expect("hash");
+
+        assert_ne!(first, second);
     }
 }
