@@ -109,9 +109,10 @@ impl App {
             Ok(text_index) => {
                 self.review_diff_stream_index = None;
                 self.review_diff_text_index = Some(text_index);
+                self.spawn_diff_search_index_load_from_review_text_index();
                 let changed = self.load_selected_diff_from_review_text_index();
                 self.spawn_diff_prefetch();
-                changed
+                changed || self.diff_search_modal_open
             }
             Err(error) => {
                 self.review_diff_stream_index = None;
@@ -136,12 +137,13 @@ impl App {
         }
 
         let path = file.path.clone();
+        let search_changed = self.append_streamed_diff_search_index(&file.diff);
         self.review_diff_stream_index
             .get_or_insert_with(git::ReviewDiffPartialTextIndex::default)
             .insert_file_diff(file.path, file.diff);
 
         let Some(selected_file) = self.selected_file().cloned() else {
-            return false;
+            return search_changed;
         };
 
         if selected_file.path != path {
@@ -164,11 +166,12 @@ impl App {
             if cached_visible_plain && self.diff_highlight_complete {
                 self.spawn_diff_prefetch();
             }
-            return false;
+            return search_changed;
         }
 
         let cache_key = self.diff_cache_key(&selected_file);
         self.load_selected_diff_from_review_stream_cache(&selected_file, &cache_key)
+            || search_changed
     }
 
     fn streamed_path_is_near_sidebar(&self, path: &str) -> bool {
@@ -204,7 +207,9 @@ impl App {
                 self.review_diff_stats = Some(snapshot.stats());
                 self.review_diff_stats_error = None;
                 self.review_diff_snapshot = Some(Arc::new(snapshot));
-                self.queue_diff_search_index_load();
+                if !self.diff_search_index_is_complete() && self.diff_search_load_task.is_none() {
+                    self.queue_diff_search_index_load();
+                }
                 let changed = self.load_selected_diff_from_review_snapshot();
                 self.spawn_diff_prefetch();
                 changed || self.diff_search_modal_open

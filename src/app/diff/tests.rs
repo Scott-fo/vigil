@@ -755,8 +755,53 @@ async fn diff_search_index_builds_from_review_snapshot() {
 }
 
 #[tokio::test]
-async fn diff_search_modal_waits_for_inflight_review_snapshot() {
+async fn diff_search_index_builds_from_review_text_index_before_snapshot() {
     let mut app = build_test_app();
+    app.review_diff_snapshot_task = Some(tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }));
+
+    assert!(!app.handle_review_diff_text_index_loaded(
+        app.review_diff_snapshot_request_id,
+        app.diff_cache_generation,
+        Ok(Arc::new(build_review_text_index())),
+    ));
+
+    let request_id = app.diff_search_index_request_id;
+    let event = app
+        .events
+        .next()
+        .await
+        .expect("search index event should be emitted");
+
+    let Event::DiffSearchIndexLoaded {
+        request_id: event_request_id,
+        result,
+    } = event
+    else {
+        panic!("expected diff search index event");
+    };
+    assert_eq!(event_request_id, request_id);
+    let index = result.expect("text index should produce a search index");
+    assert_eq!(index.file_count(), 1);
+    assert_eq!(index.line_count(), 2);
+    assert!(
+        app.review_diff_snapshot_task
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
+    );
+
+    app.cancel_inflight_review_diff_snapshot();
+}
+
+#[tokio::test]
+async fn diff_search_modal_searches_streamed_partial_index_before_snapshot() {
+    let mut app = build_test_app();
+    app.files = build_file_entries(1);
+    app.rebuild_sidebar_items();
+    app.sync_sidebar_state();
+    app.review_diff_snapshot_request_id = app.review_diff_snapshot_request_id.saturating_add(1);
+    let request_id = app.review_diff_snapshot_request_id;
     app.review_diff_snapshot_task = Some(tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }));
@@ -766,6 +811,60 @@ async fn diff_search_modal_waits_for_inflight_review_snapshot() {
     assert!(app.diff_search_modal_open);
     assert!(app.diff_search_loading);
     assert!(app.diff_search_load_task.is_none());
+
+    let changed = app.handle_review_diff_file_streamed(
+        request_id,
+        app.diff_cache_generation,
+        git::ReviewDiffStreamedFile {
+            path: "src/file-0.rs".to_string(),
+            diff: concat!(
+                "diff --git a/src/file-0.rs b/src/file-0.rs\n",
+                "--- a/src/file-0.rs\n",
+                "+++ b/src/file-0.rs\n",
+                "@@ -1,1 +1,1 @@\n",
+                "-fn before() {}\n",
+                "+fn streamed_partial_match() {}\n",
+            )
+            .to_string(),
+        },
+    );
+
+    assert!(changed);
+    assert!(app.diff_search_index.is_some());
+    assert!(app.diff_search_is_indexing_partial());
+    assert_eq!(
+        app.diff_search_partial_loading_message(),
+        "Searching indexed files, still indexing..."
+    );
+
+    for ch in "streamed".chars() {
+        assert!(
+            app.handle_diff_search_key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(ch),
+                crossterm::event::KeyModifiers::NONE,
+            ))
+            .await
+            .expect("diff search key should be handled")
+        );
+    }
+
+    let query_request_id = app.diff_search_query_request_id;
+    let results = loop {
+        let event = app
+            .events
+            .next()
+            .await
+            .expect("search results event should be emitted");
+        let Event::DiffSearchResultsLoaded { request_id, result } = event else {
+            continue;
+        };
+        if request_id == query_request_id {
+            break result.expect("partial search should succeed");
+        }
+    };
+    assert_eq!(results.items.len(), 1);
+    assert_eq!(results.items[0].file_path, "src/file-0.rs");
+    assert!(results.items[0].line.contains("streamed_partial_match"));
 
     app.cancel_inflight_review_diff_snapshot();
 }
