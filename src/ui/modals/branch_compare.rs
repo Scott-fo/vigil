@@ -65,29 +65,30 @@ pub(super) fn render_branch_compare_modal(frame: &mut Frame, app: &mut App) {
         Some(" Destination "),
     );
 
-    let filtered_refs = app.filtered_branch_compare_refs();
+    let filtered_ref_indices = app.filtered_branch_compare_ref_indices();
     let list_inner = render_list_frame(frame, chunks[2]);
 
     if app.branch_compare_loading {
         render_list_message(frame, list_inner, "Loading refs...");
     } else if let Some(error) = app.branch_compare_error.as_ref() {
         render_list_error(frame, list_inner, "Unable to load refs.", error);
-    } else if filtered_refs.is_empty() {
+    } else if filtered_ref_indices.is_empty() {
         render_list_message(frame, list_inner, "No matching refs.");
     } else {
         let selected_index = match app.branch_compare_active_field {
             BranchCompareField::Source => app.branch_compare_selected_source_index,
             BranchCompareField::Destination => app.branch_compare_selected_destination_index,
         }
-        .min(filtered_refs.len().saturating_sub(1));
+        .min(filtered_ref_indices.len().saturating_sub(1));
 
         render_visible_list(
             frame,
             list_inner,
-            filtered_refs.len(),
+            filtered_ref_indices.len(),
             selected_index,
             |display_index, selected| {
-                let ref_name = &filtered_refs[display_index];
+                let ref_name =
+                    &app.branch_compare_available_refs[filtered_ref_indices[display_index]];
                 let style = if selected {
                     Style::new()
                         .bg(primary_color())

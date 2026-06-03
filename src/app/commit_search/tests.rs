@@ -38,3 +38,21 @@ fn commit_search_filter_and_clamp_follow_filtered_entries() {
         Some("refactor parser".to_string())
     );
 }
+
+#[test]
+fn commit_search_exact_query_syntax_does_not_fall_back_to_fuzzy() {
+    let mut app = build_test_app();
+    app.commit_search_entries = vec![
+        build_commit_entry("aaaaaaaa", "aaaaaaa", "render pipeline"),
+        build_commit_entry("bbbbbbbb", "bbbbbbb", "repair parser"),
+    ];
+
+    app.commit_search_query = "rp".to_string();
+    assert!(!app.filtered_commit_search_indices().is_empty());
+
+    app.commit_search_query = "'rp".to_string();
+    assert_eq!(app.filtered_commit_search_indices(), Vec::<usize>::new());
+
+    app.commit_search_query = "'render".to_string();
+    assert_eq!(app.filtered_commit_search_indices(), vec![0]);
+}
