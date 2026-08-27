@@ -8,7 +8,8 @@ use ratatui::{
 use crate::app::{ActivePane, App};
 
 use super::{
-    border_active_color, border_color, bordered_panel, primary_color, selected_list_item_text_color,
+    border_active_color, border_color, bordered_panel, primary_color,
+    selected_list_item_text_color, status::sidebar_change_summary,
 };
 
 mod row;
@@ -18,7 +19,7 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = bordered_panel(
         "Changed Files",
         app.active_pane == ActivePane::Sidebar,
-        Some(format!("{}", app.files.len())),
+        Some(sidebar_change_summary(app)),
     );
     let inner = block.inner(area);
     frame.render_widget(block, area);

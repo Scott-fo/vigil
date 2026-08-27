@@ -29,7 +29,7 @@ fn hex_color(value: &str) -> Option<Color> {
 
 pub(super) fn sidebar_status_label(status: &str) -> String {
     if status == "??" {
-        return "A".to_string();
+        return "?".to_string();
     }
 
     for marker in ['D', 'A', 'M', 'R', 'C', 'U'] {
@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(sidebar_status_label("M "), "M");
         assert_eq!(sidebar_status_label("MM"), "M");
         assert_eq!(sidebar_status_label("A "), "A");
-        assert_eq!(sidebar_status_label("??"), "A");
+        assert_eq!(sidebar_status_label("??"), "?");
         assert_eq!(sidebar_status_label(" D"), "D");
     }
 

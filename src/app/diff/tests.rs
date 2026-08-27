@@ -604,6 +604,7 @@ fn diff_stats_state_reports_fast_stats_before_snapshot() {
         deletions: 8,
         lines: 29,
         split_lines: 29,
+        ..git::ReviewDiffStats::default()
     });
 
     let DiffStatsState::Ready(stats) = app.diff_stats_state() else {
@@ -614,6 +615,83 @@ fn diff_stats_state_reports_fast_stats_before_snapshot() {
     assert_eq!(stats.additions, 21);
     assert_eq!(stats.deletions, 8);
     assert_eq!(stats.lines, 29);
+}
+
+#[test]
+fn diff_stats_state_splits_working_tree_tracked_and_untracked() {
+    let mut app = build_test_app();
+    app.files = vec![
+        FileEntry {
+            status: " M".to_string(),
+            path: "src/file-0.rs".to_string(),
+            label: "file-0.rs".to_string(),
+            filetype: Some("rust"),
+        },
+        FileEntry {
+            status: "??".to_string(),
+            path: "src/new.rs".to_string(),
+            label: "new.rs".to_string(),
+            filetype: Some("rust"),
+        },
+    ];
+    app.review_diff_snapshot = Some(Arc::new(
+        git::ReviewDiffSnapshot::from_diff_text(
+            concat!(
+                "diff --git a/src/file-0.rs b/src/file-0.rs\n",
+                "--- a/src/file-0.rs\n",
+                "+++ b/src/file-0.rs\n",
+                "@@ -1,1 +1,2 @@\n",
+                " fn existing() {}\n",
+                "+fn from_snapshot() {}\n",
+                "diff --git a/src/new.rs b/src/new.rs\n",
+                "new file mode 100644\n",
+                "--- /dev/null\n",
+                "+++ b/src/new.rs\n",
+                "@@ -0,0 +1,2 @@\n",
+                "+fn added() {}\n",
+                "+fn extra() {}\n",
+            ),
+            Some("test-snapshot"),
+        )
+        .expect("snapshot fixture should parse")
+        .with_generation(app.diff_cache_generation),
+    ));
+
+    let DiffStatsState::Ready(stats) = app.diff_stats_state() else {
+        panic!("working tree snapshot should produce ready diff stats");
+    };
+
+    assert_eq!(stats.file_count, 2);
+    assert_eq!(stats.additions, 3);
+    assert_eq!(stats.deletions, 0);
+    assert_eq!(stats.tracked.map(|scope| scope.file_count), Some(1));
+    assert_eq!(stats.tracked.map(|scope| scope.additions), Some(1));
+    assert_eq!(stats.untracked.map(|scope| scope.file_count), Some(1));
+    assert_eq!(stats.untracked.map(|scope| scope.additions), Some(2));
+}
+
+#[test]
+fn review_diff_stats_loaded_redraws_status_when_modal_is_closed() {
+    let mut app = build_test_app();
+    app.review_diff_stats_request_id = 3;
+    app.diff_cache_generation = 4;
+
+    let redraw = app.handle_review_diff_stats_loaded(
+        3,
+        4,
+        Ok(git::ReviewDiffStats {
+            file_count: 2,
+            additions: 5,
+            deletions: 1,
+            lines: 6,
+            split_lines: 6,
+            ..git::ReviewDiffStats::default()
+        }),
+    );
+
+    assert!(redraw);
+    assert!(!app.diff_stats_modal_open);
+    assert_eq!(app.review_diff_stats.map(|stats| stats.additions), Some(5));
 }
 
 #[tokio::test]

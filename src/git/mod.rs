@@ -21,8 +21,8 @@ pub use commit::{
 pub use diff::{
     ChangeType, CodeColumnType, CodeOverflow, DiffDisplayLineAnchor, DiffExactContext,
     DiffFileMetrics, DiffHunkResolution, DiffIconType, DiffIndicators, DiffIterationOptions,
-    DiffLine, DiffLineAnnotation, DiffLineMetadata, DiffLineType, DiffPreviewData, DiffSearchIndex,
-    DiffSearchLineKind, DiffSearchMatcher, DiffSearchMode, DiffSearchOptions,
+    DiffLine, DiffLineAnnotation, DiffLineMetadata, DiffLineTotals, DiffLineType, DiffPreviewData,
+    DiffSearchIndex, DiffSearchLineKind, DiffSearchMatcher, DiffSearchMode, DiffSearchOptions,
     DiffSearchPreviewLine, DiffSearchResult, DiffSearchResults, DiffSearchSyntaxRange,
     DiffSelectionPane, DiffSelectionPoint, DiffStyle, DiffView, EstimatedDiffHeightOptions,
     EstimatedDiffHeights, ExpandedHunks, ExpandedRegion, FileContents, FileDiffMetadata,
@@ -82,7 +82,7 @@ pub use repo::{
 };
 pub use status::{
     WorkingTreeStatus, discard_file_changes, is_file_fully_staged, is_file_staged,
-    load_files_with_status, load_status_for_path, load_working_tree_status,
+    is_untracked_status, load_files_with_status, load_status_for_path, load_working_tree_status,
     should_refresh_for_paths, stage_all_changes, status_color, toggle_file_stage,
     unstage_all_changes,
 };

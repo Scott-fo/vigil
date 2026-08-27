@@ -6,6 +6,9 @@
 //! unusual bytes. Callers should treat the returned line totals as changed-line
 //! totals; richer rendered diff line counts are supplied later by the parsed
 //! review snapshot when it finishes.
+//!
+//! Working-tree stats keep tracked edits and untracked new files as separate
+//! scopes. Untracked files are counted as additions only.
 
 use std::path::Path;
 
@@ -14,10 +17,29 @@ use tokio::{fs, io::AsyncReadExt, task::JoinSet};
 
 use crate::git::{
     BranchCompareSelection, CommitCompareSelection, FileEntry, command::git_output_bytes,
-    parse::build_branch_diff_range,
+    parse::build_branch_diff_range, status::is_untracked_status,
 };
 
 const UNTRACKED_STATS_CONCURRENCY: usize = 16;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DiffLineTotals {
+    pub file_count: usize,
+    pub additions: usize,
+    pub deletions: usize,
+    pub lines: usize,
+    pub split_lines: usize,
+}
+
+impl DiffLineTotals {
+    fn saturating_add_assign(&mut self, rhs: Self) {
+        self.file_count = self.file_count.saturating_add(rhs.file_count);
+        self.additions = self.additions.saturating_add(rhs.additions);
+        self.deletions = self.deletions.saturating_add(rhs.deletions);
+        self.lines = self.lines.saturating_add(rhs.lines);
+        self.split_lines = self.split_lines.saturating_add(rhs.split_lines);
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReviewDiffStats {
@@ -26,6 +48,8 @@ pub struct ReviewDiffStats {
     pub deletions: usize,
     pub lines: usize,
     pub split_lines: usize,
+    pub tracked: Option<DiffLineTotals>,
+    pub untracked: Option<DiffLineTotals>,
 }
 
 impl ReviewDiffStats {
@@ -37,25 +61,49 @@ impl ReviewDiffStats {
         self.lines = self.lines.saturating_add(changed_lines);
         self.split_lines = self.split_lines.saturating_add(changed_lines);
     }
+
+    pub(crate) fn with_working_tree_scopes(mut self, tracked: Self, untracked: Self) -> Self {
+        self.tracked = Some(tracked.scope());
+        self.untracked = Some(untracked.scope());
+        self
+    }
+
+    pub fn has_working_tree_scopes(&self) -> bool {
+        self.tracked.is_some() && self.untracked.is_some()
+    }
+
+    pub fn totals(&self) -> DiffLineTotals {
+        self.scope()
+    }
+
+    fn scope(&self) -> DiffLineTotals {
+        DiffLineTotals {
+            file_count: self.file_count,
+            additions: self.additions,
+            deletions: self.deletions,
+            lines: self.lines,
+            split_lines: self.split_lines,
+        }
+    }
 }
 
 pub async fn load_review_diff_stats_for_working_tree(
     repo_root: &Path,
     files: &[FileEntry],
 ) -> color_eyre::Result<ReviewDiffStats> {
-    let mut stats = ReviewDiffStats::default();
+    let mut tracked = ReviewDiffStats::default();
 
-    if files.iter().any(|file| file.status != "??") {
+    if files.iter().any(|file| !is_untracked_status(&file.status)) {
         let output = git_output_bytes(
             repo_root,
             &["diff", "--numstat", "-z", "--find-renames", "HEAD", "--"],
         )
         .await?;
-        stats += parse_numstat(&output);
+        tracked = parse_numstat(&output);
     }
 
-    stats += load_untracked_file_stats(repo_root, files).await?;
-    Ok(stats)
+    let untracked = load_untracked_file_stats(repo_root, files).await?;
+    Ok((tracked + untracked).with_working_tree_scopes(tracked, untracked))
 }
 
 pub async fn load_review_diff_stats_for_commit_compare(
@@ -103,7 +151,10 @@ async fn load_untracked_file_stats(
     let mut stats = ReviewDiffStats::default();
     let mut jobs = JoinSet::new();
 
-    for file in files.iter().filter(|file| file.status == "??") {
+    for file in files
+        .iter()
+        .filter(|file| is_untracked_status(&file.status))
+    {
         while jobs.len() >= UNTRACKED_STATS_CONCURRENCY {
             if let Some(result) = jobs.join_next().await {
                 stats += result.wrap_err("untracked stats task failed")?;
@@ -242,6 +293,19 @@ impl std::ops::AddAssign for ReviewDiffStats {
         self.deletions = self.deletions.saturating_add(rhs.deletions);
         self.lines = self.lines.saturating_add(rhs.lines);
         self.split_lines = self.split_lines.saturating_add(rhs.split_lines);
+        self.tracked = merge_scope(self.tracked, rhs.tracked);
+        self.untracked = merge_scope(self.untracked, rhs.untracked);
+    }
+}
+
+fn merge_scope(lhs: Option<DiffLineTotals>, rhs: Option<DiffLineTotals>) -> Option<DiffLineTotals> {
+    match (lhs, rhs) {
+        (None, None) => None,
+        (Some(scope), None) | (None, Some(scope)) => Some(scope),
+        (Some(mut lhs), Some(rhs)) => {
+            lhs.saturating_add_assign(rhs);
+            Some(lhs)
+        }
     }
 }
 
@@ -270,6 +334,7 @@ mod tests {
                 deletions: 3,
                 lines: 15,
                 split_lines: 15,
+                ..ReviewDiffStats::default()
             }
         );
     }
@@ -299,6 +364,40 @@ mod tests {
         assert_eq!(line_count_for_test(b"one\n"), 1);
         assert_eq!(line_count_for_test(b"one\ntwo"), 2);
         assert_eq!(line_count_for_test(b"one\ntwo\n"), 2);
+    }
+
+    #[test]
+    fn working_tree_scopes_keep_tracked_and_untracked_separate() {
+        let mut tracked = ReviewDiffStats::default();
+        tracked.add_file(4, 2);
+        let mut untracked = ReviewDiffStats::default();
+        untracked.add_file(9, 0);
+
+        let stats = (tracked + untracked).with_working_tree_scopes(tracked, untracked);
+
+        assert_eq!(stats.file_count, 2);
+        assert_eq!(stats.additions, 13);
+        assert_eq!(stats.deletions, 2);
+        assert_eq!(
+            stats.tracked,
+            Some(DiffLineTotals {
+                file_count: 1,
+                additions: 4,
+                deletions: 2,
+                lines: 6,
+                split_lines: 6,
+            })
+        );
+        assert_eq!(
+            stats.untracked,
+            Some(DiffLineTotals {
+                file_count: 1,
+                additions: 9,
+                deletions: 0,
+                lines: 9,
+                split_lines: 9,
+            })
+        );
     }
 
     fn line_count_for_test(bytes: &[u8]) -> usize {

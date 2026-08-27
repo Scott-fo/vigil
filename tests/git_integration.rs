@@ -328,6 +328,41 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
 }
 
 #[tokio::test]
+async fn working_tree_diff_stats_split_tracked_and_untracked_line_counts() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("src/lib.rs", "pub fn tracked() {}\n");
+    repo.commit_all("initial state", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    repo.append("src/lib.rs", "pub fn changed() {}\n");
+    repo.write("new/script.rs", "fn added() {}\nfn extra() {}\n");
+
+    let files = git::load_files_with_status(&repo.root).await?;
+    let stats = git::load_review_diff_stats_for_working_tree(&repo.root, &files).await?;
+    let tracked = stats.tracked.expect("tracked scope");
+    let untracked = stats.untracked.expect("untracked scope");
+
+    assert_eq!(tracked.file_count, 1);
+    assert_eq!(tracked.additions, 1);
+    assert_eq!(tracked.deletions, 0);
+    assert_eq!(untracked.file_count, 1);
+    assert_eq!(untracked.additions, 2);
+    assert_eq!(untracked.deletions, 0);
+    assert_eq!(stats.file_count, 2);
+    assert_eq!(stats.additions, 3);
+
+    let snapshot = git::load_review_diff_snapshot_for_working_tree(&repo.root, &files).await?;
+    let snapshot_stats = snapshot.stats_for_working_tree(&files);
+    assert_eq!(snapshot_stats.tracked.map(|scope| scope.additions), Some(1));
+    assert_eq!(
+        snapshot_stats.untracked.map(|scope| scope.additions),
+        Some(2)
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn stage_all_changes_stages_tracked_and_untracked_files() -> Result<()> {
     let repo = TestRepo::init().await?;
     repo.write("src/lib.rs", "pub fn tracked() {}\n");

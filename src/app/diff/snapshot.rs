@@ -204,15 +204,18 @@ impl App {
         self.review_diff_snapshot_task = None;
         match result {
             Ok(snapshot) => {
-                self.review_diff_stats = Some(snapshot.stats());
+                self.review_diff_stats = Some(match self.review_mode {
+                    ReviewMode::WorkingTree => snapshot.stats_for_working_tree(&self.files),
+                    ReviewMode::CommitCompare(_) | ReviewMode::BranchCompare(_) => snapshot.stats(),
+                });
                 self.review_diff_stats_error = None;
                 self.review_diff_snapshot = Some(Arc::new(snapshot));
                 if !self.diff_search_index_is_complete() && self.diff_search_load_task.is_none() {
                     self.queue_diff_search_index_load();
                 }
-                let changed = self.load_selected_diff_from_review_snapshot();
+                let _ = self.load_selected_diff_from_review_snapshot();
                 self.spawn_diff_prefetch();
-                changed || self.diff_search_modal_open
+                true
             }
             Err(error) => {
                 self.review_diff_snapshot = None;

@@ -310,6 +310,41 @@ fn review_diff_snapshot_builds_views_metrics_and_search_index_from_parsed_metada
     assert_eq!(stats.additions, 3);
     assert_eq!(stats.deletions, 2);
     assert_eq!(stats.lines, 6);
+    assert!(stats.tracked.is_none());
+    assert!(stats.untracked.is_none());
+
+    let working_tree_stats = snapshot.stats_for_working_tree(&[
+        FileEntry {
+            status: " M".to_string(),
+            path: "src/a.rs".to_string(),
+            label: "a.rs".to_string(),
+            filetype: Some("rust"),
+        },
+        FileEntry {
+            status: "??".to_string(),
+            path: "src/b.rs".to_string(),
+            label: "b.rs".to_string(),
+            filetype: Some("rust"),
+        },
+    ]);
+    assert_eq!(working_tree_stats.additions, 3);
+    assert_eq!(working_tree_stats.deletions, 2);
+    assert_eq!(
+        working_tree_stats.tracked.map(|scope| scope.additions),
+        Some(2)
+    );
+    assert_eq!(
+        working_tree_stats.tracked.map(|scope| scope.deletions),
+        Some(1)
+    );
+    assert_eq!(
+        working_tree_stats.untracked.map(|scope| scope.additions),
+        Some(1)
+    );
+    assert_eq!(
+        working_tree_stats.untracked.map(|scope| scope.deletions),
+        Some(1)
+    );
 
     let view = snapshot
         .build_diff_view(&FileEntry {

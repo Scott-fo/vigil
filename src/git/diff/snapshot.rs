@@ -4,7 +4,10 @@
 //! Callers can build individual file views from this metadata without running
 //! another `git diff` process or reparsing a per-file patch string.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use color_eyre::eyre::WrapErr;
 use tokio::task;
@@ -16,7 +19,7 @@ use super::{
 };
 use crate::git::{
     BranchCompareSelection, CommitCompareSelection, FileEntry, command::git_output,
-    parse::build_branch_diff_range,
+    parse::build_branch_diff_range, status::is_untracked_status,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -70,19 +73,32 @@ impl ReviewDiffSnapshot {
     }
 
     pub fn stats(&self) -> ReviewDiffStats {
-        self.metrics.values().fold(
-            ReviewDiffStats {
-                file_count: self.file_count(),
-                ..ReviewDiffStats::default()
-            },
-            |mut stats, metrics| {
-                stats.additions += metrics.addition_line_count;
-                stats.deletions += metrics.deletion_line_count;
-                stats.lines += metrics.unified_line_count;
-                stats.split_lines += metrics.split_line_count;
+        self.metrics
+            .values()
+            .fold(ReviewDiffStats::default(), |mut stats, metrics| {
+                add_file_metrics(&mut stats, metrics);
                 stats
-            },
-        )
+            })
+    }
+
+    pub fn stats_for_working_tree(&self, files: &[FileEntry]) -> ReviewDiffStats {
+        let untracked_paths = files
+            .iter()
+            .filter(|file| is_untracked_status(&file.status))
+            .map(|file| file.path.as_str())
+            .collect::<HashSet<_>>();
+
+        let mut tracked = ReviewDiffStats::default();
+        let mut untracked = ReviewDiffStats::default();
+        for (path, metrics) in &self.metrics {
+            if untracked_paths.contains(path.as_str()) {
+                add_file_metrics(&mut untracked, metrics);
+            } else {
+                add_file_metrics(&mut tracked, metrics);
+            }
+        }
+
+        (tracked + untracked).with_working_tree_scopes(tracked, untracked)
     }
 
     pub fn contains_file(&self, path: &str) -> bool {
@@ -156,7 +172,7 @@ pub async fn load_review_diff_snapshot_for_working_tree(
 
     let mut snapshot = ReviewDiffSnapshot::default();
 
-    if files.iter().any(|file| file.status != "??") {
+    if files.iter().any(|file| !is_untracked_status(&file.status)) {
         let diff = git_output(
             repo_root,
             &["diff", "--no-color", "--find-renames", "HEAD", "--"],
@@ -165,7 +181,10 @@ pub async fn load_review_diff_snapshot_for_working_tree(
         snapshot = snapshot_from_diff_text(diff, Some("working-tree")).await?;
     }
 
-    for file in files.iter().filter(|file| file.status == "??") {
+    for file in files
+        .iter()
+        .filter(|file| is_untracked_status(&file.status))
+    {
         let preview = load_diff_preview_for_working_tree(repo_root, file, false).await?;
         snapshot.append_preview_data(&preview)?;
     }
@@ -227,4 +246,12 @@ async fn snapshot_from_diff_text(
 
 fn is_unmerged_status(status: &str) -> bool {
     status.contains('U')
+}
+
+fn add_file_metrics(stats: &mut ReviewDiffStats, metrics: &DiffFileMetrics) {
+    stats.file_count = stats.file_count.saturating_add(1);
+    stats.additions = stats.additions.saturating_add(metrics.addition_line_count);
+    stats.deletions = stats.deletions.saturating_add(metrics.deletion_line_count);
+    stats.lines = stats.lines.saturating_add(metrics.unified_line_count);
+    stats.split_lines = stats.split_lines.saturating_add(metrics.split_line_count);
 }

@@ -32,13 +32,20 @@ impl App {
         }
     }
 
-    pub(in crate::app) fn current_status_message(&self) -> String {
+    pub(crate) fn current_status_message(&self) -> String {
         self.repo_error
             .clone()
             .unwrap_or_else(|| self.default_status_message())
     }
 
-    fn default_status_message(&self) -> String {
+    pub fn shows_review_summary_status(&self) -> bool {
+        match self.status_message.as_deref() {
+            None => true,
+            Some(message) => message == self.default_status_message(),
+        }
+    }
+
+    pub(crate) fn default_status_message(&self) -> String {
         match &self.review_mode {
             ReviewMode::WorkingTree => format!(
                 "{} changed file{}",

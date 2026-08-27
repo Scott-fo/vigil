@@ -2,8 +2,12 @@ use std::path::Path;
 
 use super::super::{FileEntry, command::git_success};
 
+pub fn is_untracked_status(status: &str) -> bool {
+    status == "??"
+}
+
 pub fn is_file_staged(status: &str) -> bool {
-    if status == "??" {
+    if is_untracked_status(status) {
         return false;
     }
 
@@ -12,7 +16,7 @@ pub fn is_file_staged(status: &str) -> bool {
 }
 
 pub fn is_file_fully_staged(status: &str) -> bool {
-    if status == "??" {
+    if is_untracked_status(status) {
         return false;
     }
 
@@ -43,7 +47,7 @@ pub async fn unstage_all_changes(repo_root: &Path) -> color_eyre::Result<()> {
 }
 
 pub async fn discard_file_changes(repo_root: &Path, file: &FileEntry) -> color_eyre::Result<()> {
-    if file.status == "??" {
+    if is_untracked_status(&file.status) {
         git_success(repo_root, &["clean", "-f", "--", file.path.as_str()]).await
     } else {
         git_success(

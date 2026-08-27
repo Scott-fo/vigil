@@ -18,7 +18,7 @@ pub use self::{
     },
     refresh::should_refresh_for_paths,
     stage::{
-        discard_file_changes, is_file_fully_staged, is_file_staged, stage_all_changes,
-        toggle_file_stage, unstage_all_changes,
+        discard_file_changes, is_file_fully_staged, is_file_staged, is_untracked_status,
+        stage_all_changes, toggle_file_stage, unstage_all_changes,
     },
 };

@@ -93,7 +93,7 @@ pub use self::snapshot::{
     load_review_diff_snapshot_for_commit_compare, load_review_diff_snapshot_for_working_tree,
 };
 pub use self::stats::{
-    ReviewDiffStats, load_review_diff_stats_for_branch_compare,
+    DiffLineTotals, ReviewDiffStats, load_review_diff_stats_for_branch_compare,
     load_review_diff_stats_for_commit_compare, load_review_diff_stats_for_working_tree,
 };
 pub use self::text_index::{

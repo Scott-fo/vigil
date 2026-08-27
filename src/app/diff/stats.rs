@@ -20,7 +20,10 @@ pub enum DiffStatsState {
 impl App {
     pub fn diff_stats_state(&self) -> DiffStatsState {
         if let Some(snapshot) = self.review_diff_snapshot.as_ref() {
-            return DiffStatsState::Ready(snapshot.stats());
+            return DiffStatsState::Ready(match self.review_mode {
+                ReviewMode::WorkingTree => snapshot.stats_for_working_tree(&self.files),
+                ReviewMode::CommitCompare(_) | ReviewMode::BranchCompare(_) => snapshot.stats(),
+            });
         }
 
         if let Some(stats) = self.review_diff_stats {
@@ -114,7 +117,7 @@ impl App {
                 self.review_diff_stats_error = Some(error);
             }
         }
-        self.diff_stats_modal_open
+        true
     }
 
     pub(in crate::app) fn handle_diff_stats_modal_key(&mut self, key_event: KeyEvent) -> bool {
