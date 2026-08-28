@@ -1,7 +1,7 @@
 use crate::git::FileEntry;
 
 use super::super::App;
-use super::focus::{first_file_path, selected_visible_file_index, visible_file_paths};
+use super::focus::{selected_visible_file_index, visible_file_paths};
 
 impl App {
     pub(in crate::app) fn selected_file(&self) -> Option<&FileEntry> {
@@ -14,10 +14,6 @@ impl App {
 
     pub(in crate::app) fn visible_file_paths(&self) -> Vec<String> {
         visible_file_paths(&self.sidebar_items)
-    }
-
-    pub(in crate::app) fn first_sidebar_file_path(&self) -> Option<&str> {
-        first_file_path(&self.sidebar_items)
     }
 
     pub(in crate::app) fn selected_visible_file_index(&self) -> Option<usize> {

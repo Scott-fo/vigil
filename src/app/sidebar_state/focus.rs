@@ -7,12 +7,6 @@ pub(super) fn visible_file_paths(items: &[SidebarItem]) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn first_file_path(items: &[SidebarItem]) -> Option<&str> {
-    items
-        .iter()
-        .find_map(|item| item.file().map(|file| file.path.as_str()))
-}
-
 pub(super) fn selected_visible_file_index(
     items: &[SidebarItem],
     selected_path: &str,

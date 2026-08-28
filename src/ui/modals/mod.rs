@@ -6,6 +6,7 @@ mod commit_search;
 mod diff_search;
 mod diff_stats;
 mod discard;
+mod file_filter;
 mod file_search;
 mod frame;
 mod help;
@@ -27,6 +28,7 @@ use self::{
     diff_search::render_diff_search_modal,
     diff_stats::render_diff_stats_modal,
     discard::render_discard_modal,
+    file_filter::render_file_filter_modal,
     file_search::render_file_search_modal,
     help::render_help_modal,
     review::{render_review_context_modal, render_review_summary_modal},
@@ -49,6 +51,10 @@ pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
 
     if app.file_search_modal_open {
         render_file_search_modal(frame, app);
+    }
+
+    if app.file_filter_modal_open {
+        render_file_filter_modal(frame, app);
     }
 
     if app.diff_search_modal_open {

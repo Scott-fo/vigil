@@ -39,7 +39,7 @@ impl ThemeMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TuiPreference {
     pub theme: Option<String>,
     #[serde(rename = "theme_mode")]
@@ -48,6 +48,8 @@ pub struct TuiPreference {
     pub diff_view_mode: Option<String>,
     #[serde(rename = "diff_line_wrap_mode")]
     pub diff_line_wrap_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_file_suffixes: Vec<String>,
 }
 
 static ACTIVE_THEME_INDEX: AtomicUsize = AtomicUsize::new(0);

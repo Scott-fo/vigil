@@ -48,6 +48,7 @@ impl App {
             || self.branch_compare_modal_open
             || self.branch_merge_target.is_some()
             || self.diff_search_modal_open
+            || self.file_filter_modal_open
             || self.worktree_modal_open
     }
 

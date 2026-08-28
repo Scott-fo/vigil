@@ -8,6 +8,7 @@ pub(super) struct LaunchPreference {
     pub theme_mode: ThemeMode,
     pub diff_view_mode: DiffViewMode,
     pub diff_line_wrap_mode: DiffLineWrapMode,
+    pub exclude_file_suffixes: Vec<String>,
 }
 
 impl LaunchPreference {
@@ -26,6 +27,7 @@ impl LaunchPreference {
                 .as_deref()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or_default(),
+            exclude_file_suffixes: preference.exclude_file_suffixes,
         }
     }
 
@@ -35,6 +37,7 @@ impl LaunchPreference {
             theme_mode: ThemeMode::Dark,
             diff_view_mode: DiffViewMode::Split,
             diff_line_wrap_mode: DiffLineWrapMode::default(),
+            exclude_file_suffixes: Vec::new(),
         }
     }
 }

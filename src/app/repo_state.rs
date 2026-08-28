@@ -112,6 +112,12 @@ impl App {
         self.repo_request_id
     }
 
+    pub(in crate::app) fn restore_selected_file(&mut self, previously_selected: Option<&str>) {
+        self.selected_file_index =
+            refreshed_file_index(previously_selected, &self.files, &self.sidebar_items);
+        self.sync_sidebar_state();
+    }
+
     fn apply_refreshed_files(
         &mut self,
         previously_selected: Option<String>,
@@ -125,16 +131,8 @@ impl App {
         self.diff_view_cache.clear();
         self.diff_prefetch_direction = Default::default();
         self.diff_prefetch_anchor_file_index = None;
-        self.files = files;
-        self.rebuild_sidebar_items();
-
-        self.selected_file_index = refreshed_file_index(
-            previously_selected.as_deref(),
-            &self.files,
-            &self.sidebar_items,
-        );
-
-        self.sync_sidebar_state();
+        self.loaded_files = files;
+        self.rebuild_visible_file_list(previously_selected.as_deref());
         self.spawn_highlight_registry_init();
         self.queue_review_diff_stats_load();
         self.queue_review_diff_snapshot_load();
@@ -165,6 +163,7 @@ impl App {
         self.repo_loading = false;
         self.repo_watcher = None;
         self.repo_watcher_loading = false;
+        self.loaded_files.clear();
         self.files.clear();
         self.diff_prefetch_direction = Default::default();
         self.diff_prefetch_anchor_file_index = None;

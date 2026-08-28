@@ -10,15 +10,15 @@ impl App {
         let previously_selected = self.selected_file().map(|file| file.path.clone());
         let updated_file = git::load_status_for_path(&self.repo_root, path).await?;
 
-        if let Some(index) = self.file_index_by_path(path) {
+        if let Some(index) = self.loaded_files.iter().position(|file| file.path == path) {
             match updated_file {
-                Some(file) => self.files[index] = file,
+                Some(file) => self.loaded_files[index] = file,
                 None => {
-                    self.files.remove(index);
+                    self.loaded_files.remove(index);
                 }
             }
         } else if let Some(file) = updated_file {
-            self.files.push(file);
+            self.loaded_files.push(file);
         }
 
         self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
@@ -28,18 +28,7 @@ impl App {
         self.pending_diff_cache_key = None;
         self.diff_prefetch_direction = Default::default();
         self.diff_prefetch_anchor_file_index = None;
-        self.rebuild_sidebar_items();
-
-        self.selected_file_index = previously_selected
-            .as_deref()
-            .and_then(|selected_path| self.file_index_by_path(selected_path))
-            .or_else(|| {
-                self.first_sidebar_file_path()
-                    .and_then(|first_path| self.file_index_by_path(first_path))
-            })
-            .unwrap_or(0);
-
-        self.sync_sidebar_state();
+        self.rebuild_visible_file_list(previously_selected.as_deref());
         self.queue_review_diff_stats_load();
         self.queue_review_diff_snapshot_load();
         self.queue_diff_search_index_load();

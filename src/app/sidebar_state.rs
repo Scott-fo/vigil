@@ -10,7 +10,7 @@ mod viewport;
 mod visibility;
 
 impl App {
-    pub(super) fn rebuild_sidebar_items(&mut self) {
+    pub(in crate::app) fn rebuild_sidebar_items(&mut self) {
         self.sidebar_items = sidebar::build_sidebar_items(&self.files, &self.collapsed_directories);
     }
 

@@ -4,7 +4,10 @@ use super::super::{App, ReviewMode};
 
 impl App {
     pub fn show_splash(&self) -> bool {
-        self.repo_error.is_some() || (self.is_working_tree_mode() && self.files.is_empty())
+        self.repo_error.is_some()
+            || (self.is_working_tree_mode()
+                && self.loaded_files.is_empty()
+                && self.files.is_empty())
     }
 
     pub fn splash_error(&self) -> Option<&str> {
@@ -46,15 +49,21 @@ impl App {
     }
 
     pub(crate) fn default_status_message(&self) -> String {
+        let hidden = self.hidden_file_count();
+        let hidden_note = if hidden == 0 {
+            String::new()
+        } else {
+            format!(" ({hidden} hidden)")
+        };
         match &self.review_mode {
             ReviewMode::WorkingTree => format!(
-                "{} changed file{}",
+                "{} changed file{}{hidden_note}",
                 self.files.len(),
                 if self.files.len() == 1 { "" } else { "s" }
             ),
             ReviewMode::CommitCompare(selection) => {
                 format!(
-                    "commit {}  {} file{}",
+                    "commit {}  {} file{}{hidden_note}",
                     selection.short_hash,
                     self.files.len(),
                     if self.files.len() == 1 { "" } else { "s" }
@@ -62,7 +71,7 @@ impl App {
             }
             ReviewMode::BranchCompare(selection) => {
                 format!(
-                    "{} -> {}  {} file{}",
+                    "{} -> {}  {} file{}{hidden_note}",
                     selection.source_ref,
                     selection.destination_ref,
                     self.files.len(),

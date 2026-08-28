@@ -89,7 +89,8 @@ impl App {
             }
             KeyCode::Char('f') if key_event.modifiers == KeyModifiers::NONE => {
                 self.find_prefix_pending = true;
-                self.status_message = Some("f: f files, g diff search".to_string());
+                self.status_message =
+                    Some("f: f files, g diff search, x hide suffixes".to_string());
                 handled()
             }
             KeyCode::Char('c') => {
@@ -156,6 +157,10 @@ impl App {
             }
             KeyCode::Char('g') if key_event.modifiers == KeyModifiers::NONE => {
                 self.open_diff_search_modal();
+                handled()
+            }
+            KeyCode::Char('x') if key_event.modifiers == KeyModifiers::NONE => {
+                self.open_file_filter_modal();
                 handled()
             }
             _ => handled(),

@@ -39,6 +39,10 @@ impl App {
             return Ok(true);
         }
 
+        if self.handle_file_filter_key(key_event)? {
+            return Ok(true);
+        }
+
         if self.handle_diff_search_key(key_event).await? {
             return Ok(true);
         }

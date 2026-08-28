@@ -32,7 +32,7 @@ async fn global_shortcuts_use_ff_for_file_search_fg_for_diff_search_and_p_for_pu
     assert!(!app.diff_search_modal_open);
     assert_eq!(
         app.status_message.as_deref(),
-        Some("f: f files, g diff search")
+        Some("f: f files, g diff search, x hide suffixes")
     );
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
@@ -43,6 +43,17 @@ async fn global_shortcuts_use_ff_for_file_search_fg_for_diff_search_and_p_for_pu
     assert!(app.remote_sync.is_none());
 
     app.file_search_modal_open = false;
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(app.file_filter_modal_open);
+    assert!(!app.file_search_modal_open);
+
+    app.file_filter_modal_open = false;
     app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
         .await
         .unwrap();

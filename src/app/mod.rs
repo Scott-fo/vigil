@@ -20,6 +20,7 @@ mod diff;
 mod diff_search;
 mod discard_modal;
 mod editor;
+mod file_filter;
 mod file_search;
 mod help_modal;
 mod input;
@@ -39,6 +40,7 @@ mod worktree;
 pub use self::diff::{DiffCacheKey, DiffStatsState, PreparedDiffViewport};
 use self::diff::{DiffHighlightJob, DiffPrefetchDirection, DiffViewCache, DiffViewport};
 use self::diff_search::{DiffSearchIndexReadiness, DiffSearchNavigationTarget};
+use self::file_filter::ExcludeSuffixes;
 pub use self::launch::AppLaunchOptions;
 use self::modal_lookup::ModalLookupIndex;
 use crate::{
@@ -159,6 +161,8 @@ pub struct App {
     pub active_pane: ActivePane,
     pub review_mode: ReviewMode,
     pub files: Vec<FileEntry>,
+    loaded_files: Vec<FileEntry>,
+    file_exclude_suffixes: ExcludeSuffixes,
     pub sidebar_items: Vec<SidebarItem>,
     pub collapsed_directories: HashSet<String>,
     pub sidebar_state: ListState,
@@ -219,6 +223,8 @@ pub struct App {
     pub theme_name: String,
     pub theme_mode: ThemeMode,
     pub theme_matcher: Matcher,
+    pub file_filter_modal_open: bool,
+    pub file_filter_query: String,
     pub file_search_modal_open: bool,
     pub file_search_query: String,
     pub file_search_selected_index: usize,
