@@ -462,3 +462,38 @@ async fn sidebar_focus_can_toggle_flattened_directories_and_select_files() {
         Some("README.md")
     );
 }
+
+#[test]
+fn mouse_moves_only_request_redraws_when_the_hover_target_changes() {
+    use ratatui::layout::Position;
+
+    let mut app = build_test_app();
+    app.files = ["src/lib.rs", "src/main.rs"]
+        .into_iter()
+        .map(|path| FileEntry {
+            status: " M".to_string(),
+            path: path.to_string(),
+            label: path.rsplit('/').next().unwrap().to_string(),
+            filetype: Some("rust"),
+        })
+        .collect();
+    app.rebuild_sidebar_items();
+    let (width, height) = (120, 30);
+
+    // Sidebar list rows start one below the title row.
+    assert!(app.set_mouse_position(Position::new(5, 1), width, height));
+    assert!(
+        !app.set_mouse_position(Position::new(12, 1), width, height),
+        "moving along the same row keeps the same target"
+    );
+    assert!(app.set_mouse_position(Position::new(5, 2), width, height));
+    assert!(
+        app.set_mouse_position(Position::new(80, 10), width, height),
+        "leaving the sidebar clears the hover"
+    );
+    assert!(
+        !app.set_mouse_position(Position::new(90, 12), width, height),
+        "moving within the diff has no hover target"
+    );
+    assert_eq!(app.mouse_position, Some(Position::new(90, 12)));
+}

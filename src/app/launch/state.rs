@@ -41,6 +41,7 @@ impl App {
             sidebar_scroll: 0,
             sidebar_viewport_height: 0,
             sidebar_hidden: false,
+            mouse_position: None,
             selected_sidebar_row: 0,
             selected_file_index: 0,
             diff_view: Default::default(),

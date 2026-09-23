@@ -27,16 +27,18 @@ use self::{
     splash::Splash,
     status::{render_footer, render_notifications},
     style::{
-        background_color, chip_color, error_color, panel_color, primary_color, rule_color,
-        selected_list_item_text_color, selection_color, success_color, surface_color, text_color,
-        text_faint_color, text_muted_color, text_subtle_color, warning_color,
+        background_color, chip_color, error_color, hover_color, panel_color, primary_color,
+        rule_color, selected_list_item_text_color, selection_color, success_color, surface_color,
+        text_color, text_faint_color, text_muted_color, text_subtle_color, warning_color,
     },
 };
 
 pub use self::hit::{
-    diff_gap_click_at, diff_selection_drag_point_at, diff_selection_point_at, hovered_pane_at,
-    prepare_diff_viewport_for_terminal, sidebar_file_at, sidebar_item_index_at,
+    HoverTarget, diff_gap_click_at, diff_selection_drag_point_at, diff_selection_point_at,
+    footer_action_at, hover_target_at, hovered_pane_at, prepare_diff_viewport_for_terminal,
+    sidebar_file_at, sidebar_item_index_at,
 };
+pub use self::status::FooterAction;
 pub use self::style::{
     added_sign_style, context_sign_style, diff_added_emphasis_style, diff_added_style,
     diff_context_style, diff_gap_action_style, diff_gap_rule_style, diff_gap_style,
