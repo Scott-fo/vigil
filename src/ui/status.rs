@@ -340,6 +340,7 @@ fn key_hint_segments(app: &App, budget: usize) -> Vec<FooterSegment> {
         }
         _ => hints.extend([
             ("tab", "files", Some(FooterAction::SwitchPane)),
+            ("[ ]", "change", None),
             ("⏎", "open", None),
             ("fg", "search", Some(FooterAction::SearchDiff)),
             ("v", view_toggle, Some(FooterAction::ToggleDiffViewMode)),

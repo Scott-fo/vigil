@@ -1,6 +1,7 @@
 use super::highlight::SyntaxToken;
 use crate::app::{DiffLineWrapMode, DiffViewMode};
 
+mod changes;
 mod display;
 mod emphasis;
 mod equality;
@@ -23,6 +24,7 @@ mod stats;
 mod text_index;
 mod view;
 
+pub use self::changes::ChangeDirection;
 pub(super) use self::display::{
     DiffDisplayCache, DisplayNavTarget, DisplayRowRefs, DisplaySelectionLine,
     DisplaySelectionSegment,

@@ -38,7 +38,9 @@ mod working_tree_actions;
 mod worktree;
 
 pub use self::diff::{DiffCacheKey, DiffStatsState, PreparedDiffViewport};
-use self::diff::{DiffHighlightJob, DiffPrefetchDirection, DiffViewCache, DiffViewport};
+use self::diff::{
+    DiffHighlightJob, DiffPrefetchDirection, DiffViewCache, DiffViewport, PendingChangeLanding,
+};
 use self::diff_search::{DiffSearchIndexReadiness, DiffSearchNavigationTarget};
 use self::file_filter::ExcludeSuffixes;
 pub use self::launch::AppLaunchOptions;
@@ -250,6 +252,7 @@ pub struct App {
     diff_search_query_task: Option<task::JoinHandle<()>>,
     diff_search_query_cancel_token: Option<Arc<AtomicBool>>,
     pending_diff_search_target: Option<DiffSearchNavigationTarget>,
+    pending_change_landing: Option<PendingChangeLanding>,
     pub commit_search_modal_open: bool,
     pub commit_search_query: String,
     pub commit_search_entries: Vec<CommitSearchEntry>,

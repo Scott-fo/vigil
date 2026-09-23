@@ -1,6 +1,7 @@
 use super::*;
 
 mod cache;
+mod changes;
 mod highlight;
 mod load;
 mod snapshot;
@@ -14,6 +15,7 @@ pub(super) use self::cache::{
     DIFF_DIRECTIONAL_PREFETCH_DISTANCE, DIFF_PREFETCH_DISTANCE, DiffPrefetchDirection,
     DiffViewCache,
 };
+pub(super) use self::changes::PendingChangeLanding;
 pub(super) use self::highlight::DiffHighlightJob;
 #[cfg(test)]
 use self::highlight::DiffHighlightJobKind;
