@@ -181,3 +181,143 @@ fn viewport_window_range_matches_pierre_edges() {
         current
     );
 }
+
+fn grouped(
+    files: &[FileEntry],
+    collapsed_directories: &HashSet<DirectoryKey>,
+    collapsed_sections: &HashSet<SidebarSection>,
+) -> Vec<SidebarItem> {
+    build_sidebar(
+        files,
+        SidebarBuildOptions {
+            grouping: SidebarGrouping::ByStageState,
+            collapsed_directories,
+            collapsed_sections,
+        },
+    )
+}
+
+fn section_of(items: &[SidebarItem], path: &str) -> Option<SidebarSection> {
+    items
+        .iter()
+        .find(|item| item.file().is_some_and(|file| file.path == path))
+        .and_then(SidebarItem::section)
+}
+
+#[test]
+fn grouped_sidebar_splits_files_by_stage_state() {
+    let files = [
+        file("src/staged.rs", "M "),
+        file("src/added.rs", "A "),
+        file("src/edited.rs", " M"),
+        file("src/partial.rs", "MM"),
+        file("src/new.rs", "??"),
+        file("src/conflict.rs", "UU"),
+    ];
+    let items = grouped(&files, &HashSet::new(), &HashSet::new());
+
+    for path in ["src/staged.rs", "src/added.rs"] {
+        assert_eq!(
+            section_of(&items, path),
+            Some(SidebarSection::Staged),
+            "{path}"
+        );
+    }
+    for path in [
+        "src/edited.rs",
+        "src/partial.rs",
+        "src/new.rs",
+        "src/conflict.rs",
+    ] {
+        assert_eq!(
+            section_of(&items, path),
+            Some(SidebarSection::Unstaged),
+            "{path}"
+        );
+    }
+    let file_rows = items.iter().filter(|item| item.file().is_some()).count();
+    assert_eq!(file_rows, files.len(), "each file appears exactly once");
+}
+
+#[test]
+fn grouped_sidebar_omits_empty_sections_and_counts_files() {
+    let items = grouped(
+        &[file("a.rs", " M"), file("b.rs", "??")],
+        &HashSet::new(),
+        &HashSet::new(),
+    );
+
+    assert_eq!(
+        items[0],
+        SidebarItem::Section {
+            section: SidebarSection::Unstaged,
+            file_count: 2,
+            collapsed: false,
+        }
+    );
+    assert!(
+        !items
+            .iter()
+            .any(|item| item.section() == Some(SidebarSection::Staged))
+    );
+}
+
+#[test]
+fn collapsing_a_directory_only_affects_its_own_section() {
+    let files = [file("src/lib.rs", "M "), file("src/main.rs", " M")];
+    let collapsed = HashSet::from([DirectoryKey::new(Some(SidebarSection::Staged), "src")]);
+    let items = grouped(&files, &collapsed, &HashSet::new());
+
+    assert_eq!(
+        section_of(&items, "src/lib.rs"),
+        None,
+        "staged src/ is collapsed"
+    );
+    assert_eq!(
+        section_of(&items, "src/main.rs"),
+        Some(SidebarSection::Unstaged),
+        "unstaged src/ stays open"
+    );
+}
+
+#[test]
+fn collapsed_section_keeps_its_heading_but_hides_files() {
+    let files = [file("src/lib.rs", "M "), file("src/main.rs", " M")];
+    let items = grouped(
+        &files,
+        &HashSet::new(),
+        &HashSet::from([SidebarSection::Staged]),
+    );
+
+    assert_eq!(
+        items[0],
+        SidebarItem::Section {
+            section: SidebarSection::Staged,
+            file_count: 1,
+            collapsed: true,
+        }
+    );
+    assert!(matches!(
+        items[1],
+        SidebarItem::Section {
+            section: SidebarSection::Unstaged,
+            ..
+        }
+    ));
+    assert_eq!(section_of(&items, "src/lib.rs"), None);
+}
+
+#[test]
+fn tree_grouping_matches_the_ungrouped_builder() {
+    let files = [file("src/lib.rs", "M "), file("README.md", " M")];
+    let tree = build_sidebar(
+        &files,
+        SidebarBuildOptions {
+            grouping: SidebarGrouping::Tree,
+            collapsed_directories: &HashSet::new(),
+            collapsed_sections: &HashSet::new(),
+        },
+    );
+
+    assert_eq!(tree, build_sidebar_items(&files, &HashSet::new()));
+}

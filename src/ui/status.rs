@@ -11,6 +11,7 @@ use crate::app::{
     ActivePane, App, DiffStatsState, DiffViewMode, RemoteSyncDirection, ReviewMode, SnackbarVariant,
 };
 use crate::git::{DiffLineTotals, ReviewDiffStats};
+use crate::sidebar::SidebarSection;
 
 use super::layout::top_right_rect;
 use super::{
@@ -212,7 +213,11 @@ fn key_hint_spans(app: &App, budget: usize) -> Vec<Span<'static>> {
         ActivePane::Sidebar if !app.sidebar_hidden => {
             hints.push(("tab", "diff"));
             if let ReviewMode::WorkingTree = app.review_mode {
-                hints.push(("space", "stage"));
+                let action = match app.selected_file_section() {
+                    Some(SidebarSection::Staged) => "unstage",
+                    Some(SidebarSection::Unstaged) | None => "stage",
+                };
+                hints.push(("space", action));
             }
             hints.extend([("ff", "find file"), ("fg", "search"), ("v", view_toggle)]);
         }

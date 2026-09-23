@@ -3,11 +3,16 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::{git, sidebar::SidebarItem};
+use unicode_width::UnicodeWidthStr;
+
+use crate::{
+    git,
+    sidebar::{SidebarItem, SidebarSection},
+};
 
 use super::{
     super::{
-        add_bg_color, chip_color, primary_color, selection_color, text_color, text_faint_color,
+        chip_color, primary_color, selection_color, text_color, text_faint_color,
         text_subtle_color, warning_color,
     },
     text::{devicon_for_path, display_width, truncate_middle},
@@ -32,8 +37,6 @@ pub(super) enum RowSelection {
 pub(super) struct RowContext {
     pub(super) width: u16,
     pub(super) selection: RowSelection,
-    /// Only meaningful in working-tree mode; compare modes never show staging.
-    pub(super) staged: bool,
     pub(super) review_comment_count: usize,
 }
 
@@ -50,6 +53,11 @@ pub(super) fn row_line(item: &SidebarItem, context: RowContext) -> Line<'static>
 
     let mut spans = vec![accent];
     match item {
+        SidebarItem::Section {
+            section,
+            file_count,
+            collapsed,
+        } => spans.extend(section_spans(*section, *file_count, *collapsed, context)),
         SidebarItem::Header {
             label,
             depth,
@@ -58,12 +66,20 @@ pub(super) fn row_line(item: &SidebarItem, context: RowContext) -> Line<'static>
             ..
         } => spans.extend(header_spans(label, *depth, *collapsed, *matches_search)),
         SidebarItem::File {
+            section,
             file,
             label,
             depth,
             matches_search,
             ..
-        } => spans.extend(file_spans(file, label, *depth, *matches_search, context)),
+        } => spans.extend(file_spans(
+            file,
+            label,
+            *depth,
+            *matches_search,
+            *section,
+            context,
+        )),
     }
 
     let line = Line::from(spans);
@@ -75,6 +91,31 @@ pub(super) fn row_line(item: &SidebarItem, context: RowContext) -> Line<'static>
 
 fn indent(depth: usize) -> String {
     format!(" {}", INDENT_UNIT.repeat(depth))
+}
+
+/// `▾ Staged ········ 3`: a heading row that groups files by staging state.
+fn section_spans(
+    section: SidebarSection,
+    file_count: usize,
+    collapsed: bool,
+    context: RowContext,
+) -> Vec<Span<'static>> {
+    let chevron = if collapsed { "▸ " } else { "▾ " };
+    let count = file_count.to_string();
+    // accent + leading space + chevron + label + gap + count + trailing space
+    let used = 1 + 1 + 2 + section.label().width() + count.width() + 1;
+    let gap = (context.width as usize).saturating_sub(used).max(1);
+    vec![
+        Span::raw(" "),
+        Span::styled(chevron, Style::new().fg(text_faint_color())),
+        Span::styled(
+            section.label(),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" ".repeat(gap)),
+        Span::styled(count, Style::new().fg(text_faint_color())),
+        Span::raw(" "),
+    ]
 }
 
 fn header_spans(
@@ -102,9 +143,14 @@ fn file_spans(
     label: &str,
     depth: usize,
     matches_search: bool,
+    section: Option<SidebarSection>,
     context: RowContext,
 ) -> Vec<Span<'static>> {
     let indent = indent(depth);
+    // Grouped sidebars list a partially staged file under Unstaged; the half
+    // circle says some of its changes are already in the index.
+    let partially_staged = section == Some(SidebarSection::Unstaged)
+        && git::stage_state(&file.status) == git::StageState::PartiallyStaged;
     let status = git::status_label(&file.status);
     let status_color = git::status_color(&file.status);
     let deleted = status == "D";
@@ -117,12 +163,14 @@ fn file_spans(
     } else {
         ""
     };
+    let stage_marker = if partially_staged { "◐" } else { "" };
 
     // accent + indent + icon + label + gap + review marker + status slot
     let fixed_width = 1
         + display_width(&indent)
         + display_width(&icon)
         + display_width(review_marker)
+        + display_width(stage_marker)
         + STATUS_SLOT_WIDTH;
     let label_width = (context.width as usize)
         .saturating_sub(fixed_width + 1)
@@ -156,15 +204,16 @@ fn file_spans(
             Style::new().fg(warning_color()),
         ));
     }
-    let status_style = if context.staged {
-        Style::new()
-            .fg(status_color)
-            .bg(add_bg_color())
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::new().fg(status_color)
-    };
-    spans.push(Span::styled(format!(" {status:1} "), status_style));
+    if !stage_marker.is_empty() {
+        spans.push(Span::styled(
+            stage_marker,
+            Style::new().fg(text_subtle_color()),
+        ));
+    }
+    spans.push(Span::styled(
+        format!(" {status:1} "),
+        Style::new().fg(status_color),
+    ));
     spans
 }
 
@@ -174,6 +223,7 @@ mod tests {
 
     fn file_item(path: &str, status: &str, depth: usize) -> SidebarItem {
         SidebarItem::File {
+            section: None,
             file: git::FileEntry {
                 status: status.to_string(),
                 path: path.to_string(),
@@ -192,7 +242,6 @@ mod tests {
         RowContext {
             width,
             selection: RowSelection::None,
-            staged: false,
             review_comment_count: 0,
         }
     }

@@ -3,12 +3,20 @@ use super::{
     focus::{row_for_file_path, row_for_path_or_nearest},
     viewport::scroll_to_make_row_visible,
 };
+use crate::sidebar::SidebarSection;
 
 impl App {
-    pub(in crate::app) fn focus_sidebar_path_or_nearest(&mut self, path: &str) {
-        let Some(row) =
-            row_for_path_or_nearest(&self.sidebar_items, path, self.selected_sidebar_row)
-        else {
+    pub(in crate::app) fn focus_sidebar_path_or_nearest(
+        &mut self,
+        section: Option<SidebarSection>,
+        path: &str,
+    ) {
+        let Some(row) = row_for_path_or_nearest(
+            &self.sidebar_items,
+            section,
+            path,
+            self.selected_sidebar_row,
+        ) else {
             self.selected_sidebar_row = 0;
             self.sidebar_state.select(None);
             return;

@@ -81,10 +81,10 @@ pub use repo::{
     resolve_repo_root_from, revision_matches_head,
 };
 pub use status::{
-    WorkingTreeStatus, discard_file_changes, is_file_fully_staged, is_file_staged,
+    StageState, WorkingTreeStatus, discard_file_changes, is_file_fully_staged, is_file_staged,
     is_untracked_status, load_files_with_status, load_status_for_path, load_working_tree_status,
-    should_refresh_for_paths, stage_all_changes, status_color, status_label, toggle_file_stage,
-    unstage_all_changes,
+    should_refresh_for_paths, stage_all_changes, stage_file, stage_state, status_color,
+    status_label, unstage_all_changes, unstage_file,
 };
 pub use types::{
     BlameCommitDetails, BlameTarget, BranchCompareRefs, BranchCompareSelection, BranchMergeOutcome,

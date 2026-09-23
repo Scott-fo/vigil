@@ -1,9 +1,6 @@
 use ratatui::layout::{Position, Rect};
 
-use crate::{
-    app::{ActivePane, App},
-    sidebar::SidebarItem,
-};
+use crate::app::{ActivePane, App};
 
 use super::super::layout::ScreenLayout;
 
@@ -23,10 +20,7 @@ pub fn sidebar_file_at(
     )?;
     let item = app.sidebar_items.get(item_index)?;
 
-    match item {
-        SidebarItem::File { file, .. } => Some(file.path.clone()),
-        SidebarItem::Header { .. } => None,
-    }
+    item.file().map(|file| file.path.clone())
 }
 
 pub fn sidebar_item_index_at(

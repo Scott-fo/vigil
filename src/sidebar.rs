@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::git::FileEntry;
+use crate::git::{self, FileEntry};
 
 use self::search::{SearchState, resolve_search_state};
 use self::tree::{FileTreeNode, build_file_tree, sorted_directories, sorted_files};
@@ -60,9 +60,78 @@ pub struct FlattenedSegment {
     pub is_terminal: bool,
 }
 
+/// A top-level group of files in the working-tree sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SidebarSection {
+    /// Files whose changes are all in the index.
+    Staged,
+    /// Files with any working-tree changes: unstaged, untracked, conflicted,
+    /// or partially staged.
+    Unstaged,
+}
+
+impl SidebarSection {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Staged => "Staged",
+            Self::Unstaged => "Unstaged",
+        }
+    }
+
+    fn for_file(file: &FileEntry) -> Self {
+        match git::stage_state(&file.status) {
+            git::StageState::Staged => Self::Staged,
+            git::StageState::Unstaged | git::StageState::PartiallyStaged => Self::Unstaged,
+        }
+    }
+}
+
+/// How the sidebar arranges changed files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarGrouping {
+    /// One tree of every file. Used for commit and branch comparisons.
+    Tree,
+    /// A tree per [`SidebarSection`], empty sections omitted. Used for the
+    /// working tree, where staging state matters.
+    ByStageState,
+}
+
+/// Identity of a collapsible directory row. Grouped sidebars can show the same
+/// directory in more than one section, so the section is part of the key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DirectoryKey {
+    pub section: Option<SidebarSection>,
+    /// Canonical directory path with a trailing slash, e.g. `src/app/`.
+    pub path: String,
+}
+
+impl DirectoryKey {
+    pub fn new(section: Option<SidebarSection>, path: &str) -> Self {
+        Self {
+            section,
+            path: canonical_directory_path(path),
+        }
+    }
+}
+
+/// Everything that decides which rows the sidebar shows.
+#[derive(Debug, Clone, Copy)]
+pub struct SidebarBuildOptions<'a> {
+    pub grouping: SidebarGrouping,
+    pub collapsed_directories: &'a HashSet<DirectoryKey>,
+    pub collapsed_sections: &'a HashSet<SidebarSection>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidebarItem {
+    /// Heading row for a staging group. Only present in grouped sidebars.
+    Section {
+        section: SidebarSection,
+        file_count: usize,
+        collapsed: bool,
+    },
     Header {
+        section: Option<SidebarSection>,
         path: String,
         label: String,
         depth: usize,
@@ -74,6 +143,7 @@ pub enum SidebarItem {
         matches_search: bool,
     },
     File {
+        section: Option<SidebarSection>,
         file: FileEntry,
         label: String,
         depth: usize,
@@ -84,10 +154,19 @@ pub enum SidebarItem {
 }
 
 impl SidebarItem {
+    /// Repository path of the row. Section headings have no path.
     pub fn path(&self) -> &str {
         match self {
+            SidebarItem::Section { .. } => "",
             SidebarItem::Header { path, .. } => path,
             SidebarItem::File { file, .. } => file.path.as_str(),
+        }
+    }
+
+    pub fn section(&self) -> Option<SidebarSection> {
+        match self {
+            SidebarItem::Section { section, .. } => Some(*section),
+            SidebarItem::Header { section, .. } | SidebarItem::File { section, .. } => *section,
         }
     }
 
@@ -95,10 +174,17 @@ impl SidebarItem {
         matches!(self, SidebarItem::Header { .. })
     }
 
+    pub fn directory_key(&self) -> Option<DirectoryKey> {
+        match self {
+            SidebarItem::Header { section, path, .. } => Some(DirectoryKey::new(*section, path)),
+            SidebarItem::Section { .. } | SidebarItem::File { .. } => None,
+        }
+    }
+
     pub fn file(&self) -> Option<&FileEntry> {
         match self {
             SidebarItem::File { file, .. } => Some(file),
-            SidebarItem::Header { .. } => None,
+            SidebarItem::Section { .. } | SidebarItem::Header { .. } => None,
         }
     }
 }
@@ -146,24 +232,95 @@ pub fn build_sidebar_items_with_options(
     files: &[FileEntry],
     options: &FileTreeOptions,
 ) -> Vec<SidebarItem> {
+    let mut items = Vec::with_capacity(files.len());
+    push_tree_items(files, None, options, &mut items);
+    items
+}
+
+/// Builds sidebar rows for `files`, grouped and collapsed per `options`.
+pub fn build_sidebar(files: &[FileEntry], options: SidebarBuildOptions<'_>) -> Vec<SidebarItem> {
+    let tree_options = |section: Option<SidebarSection>| FileTreeOptions {
+        collapsed_paths: options
+            .collapsed_directories
+            .iter()
+            .filter(|key| key.section == section)
+            .map(|key| key.path.clone())
+            .collect(),
+        ..FileTreeOptions::default()
+    };
+
+    let mut items = Vec::with_capacity(files.len() + 2);
+    match options.grouping {
+        SidebarGrouping::Tree => push_tree_items(files, None, &tree_options(None), &mut items),
+        SidebarGrouping::ByStageState => {
+            for section in [SidebarSection::Staged, SidebarSection::Unstaged] {
+                let section_files = files
+                    .iter()
+                    .filter(|file| SidebarSection::for_file(file) == section)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if section_files.is_empty() {
+                    continue;
+                }
+
+                let collapsed = options.collapsed_sections.contains(&section);
+                items.push(SidebarItem::Section {
+                    section,
+                    file_count: section_files.len(),
+                    collapsed,
+                });
+                if !collapsed {
+                    push_tree_items(
+                        &section_files,
+                        Some(section),
+                        &tree_options(Some(section)),
+                        &mut items,
+                    );
+                }
+            }
+        }
+    }
+    items
+}
+
+fn push_tree_items(
+    files: &[FileEntry],
+    section: Option<SidebarSection>,
+    options: &FileTreeOptions,
+    items: &mut Vec<SidebarItem>,
+) {
     let root = build_file_tree(files);
     let search_state = options
         .search
         .as_ref()
         .map(|search| resolve_search_state(&root, search));
-    let mut items = Vec::with_capacity(files.len());
-    visit_directory(&root, 0, options, search_state.as_ref(), &mut items);
-    items
+    let visit = TreeVisit {
+        section,
+        options,
+        search_state: search_state.as_ref(),
+    };
+    visit_directory(&root, 0, &visit, items);
+}
+
+/// Per-tree context threaded through the recursive visit.
+struct TreeVisit<'a> {
+    section: Option<SidebarSection>,
+    options: &'a FileTreeOptions,
+    search_state: Option<&'a SearchState>,
 }
 
 #[inline]
 fn visit_directory(
     node: &FileTreeNode,
     depth: usize,
-    options: &FileTreeOptions,
-    search_state: Option<&SearchState>,
+    visit: &TreeVisit<'_>,
     items: &mut Vec<SidebarItem>,
 ) {
+    let TreeVisit {
+        section,
+        options,
+        search_state,
+    } = *visit;
     let child_count = node.directories.len() + node.files.len();
     let directories = sorted_directories(node);
     for (directory_index, directory) in directories.iter().enumerate() {
@@ -183,6 +340,7 @@ fn visit_directory(
                 .join("/")
         };
         items.push(SidebarItem::Header {
+            section,
             path: terminal.path.clone(),
             label,
             depth,
@@ -196,7 +354,7 @@ fn visit_directory(
         });
 
         if !collapsed {
-            visit_directory(terminal, depth + 1, options, search_state, items);
+            visit_directory(terminal, depth + 1, visit, items);
         }
     }
 
@@ -207,6 +365,7 @@ fn visit_directory(
         }
 
         items.push(SidebarItem::File {
+            section,
             file: file.file.clone(),
             label: file.label.clone(),
             depth,
