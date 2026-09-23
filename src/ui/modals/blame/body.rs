@@ -4,7 +4,8 @@ use ratatui::{
     style::Style,
     text::{Line, Span, Text},
     widgets::{
-        Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState,
     },
 };
 
@@ -21,6 +22,7 @@ pub(super) fn render_blame_body(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let content_block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(border_color()))
         .style(Style::new().bg(panel_color()));
     let content_inner = content_block.inner(area);

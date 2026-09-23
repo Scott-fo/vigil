@@ -1,102 +1,182 @@
 use ratatui::{
     Frame,
+    layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Padding, Paragraph},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{ActivePane, App};
 
-use super::super::{panel_color, primary_color, text_color, text_muted_color};
+use super::super::{panel_color, primary_color, text_color, text_faint_color, text_subtle_color};
 use super::frame::render_modal_frame;
 
-pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
-    let inner = render_modal_frame(frame, 76, 22, "Help");
-
-    let pane_hint = match app.active_pane {
-        ActivePane::Sidebar if !app.sidebar_hidden => "Sidebar focused",
-        ActivePane::Diff => "Diff focused",
-        ActivePane::Sidebar => "Sidebar hidden",
-    };
-
-    let mut lines = vec![
-        Line::from(Span::styled(
-            "Global",
-            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
-        )),
-        key_line("?", "toggle help"),
-        key_line("tab", "switch sidebar / diff focus"),
-        key_line("Ctrl-B", "toggle left sidebar"),
-        key_line("F2", "open diff stats"),
-        key_line("ff / fg / fx", "file search / diff search / hide by suffix"),
-        key_line("v", "toggle unified / split diff"),
-        key_line("z", "toggle line wrap"),
-        key_line("r", "refresh"),
-        key_line("R", "run Codex review"),
-        key_line("E", "edit Codex review context"),
-        key_line("S", "open Codex review summary"),
-        key_line("g", "open commit search"),
-        key_line("b", "open branch compare"),
-        key_line("m", "merge compared branches"),
-        key_line("w", "open worktree picker"),
-        key_line("t", "open theme picker"),
-        key_line("Ctrl-L", "reset compare mode"),
-        key_line("p / P", "pull / push"),
-        key_line("q", "quit"),
-        Line::default(),
-        Line::from(Span::styled(
-            "Navigation",
-            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
-        )),
-        key_line("j / k", "move selection"),
-        key_line("Ctrl-D / Ctrl-U", "page diff"),
-        key_line("mouse wheel", "scroll hovered pane"),
-        key_line("drag in diff", "select code text"),
-        Line::default(),
-        Line::from(Span::styled(
-            "Actions",
-            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
-        )),
-        key_line("enter / o / e", "open in editor"),
-        key_line("enter on gap", "expand selected gap row"),
-        key_line(
-            "click gap rows",
-            "top row expands up, bottom row expands down",
-        ),
-        key_line(
-            "Ctrl-C",
-            "copy selected diff text or quit if nothing is selected",
-        ),
-        key_line("space", "stage / unstage selected file"),
-        key_line("A", "toggle stage all files"),
-        key_line("1 / 2 / 3", "resolve conflict using shown sides / both"),
-        key_line("d", "discard selected file"),
-        key_line("c", "commit staged changes"),
-        Line::default(),
-        Line::from(Span::styled(
-            format!("{pane_hint}. Esc closes help."),
-            Style::new().fg(text_muted_color()),
-        )),
-    ];
-
-    if app.can_initialize_git_repo() {
-        lines.insert(8, key_line("i", "git init when splash is shown"));
-    }
-
-    let paragraph = Paragraph::new(Text::from(lines))
-        .style(Style::new().bg(panel_color()))
-        .block(Block::new().padding(Padding::horizontal(1)));
-    frame.render_widget(paragraph, inner);
+struct Section {
+    title: &'static str,
+    keys: Vec<(&'static str, &'static str)>,
 }
 
-fn key_line(key: &str, description: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            format!("{key}  "),
+const COLUMN_GAP: u16 = 4;
+
+pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
+    let [left, right] = sections(app);
+    let left_lines = section_lines(&left);
+    let right_lines = section_lines(&right);
+    let left_width = lines_width(&left_lines);
+    let right_width = lines_width(&right_lines);
+
+    // Two columns plus frame border (2) and horizontal padding (2 each side).
+    let width = (left_width + right_width) as u16 + COLUMN_GAP + 6;
+    let body_height = left_lines.len().max(right_lines.len()) as u16;
+    // Body, blank line, footer hint, and the frame border.
+    let height = body_height + 4;
+    let inner = render_modal_frame(frame, width, height, "Keyboard shortcuts");
+
+    let inner = Block::new().padding(Padding::horizontal(2)).inner(inner);
+    let [body, _, footer] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
+    let [left_area, _, right_area] = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(left_width as u16),
+            Constraint::Length(COLUMN_GAP),
+            Constraint::Min(1),
+        ])
+        .areas(body);
+
+    let background = Style::new().bg(panel_color());
+    frame.render_widget(
+        Paragraph::new(Text::from(left_lines)).style(background),
+        left_area,
+    );
+    frame.render_widget(
+        Paragraph::new(Text::from(right_lines)).style(background),
+        right_area,
+    );
+
+    let pane_hint = match app.active_pane {
+        ActivePane::Sidebar if !app.sidebar_hidden => "sidebar focused",
+        ActivePane::Diff => "diff focused",
+        ActivePane::Sidebar => "sidebar hidden",
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(pane_hint, Style::new().fg(text_faint_color())),
+            Span::styled("  ·  ", Style::new().fg(text_faint_color())),
+            Span::styled(
+                "esc",
+                Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" close", Style::new().fg(text_faint_color())),
+        ]))
+        .style(background),
+        footer,
+    );
+}
+
+fn sections(app: &App) -> [Vec<Section>; 2] {
+    let mut global = vec![
+        ("?", "toggle help"),
+        ("tab", "switch sidebar / diff focus"),
+        ("Ctrl-B", "toggle left sidebar"),
+        ("F2", "open diff stats"),
+        ("ff / fg / fx", "find file / search diff / hide suffix"),
+        ("v", "toggle unified / split diff"),
+        ("z", "toggle line wrap"),
+        ("r", "refresh"),
+        ("R", "run Codex review"),
+        ("E", "edit Codex review context"),
+        ("S", "open Codex review summary"),
+        ("g", "open commit search"),
+        ("b", "open branch compare"),
+        ("m", "merge compared branches"),
+        ("w", "open worktree picker"),
+        ("t", "open theme picker"),
+        ("Ctrl-L", "reset compare mode"),
+        ("p / P", "pull / push"),
+        ("q", "quit"),
+    ];
+    if app.can_initialize_git_repo() {
+        global.insert(7, ("i", "git init when splash is shown"));
+    }
+
+    [
+        vec![Section {
+            title: "Global",
+            keys: global,
+        }],
+        vec![
+            Section {
+                title: "Navigation",
+                keys: vec![
+                    ("j / k", "move selection"),
+                    ("Ctrl-D / Ctrl-U", "page diff"),
+                    ("mouse wheel", "scroll hovered pane"),
+                    ("drag in diff", "select code text"),
+                ],
+            },
+            Section {
+                title: "Actions",
+                keys: vec![
+                    ("enter / o / e", "open in editor"),
+                    ("enter on gap", "expand hidden lines"),
+                    ("click gap row", "↓ top row, ↑ bottom row"),
+                    ("Ctrl-C", "copy selection, or quit"),
+                    ("space", "stage / unstage file"),
+                    ("A", "toggle stage all files"),
+                    ("1 / 2 / 3", "resolve conflict: shown sides / both"),
+                    ("d", "discard selected file"),
+                    ("c", "commit staged changes"),
+                ],
+            },
+        ],
+    ]
+}
+
+fn section_lines(sections: &[Section]) -> Vec<Line<'static>> {
+    let key_width = sections
+        .iter()
+        .flat_map(|section| section.keys.iter())
+        .map(|(key, _)| key.width())
+        .max()
+        .unwrap_or(0);
+
+    let mut lines = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::default());
+        }
+        lines.push(Line::from(Span::styled(
+            section.title.to_uppercase(),
             Style::new()
-                .fg(primary_color())
+                .fg(text_faint_color())
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(description.to_string(), Style::new().fg(text_muted_color())),
-    ])
+        )));
+        for (key, description) in &section.keys {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{key:<key_width$}  "),
+                    Style::new()
+                        .fg(primary_color())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    description.to_string(),
+                    Style::new().fg(text_subtle_color()),
+                ),
+            ]));
+        }
+    }
+    lines
+}
+
+fn lines_width(lines: &[Line<'_>]) -> usize {
+    lines.iter().map(Line::width).max().unwrap_or(0)
 }

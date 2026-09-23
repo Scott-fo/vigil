@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use ratatui::{
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -238,29 +238,47 @@ pub(super) fn render_split_hunk_rows(
     rendered
 }
 
+/// One row of the collapsed-context band between hunks. Each gap renders as a
+/// pair of rows: the top row reveals lines below the previous hunk and the
+/// bottom row reveals lines above the next hunk.
 pub(super) fn render_expand_gap_line(
     width: usize,
-    _remaining: usize,
+    remaining: usize,
     _has_expansion: bool,
     direction: GapExpandDirection,
 ) -> Line<'static> {
-    let hint_style = ui::diff_hunk_style();
-    let action_style = ui::diff_hunk_style().add_modifier(Modifier::BOLD);
-    let label = match direction {
-        GapExpandDirection::Down => "↑↑",
-        GapExpandDirection::Up => "↓↓",
+    let band_style = ui::diff_gap_style();
+    let arrow = match direction {
+        GapExpandDirection::Up => "↓",
+        GapExpandDirection::Down => "↑",
     };
-    let side_padding = 1;
-    let trailing_padding = width
-        .saturating_sub(side_padding)
-        .saturating_sub(label.width());
+    let gutter_width = format_line_number(None).width();
     let mut spans = vec![
-        Span::styled(" ".repeat(side_padding), hint_style),
-        Span::styled(label.to_string(), action_style),
-        Span::styled(" ".repeat(trailing_padding), hint_style),
+        Span::styled(" ".repeat(gutter_width), band_style),
+        Span::styled(arrow.to_string(), ui::diff_gap_action_style()),
+        Span::styled(" ", band_style),
     ];
-    spans = fit_spans_to_width(spans, width.max(1), hint_style);
-    Line::from(spans).style(ui::diff_hunk_style())
+    if let GapExpandDirection::Up = direction {
+        spans.push(Span::styled(
+            format!(
+                "{remaining} unchanged line{} ",
+                if remaining == 1 { "" } else { "s" }
+            ),
+            band_style,
+        ));
+        let used = spans_width(&spans);
+        spans.push(Span::styled(
+            "┄".repeat(width.saturating_sub(used + 1)),
+            ui::diff_gap_rule_style(),
+        ));
+    }
+    let used = spans_width(&spans);
+    spans.push(Span::styled(
+        " ".repeat(width.saturating_sub(used)),
+        band_style,
+    ));
+    spans = fit_spans_to_width(spans, width.max(1), band_style);
+    Line::from(spans).style(band_style)
 }
 
 pub(super) fn render_expanded_context_lines(

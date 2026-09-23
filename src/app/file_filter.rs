@@ -85,7 +85,7 @@ impl App {
         self.restore_selected_file(previously_selected);
     }
 
-    pub(in crate::app) fn hidden_file_count(&self) -> usize {
+    pub fn hidden_file_count(&self) -> usize {
         self.loaded_files.len().saturating_sub(self.files.len())
     }
 

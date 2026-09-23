@@ -1,30 +1,38 @@
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
-    widgets::{List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    symbols::scrollbar,
+    text::{Line, Span},
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
-use crate::app::{ActivePane, App};
-
-use super::{
-    border_active_color, border_color, bordered_panel, primary_color,
-    selected_list_item_text_color, status::sidebar_change_summary,
+use crate::{
+    app::{ActivePane, App, ReviewMode},
+    git,
 };
+
+use super::{layout::SidebarLayout, rule_color, text_faint_color, text_subtle_color};
 
 mod row;
 mod text;
 
-pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
-    let block = bordered_panel(
-        "Changed Files",
-        app.active_pane == ActivePane::Sidebar,
-        Some(sidebar_change_summary(app)),
-    );
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+use self::row::{RowContext, RowSelection, row_line};
 
-    app.sidebar_viewport_height = inner.height as usize;
+/// The divider is a thin rule; when the list overflows, a heavier segment of
+/// the same rule marks the scroll position.
+const DIVIDER_SCROLLBAR: scrollbar::Set = scrollbar::Set {
+    track: "│",
+    thumb: "┃",
+    begin: "│",
+    end: "│",
+};
+
+pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, layout: SidebarLayout) {
+    render_title(frame, app, layout.title);
+
+    let list = layout.list;
+    app.sidebar_viewport_height = list.height as usize;
     let max_scroll = app
         .sidebar_items
         .len()
@@ -37,45 +45,79 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         .saturating_add(app.sidebar_viewport_height)
         .min(app.sidebar_items.len());
 
-    let items: Vec<ListItem> = app
-        .sidebar_items
-        .iter()
-        .skip(visible_start)
-        .take(visible_end.saturating_sub(visible_start))
-        .map(|item| {
-            let review_comment_count = item
+    let focused = app.active_pane == ActivePane::Sidebar;
+    let working_tree = matches!(app.review_mode, ReviewMode::WorkingTree);
+    let row_width = list.width;
+    for (offset, index) in (visible_start..visible_end).enumerate() {
+        let item = &app.sidebar_items[index];
+        let selection = match (index == app.selected_sidebar_row, focused) {
+            (false, _) => RowSelection::None,
+            (true, true) => RowSelection::Focused,
+            (true, false) => RowSelection::Unfocused,
+        };
+        let context = RowContext {
+            width: row_width,
+            selection,
+            staged: working_tree
+                && item
+                    .file()
+                    .is_some_and(|file| git::is_file_staged(&file.status)),
+            review_comment_count: item
                 .file()
                 .map(|file| app.review_comment_count_for_file(&file.path))
-                .unwrap_or_default();
-            row::list_item(item, inner.width.saturating_sub(1), review_comment_count)
-        })
-        .collect();
+                .unwrap_or_default(),
+        };
+        let row_area = Rect::new(list.x, list.y + offset as u16, list.width, 1);
+        frame.render_widget(Paragraph::new(row_line(item, context)), row_area);
+    }
 
-    let item_count = items.len();
-    let list = List::new(items)
-        .highlight_style(
-            Style::new()
-                .bg(primary_color())
-                .fg(selected_list_item_text_color())
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("");
+    render_divider(frame, app, layout, visible_start);
+}
 
-    let selected_row =
-        (app.selected_sidebar_row < app.sidebar_items.len()).then_some(app.selected_sidebar_row);
-    let mut list_state = ListState::default();
-    list_state.select(selected_row.and_then(|row| {
-        row.checked_sub(visible_start)
-            .filter(|relative_row| *relative_row < item_count)
-    }));
-    frame.render_stateful_widget(list, inner, &mut list_state);
+fn render_divider(frame: &mut Frame, app: &App, layout: SidebarLayout, visible_start: usize) {
+    let divider = layout.divider;
+    let rule = Style::new().fg(rule_color());
+    for y in divider.top()..divider.bottom() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("│", rule))),
+            Rect::new(divider.x, y, 1, 1),
+        );
+    }
 
-    let sidebar_height = inner.height.saturating_sub(1) as usize;
+    let list = layout.list;
+    if app.sidebar_items.len() <= list.height as usize {
+        return;
+    }
+    // The thumb spans only the list rows so it tracks the list position.
     let mut scrollbar_state = ScrollbarState::new(app.sidebar_items.len())
         .position(visible_start)
-        .viewport_content_length(sidebar_height);
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .thumb_style(Style::new().fg(border_active_color()))
-        .track_style(Style::new().fg(border_color()));
-    frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+        .viewport_content_length(list.height as usize);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(DIVIDER_SCROLLBAR)
+            .track_style(rule)
+            .thumb_style(Style::new().fg(text_faint_color())),
+        Rect::new(divider.x, list.y, 1, list.height),
+        &mut scrollbar_state,
+    );
+}
+
+fn render_title(frame: &mut Frame, app: &App, area: Rect) {
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "  CHANGES",
+            Style::new()
+                .fg(text_faint_color())
+                .add_modifier(Modifier::BOLD),
+        ))),
+        area,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!("{} ", app.files.len()),
+            Style::new().fg(text_subtle_color()),
+        )))
+        .alignment(Alignment::Right),
+        area,
+    );
 }

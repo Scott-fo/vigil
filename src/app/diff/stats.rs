@@ -47,6 +47,18 @@ impl App {
         }
     }
 
+    /// Line totals for one file, once the parsed review snapshot has loaded.
+    pub fn file_line_totals(&self, path: &str) -> Option<git::DiffLineTotals> {
+        let metrics = self.review_diff_snapshot.as_ref()?.metrics_for_file(path)?;
+        Some(git::DiffLineTotals {
+            file_count: 1,
+            additions: metrics.addition_line_count,
+            deletions: metrics.deletion_line_count,
+            lines: metrics.unified_line_count,
+            split_lines: metrics.split_line_count,
+        })
+    }
+
     pub(in crate::app) fn open_diff_stats_modal(&mut self) {
         self.diff_stats_modal_open = true;
     }

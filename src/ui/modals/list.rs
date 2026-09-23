@@ -6,7 +6,8 @@ use ratatui::{
     style::Style,
     text::{Line, Span, Text},
     widgets::{
-        Block, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState,
     },
 };
 
@@ -25,6 +26,7 @@ pub(super) fn render_modal_input(
 ) {
     let mut block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(if active {
             primary_color()
         } else {
@@ -71,6 +73,7 @@ pub(super) fn visible_list_range(
 pub(super) fn render_list_frame(frame: &mut Frame, area: Rect) -> Rect {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(border_color()))
         .style(Style::new().bg(panel_color()));
     let inner = block.inner(area);

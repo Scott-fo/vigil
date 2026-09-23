@@ -5,7 +5,7 @@ use crate::{
     sidebar::SidebarItem,
 };
 
-use super::super::{layout::main_layout, panel::bordered_panel};
+use super::super::layout::ScreenLayout;
 
 pub fn sidebar_file_at(
     app: &App,
@@ -40,7 +40,12 @@ pub fn sidebar_item_index_at(
         return None;
     }
 
-    let sidebar_inner = sidebar_inner_area(app, terminal_width, terminal_height);
+    let sidebar = ScreenLayout::new(
+        Rect::new(0, 0, terminal_width, terminal_height),
+        app.sidebar_hidden,
+    )
+    .sidebar?;
+    let sidebar_inner = sidebar.list;
     let point = Position::new(mouse_column, mouse_row);
 
     if !sidebar_inner.contains(point) {
@@ -67,25 +72,20 @@ pub fn hovered_pane_at(
         return None;
     }
 
-    let [sidebar_area, diff_area] = main_layout(
+    let layout = ScreenLayout::new(
         Rect::new(0, 0, terminal_width, terminal_height),
         app.sidebar_hidden,
     );
     let point = Position::new(mouse_column, mouse_row);
 
-    if !app.sidebar_hidden && sidebar_area.contains(point) {
+    if layout
+        .sidebar
+        .is_some_and(|sidebar| sidebar.area.contains(point))
+    {
         Some(ActivePane::Sidebar)
-    } else if diff_area.contains(point) {
+    } else if layout.diff.area.contains(point) {
         Some(ActivePane::Diff)
     } else {
         None
     }
-}
-
-fn sidebar_inner_area(app: &App, terminal_width: u16, terminal_height: u16) -> Rect {
-    let [sidebar_area, _] = main_layout(
-        Rect::new(0, 0, terminal_width, terminal_height),
-        app.sidebar_hidden,
-    );
-    bordered_panel("Changed Files", false, None).inner(sidebar_area)
 }

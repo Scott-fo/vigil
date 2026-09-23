@@ -83,7 +83,7 @@ pub use repo::{
 pub use status::{
     WorkingTreeStatus, discard_file_changes, is_file_fully_staged, is_file_staged,
     is_untracked_status, load_files_with_status, load_status_for_path, load_working_tree_status,
-    should_refresh_for_paths, stage_all_changes, status_color, toggle_file_stage,
+    should_refresh_for_paths, stage_all_changes, status_color, status_label, toggle_file_stage,
     unstage_all_changes,
 };
 pub use types::{

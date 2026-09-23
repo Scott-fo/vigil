@@ -1,50 +1,84 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
+    symbols::scrollbar,
     text::{Line, Span, Text},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{ActivePane, App},
+    git,
     review::{ReviewDisplayComment, ReviewSeverity},
 };
 
 use super::{
-    border_active_color, border_color, bordered_panel, diff_pane_label, error_color,
-    highlight_line, highlight_line_range, panel_color, text_color, text_muted_color, warning_color,
+    error_color, highlight_line, highlight_line_range, layout::DiffLayout,
+    status::line_change_spans, surface_color, text_color, text_faint_color, text_subtle_color,
+    warning_color,
 };
 
-use crate::ui::status::render_status_line;
+/// Thin scrollbar: a faint thumb on an invisible track.
+pub(super) const QUIET_SCROLLBAR: scrollbar::Set = scrollbar::Set {
+    track: " ",
+    thumb: "▐",
+    begin: " ",
+    end: " ",
+};
 
-pub(super) fn render_diff(frame: &mut Frame, app: &mut App, area: Rect) {
-    let title = app
-        .files
-        .get(app.selected_file_index)
-        .map(|file| file.label.clone())
-        .unwrap_or_else(|| "No file selected".to_string());
-    let mode_label = app.review_mode_label();
-    let block = bordered_panel(
-        &title,
-        app.active_pane == ActivePane::Diff,
-        Some(if mode_label.is_empty() {
-            diff_pane_label(app)
-        } else {
-            format!("{}  {mode_label}", diff_pane_label(app))
-        }),
+pub(super) fn render_diff(frame: &mut Frame, app: &mut App, layout: DiffLayout) {
+    frame.render_widget(
+        Block::new().style(Style::new().bg(surface_color())),
+        layout.area,
     );
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    render_file_header(frame, app, layout.header);
+    render_diff_body(frame, app, layout.body);
+}
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
+fn render_file_header(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(file) = app.files.get(app.selected_file_index) else {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " No file selected",
+                Style::new().fg(text_subtle_color()),
+            ))),
+            area,
+        );
+        return;
+    };
 
-    render_diff_body(frame, app, chunks[0]);
-    render_status_line(frame, app, chunks[1]);
+    let directory = file
+        .path
+        .strip_suffix(file.label.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let status = git::status_label(&file.status);
+    let mut left = vec![
+        Span::raw(" "),
+        Span::styled(directory, Style::new().fg(text_subtle_color())),
+        Span::styled(
+            file.label.clone(),
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if !status.is_empty() {
+        left.push(Span::styled(
+            format!("  {status}"),
+            Style::new().fg(git::status_color(&file.status)),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(left)), area);
+
+    if let Some(totals) = app.file_line_totals(&file.path) {
+        let mut right = line_change_spans(totals.additions, totals.deletions);
+        right.push(Span::raw(" "));
+        frame.render_widget(
+            Paragraph::new(Line::from(right)).alignment(Alignment::Right),
+            area,
+        );
+    }
 }
 
 fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -59,7 +93,7 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let Some(viewport) = app.prepare_diff_viewport(mode, area.width as usize, area.height as usize)
     else {
         let paragraph = Paragraph::new(Text::default())
-            .style(Style::new().fg(text_color()).bg(panel_color()))
+            .style(Style::new().fg(text_color()).bg(surface_color()))
             .scroll((0, 0));
         frame.render_widget(paragraph, area);
         return;
@@ -77,7 +111,7 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let visible_end = viewport.visual_end.min(all_lines.len());
     let visible_lines = all_lines[visible_start..visible_end].to_vec();
     let paragraph = Paragraph::new(Text::from(visible_lines))
-        .style(Style::new().fg(text_color()).bg(panel_color()))
+        .style(Style::new().fg(text_color()).bg(surface_color()))
         .scroll((0, 0));
     frame.render_widget(paragraph, area);
 
@@ -86,10 +120,10 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
             .position(app.diff_scroll as usize)
             .viewport_content_length(area.height as usize);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(QUIET_SCROLLBAR)
             .begin_symbol(None)
             .end_symbol(None)
-            .thumb_style(Style::new().fg(border_active_color()))
-            .track_style(Style::new().fg(border_color()));
+            .thumb_style(Style::new().fg(text_faint_color()));
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
 }
@@ -103,7 +137,7 @@ fn render_diff_body_windowed(
 ) {
     if area.width == 0 || area.height == 0 {
         let paragraph = Paragraph::new(Text::default())
-            .style(Style::new().fg(text_color()).bg(panel_color()))
+            .style(Style::new().fg(text_color()).bg(surface_color()))
             .scroll((0, 0));
         frame.render_widget(paragraph, area);
         return;
@@ -149,7 +183,7 @@ fn render_diff_body_windowed(
         }
     }
     let paragraph = Paragraph::new(Text::from(visible_lines))
-        .style(Style::new().fg(text_color()).bg(panel_color()))
+        .style(Style::new().fg(text_color()).bg(surface_color()))
         .scroll((0, 0));
     frame.render_widget(paragraph, area);
 
@@ -158,10 +192,10 @@ fn render_diff_body_windowed(
             .position(app.diff_scroll as usize)
             .viewport_content_length(height);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(QUIET_SCROLLBAR)
             .begin_symbol(None)
             .end_symbol(None)
-            .thumb_style(Style::new().fg(border_active_color()))
-            .track_style(Style::new().fg(border_color()));
+            .thumb_style(Style::new().fg(text_faint_color()));
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
 }
@@ -214,7 +248,7 @@ fn render_review_comment(comment: &ReviewDisplayComment, width: usize) -> Vec<Li
     let style = match comment.severity {
         ReviewSeverity::Critical | ReviewSeverity::High => Style::new().fg(error_color()),
         ReviewSeverity::Medium => Style::new().fg(warning_color()),
-        ReviewSeverity::Low | ReviewSeverity::Info => Style::new().fg(text_muted_color()),
+        ReviewSeverity::Low | ReviewSeverity::Info => Style::new().fg(text_subtle_color()),
     };
     let heading_prefix = "  ╭─ ";
     let body_prefix = "  │  ";
@@ -231,7 +265,7 @@ fn render_review_comment(comment: &ReviewDisplayComment, width: usize) -> Vec<Li
             lines.push(Line::from(vec![
                 Span::styled(
                     heading_prefix.to_string(),
-                    Style::new().fg(text_muted_color()),
+                    Style::new().fg(text_subtle_color()),
                 ),
                 Span::styled(segment, style.add_modifier(Modifier::BOLD)),
             ]));
@@ -244,12 +278,12 @@ fn render_review_comment(comment: &ReviewDisplayComment, width: usize) -> Vec<Li
         lines.push(comment_line(
             body_prefix,
             segment,
-            Style::new().fg(text_muted_color()),
+            Style::new().fg(text_subtle_color()),
         ));
     }
     lines.push(Line::from(Span::styled(
         end_prefix.to_string(),
-        Style::new().fg(text_muted_color()),
+        Style::new().fg(text_subtle_color()),
     )));
 
     lines
@@ -257,7 +291,7 @@ fn render_review_comment(comment: &ReviewDisplayComment, width: usize) -> Vec<Li
 
 fn comment_line(prefix: &str, text: String, style: Style) -> Line<'static> {
     Line::from(vec![
-        Span::styled(prefix.to_string(), Style::new().fg(text_muted_color())),
+        Span::styled(prefix.to_string(), Style::new().fg(text_subtle_color())),
         Span::styled(text, style),
     ])
 }

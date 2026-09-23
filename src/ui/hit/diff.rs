@@ -1,14 +1,11 @@
-use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
+use ratatui::layout::{Position, Rect};
 
 use crate::{
-    app::{ActivePane, App, PreparedDiffViewport},
+    app::{App, PreparedDiffViewport},
     git::{DiffSelectionPane, DiffSelectionPoint},
 };
 
-use super::super::{
-    layout::main_layout,
-    panel::{bordered_panel, diff_pane_label},
-};
+use super::super::layout::ScreenLayout;
 
 pub fn diff_gap_click_at(
     app: &mut App,
@@ -182,39 +179,16 @@ fn diff_body_state(
         return None;
     }
 
-    let [_, diff_area] = main_layout(
+    let body_area = ScreenLayout::new(
         Rect::new(0, 0, terminal_width, terminal_height),
         app.sidebar_hidden,
-    );
-    let body_area = diff_body_area(app, diff_area);
+    )
+    .diff
+    .body;
     let viewport = app.prepare_diff_viewport(
         app.diff_view_mode,
         body_area.width as usize,
         body_area.height as usize,
     )?;
     Some((body_area, viewport))
-}
-
-fn diff_body_area(app: &App, diff_area: Rect) -> Rect {
-    let title = app
-        .files
-        .get(app.selected_file_index)
-        .map(|file| file.label.clone())
-        .unwrap_or_else(|| "No file selected".to_string());
-    let mode_label = app.review_mode_label();
-    let block = bordered_panel(
-        &title,
-        app.active_pane == ActivePane::Diff,
-        Some(if mode_label.is_empty() {
-            diff_pane_label(app)
-        } else {
-            format!("{}  {mode_label}", diff_pane_label(app))
-        }),
-    );
-    let inner = block.inner(diff_area);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
-    chunks[0]
 }

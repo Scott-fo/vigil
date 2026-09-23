@@ -12,7 +12,7 @@ mod refresh;
 mod stage;
 
 pub use self::{
-    display::status_color,
+    display::{status_color, status_label},
     load::{
         WorkingTreeStatus, load_files_with_status, load_status_for_path, load_working_tree_status,
     },

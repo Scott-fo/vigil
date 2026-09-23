@@ -3,16 +3,20 @@ use ratatui::{
     text::{Line, Span},
 };
 
+use super::selection_color;
+
+/// Marks the diff cursor line with the selection tint, keeping syntax colors.
 #[inline]
 pub(super) fn highlight_line(line: &Line<'static>) -> Line<'static> {
+    let background = selection_color();
     Line::from(
         line.spans
             .iter()
             .cloned()
-            .map(|span| Span::styled(span.content, span.style.add_modifier(Modifier::REVERSED)))
+            .map(|span| Span::styled(span.content, span.style.bg(background)))
             .collect::<Vec<_>>(),
     )
-    .style(line.style.add_modifier(Modifier::REVERSED))
+    .style(line.style.bg(background))
 }
 
 #[inline]

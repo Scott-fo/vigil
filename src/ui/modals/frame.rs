@@ -3,11 +3,11 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear},
+    widgets::{Block, BorderType, Borders, Clear},
 };
 
 use super::super::layout::centered_rect;
-use super::super::{border_active_color, error_color, panel_color, text_color};
+use super::super::{error_color, panel_color, text_color, text_faint_color};
 
 pub(super) fn render_modal_frame(
     frame: &mut Frame,
@@ -20,7 +20,7 @@ pub(super) fn render_modal_frame(
         width,
         height,
         title,
-        border_active_color(),
+        text_faint_color(),
         text_color(),
     )
 }
@@ -48,6 +48,7 @@ fn render_modal_frame_with_colors(
     let title = format!(" {} ", title.as_ref());
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(border_color))
         .style(Style::new().bg(panel_color()))
         .title(Line::from(Span::styled(
