@@ -7,10 +7,7 @@ use ratatui::{
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
-use crate::{
-    app::{ActivePane, App, ReviewMode},
-    git,
-};
+use crate::app::{ActivePane, App};
 
 use super::{layout::SidebarLayout, rule_color, text_faint_color, text_subtle_color};
 
@@ -46,7 +43,6 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, layout: SidebarLa
         .min(app.sidebar_items.len());
 
     let focused = app.active_pane == ActivePane::Sidebar;
-    let working_tree = matches!(app.review_mode, ReviewMode::WorkingTree);
     let row_width = list.width;
     for (offset, index) in (visible_start..visible_end).enumerate() {
         let item = &app.sidebar_items[index];
@@ -58,10 +54,6 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, layout: SidebarLa
         let context = RowContext {
             width: row_width,
             selection,
-            staged: working_tree
-                && item
-                    .file()
-                    .is_some_and(|file| git::is_file_staged(&file.status)),
             review_comment_count: item
                 .file()
                 .map(|file| app.review_comment_count_for_file(&file.path))

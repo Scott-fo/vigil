@@ -420,21 +420,31 @@ async fn sidebar_focus_can_toggle_flattened_directories_and_select_files() {
     app.rebuild_sidebar_items();
     app.sync_sidebar_state();
 
-    assert_eq!(app.sidebar_items[0].path(), "src/");
-    app.select_sidebar_row(0).await.unwrap();
+    // Every file is fully staged, so the working-tree sidebar shows one
+    // Staged section heading followed by the tree.
+    assert!(matches!(
+        app.sidebar_items[0],
+        SidebarItem::Section {
+            section: SidebarSection::Staged,
+            ..
+        }
+    ));
+    assert_eq!(app.sidebar_items[1].path(), "src/");
+    let src_key = DirectoryKey::new(Some(SidebarSection::Staged), "src/");
+    app.select_sidebar_row(1).await.unwrap();
     assert!(app.toggle_focused_sidebar_directory());
-    assert!(app.collapsed_directories.contains("src/"));
+    assert!(app.collapsed_directories.contains(&src_key));
     assert_eq!(
         app.sidebar_items
             .iter()
             .map(SidebarItem::path)
             .collect::<Vec<_>>(),
-        vec!["src/", "README.md"]
+        vec!["", "src/", "README.md"]
     );
-    assert_eq!(app.selected_sidebar_row, 0);
+    assert_eq!(app.selected_sidebar_row, 1);
 
     assert!(app.toggle_focused_sidebar_directory());
-    assert!(!app.collapsed_directories.contains("src/"));
+    assert!(!app.collapsed_directories.contains(&src_key));
     assert!(
         app.sidebar_items
             .iter()

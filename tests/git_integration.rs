@@ -292,7 +292,7 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
     assert!(diff_search_paths(&search_index, "'changed").contains(&"src/lib.rs".to_string()));
     assert!(diff_search_paths(&search_index, "'added").contains(&"new/script.rs".to_string()));
 
-    git::toggle_file_stage(&repo.root, &modified).await?;
+    git::stage_file(&repo.root, &modified).await?;
     let staged_status = git::load_status_for_path(&repo.root, "src/lib.rs").await?;
     assert_eq!(
         staged_status.as_ref().map(|file| file.status.as_str()),
@@ -303,7 +303,7 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
     assert_eq!(staged.status, "M ");
     assert!(git::is_file_staged(&staged.status));
 
-    git::toggle_file_stage(&repo.root, &staged).await?;
+    git::unstage_file(&repo.root, &staged).await?;
     let unstaged_status = git::load_status_for_path(&repo.root, "src/lib.rs").await?;
     assert_eq!(
         unstaged_status.as_ref().map(|file| file.status.as_str()),

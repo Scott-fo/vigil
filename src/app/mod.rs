@@ -52,7 +52,7 @@ use crate::{
         SharedHighlightRegistry, WorktreeEntry,
     },
     review::ReviewReport,
-    sidebar::SidebarItem,
+    sidebar::{DirectoryKey, SidebarItem, SidebarSection},
     theme::ThemeMode,
     watcher::RepoWatcher,
 };
@@ -164,7 +164,8 @@ pub struct App {
     loaded_files: Vec<FileEntry>,
     file_exclude_suffixes: ExcludeSuffixes,
     pub sidebar_items: Vec<SidebarItem>,
-    pub collapsed_directories: HashSet<String>,
+    pub collapsed_directories: HashSet<DirectoryKey>,
+    pub collapsed_sections: HashSet<SidebarSection>,
     pub sidebar_state: ListState,
     pub sidebar_scroll: usize,
     pub sidebar_viewport_height: usize,

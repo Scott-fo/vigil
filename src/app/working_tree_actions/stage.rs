@@ -1,4 +1,4 @@
-use crate::git;
+use crate::{git, sidebar::SidebarSection};
 
 use super::super::App;
 
@@ -13,15 +13,21 @@ impl App {
             return Ok(());
         };
 
-        git::toggle_file_stage(&self.repo_root, &file).await?;
+        // Act on the group the file is shown in: a partially staged file under
+        // Unstaged gets the rest of its changes staged, not unstaged.
+        let unstage = match self.selected_file_section() {
+            Some(section) => section == SidebarSection::Staged,
+            None => git::is_file_staged(&file.status),
+        };
+        if unstage {
+            git::unstage_file(&self.repo_root, &file).await?;
+        } else {
+            git::stage_file(&self.repo_root, &file).await?;
+        }
         self.refresh_working_tree_file(&file.path).await?;
         self.status_message = Some(format!(
             "{} {}",
-            if git::is_file_staged(&file.status) {
-                "unstaged"
-            } else {
-                "staged"
-            },
+            if unstage { "unstaged" } else { "staged" },
             file.path
         ));
         Ok(())
