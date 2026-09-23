@@ -223,6 +223,14 @@ fn change_summary_spans(app: &App) -> Vec<Span<'static>> {
         DiffStatsState::Unavailable { file_count } => file_count_spans(file_count),
     };
 
+    let viewed = app.viewed_file_count();
+    if viewed > 0 {
+        spans.push(Span::styled(
+            format!("  {viewed}/{} viewed", app.files.len()),
+            Style::new().fg(text_faint_color()),
+        ));
+    }
+
     let hidden = app.hidden_file_count();
     if hidden > 0 {
         spans.push(Span::styled(
@@ -333,6 +341,7 @@ fn key_hint_segments(app: &App, budget: usize) -> Vec<FooterSegment> {
                 hints.push(("space", action, Some(FooterAction::ToggleStage)));
             }
             hints.extend([
+                ("x", "viewed", None),
                 ("ff", "find file", Some(FooterAction::FindFile)),
                 ("fg", "search", Some(FooterAction::SearchDiff)),
                 ("v", view_toggle, Some(FooterAction::ToggleDiffViewMode)),
@@ -341,6 +350,7 @@ fn key_hint_segments(app: &App, budget: usize) -> Vec<FooterSegment> {
         _ => hints.extend([
             ("tab", "files", Some(FooterAction::SwitchPane)),
             ("[ ]", "change", None),
+            ("x", "viewed", None),
             ("⏎", "open", None),
             ("fg", "search", Some(FooterAction::SearchDiff)),
             ("v", view_toggle, Some(FooterAction::ToggleDiffViewMode)),

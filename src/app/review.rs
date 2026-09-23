@@ -390,7 +390,7 @@ async fn load_persisted_review(
     .map_err(color_eyre::Report::from)?
 }
 
-fn review_scope_from_mode(mode: &ReviewMode) -> Option<ReviewScope> {
+pub(in crate::app) fn review_scope_from_mode(mode: &ReviewMode) -> Option<ReviewScope> {
     match mode {
         ReviewMode::WorkingTree => Some(ReviewScope::WorkingTree),
         ReviewMode::CommitCompare(selection) => Some(ReviewScope::CommitCompare {

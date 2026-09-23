@@ -124,6 +124,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                     ("click gap row", "↓ top row, ↑ bottom row"),
                     ("Ctrl-C", "copy selection, or quit"),
                     ("space", "stage / unstage file"),
+                    ("x / X", "toggle viewed / viewed + next"),
                     ("A", "toggle stage all files"),
                     ("1 / 2 / 3", "resolve conflict: shown sides / both"),
                     ("d", "discard selected file"),

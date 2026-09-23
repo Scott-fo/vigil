@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{ReviewFinding, ReviewReport, ReviewScope, ReviewSnapshot, ReviewSummary};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone)]
 pub struct PersistedReview {
@@ -213,6 +213,14 @@ impl ReviewStore {
 
             create index if not exists review_findings_review_path_idx
                 on review_findings(review_id, path, line);
+
+            create table if not exists viewed_files (
+                scope text not null,
+                path text not null,
+                fingerprint text not null,
+                viewed_at_ms integer not null,
+                primary key (scope, path)
+            );
             ",
         )?;
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -283,7 +291,7 @@ impl ReviewStore {
         }))
     }
 
-    fn connection(&self) -> color_eyre::Result<Connection> {
+    pub(super) fn connection(&self) -> color_eyre::Result<Connection> {
         Connection::open(&self.path)
             .wrap_err_with(|| format!("failed to open review database {}", self.path.display()))
     }
@@ -454,7 +462,7 @@ fn to_i64(value: u128) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
-fn now_ms_i64() -> i64 {
+pub(super) fn now_ms_i64() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     SystemTime::now()

@@ -10,7 +10,7 @@ use crate::{
         ReviewDiffStreamedFile, ReviewDiffTextIndex, SharedHighlightRegistry, WorkingTreeStatus,
         WorktreeEntry,
     },
-    review::PersistedReview,
+    review::{PersistedReview, ViewedFiles},
     watcher::RepoWatcher,
 };
 
@@ -90,6 +90,11 @@ pub enum Event {
         request_id: u64,
         result: Result<Option<PersistedReview>, String>,
     },
+    ViewedFilesLoaded {
+        request_id: u64,
+        result: Result<ViewedFiles, String>,
+    },
+    ViewedFileSaved(Result<(), String>),
     RepoWatcherReady(PathBuf, Result<RepoWatcher, String>),
     RepoChanged(Vec<PathBuf>),
     RemoteSyncFinished(Result<String, String>),
