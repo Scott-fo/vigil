@@ -47,6 +47,7 @@ impl App {
             diff_view: Default::default(),
             diff_view_mode: preference.diff_view_mode,
             diff_line_wrap_mode: preference.diff_line_wrap_mode,
+            diff_whitespace_mode: preference.diff_whitespace_mode,
             diff_scroll: 0,
             selected_diff_line_index: 0,
             diff_text_selection: None,

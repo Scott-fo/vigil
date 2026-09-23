@@ -142,6 +142,10 @@ impl App {
                 self.toggle_diff_line_wrap_mode();
                 handled()
             }
+            KeyCode::Char('W') => {
+                self.toggle_diff_whitespace_mode();
+                handled()
+            }
             _ => Ok(None),
         }
     }
@@ -193,6 +197,20 @@ impl App {
             self.diff_view_mode,
             self.current_diff_display_width(),
             self.diff_line_wrap_mode,
+        );
+    }
+
+    pub(in crate::app) fn toggle_diff_whitespace_mode(&mut self) {
+        self.clear_diff_text_selection();
+        self.set_diff_whitespace_mode(self.diff_whitespace_mode.toggle());
+        self.status_message = Some(
+            match config::persist_diff_whitespace_mode(self.diff_whitespace_mode.as_str()) {
+                Err(error) => format!("failed to persist whitespace mode: {error}"),
+                Ok(()) => match self.diff_whitespace_mode {
+                    git::WhitespaceMode::Ignore => "ignoring whitespace changes".to_string(),
+                    git::WhitespaceMode::Show => "showing whitespace changes".to_string(),
+                },
+            },
         );
     }
 

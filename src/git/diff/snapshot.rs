@@ -13,7 +13,7 @@ use color_eyre::eyre::WrapErr;
 use tokio::task;
 
 use super::{
-    DiffPreviewData, DiffSearchIndex, DiffView, FileDiffMetadata,
+    DiffOptions, DiffPreviewData, DiffSearchIndex, DiffView, FileDiffMetadata,
     build_diff_view_from_file_metadata, parse_patch_files,
     preview::load_diff_preview_for_working_tree, stats::ReviewDiffStats,
 };
@@ -231,9 +231,10 @@ impl DiffFileMetrics {
 pub async fn load_review_diff_snapshot_for_working_tree(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffSnapshot> {
     if files.iter().any(|file| is_unmerged_status(&file.status)) {
-        return load_working_tree_snapshot_file_by_file(repo_root, files).await;
+        return load_working_tree_snapshot_file_by_file(repo_root, files, options).await;
     }
 
     let mut snapshot = ReviewDiffSnapshot::default();
@@ -241,7 +242,7 @@ pub async fn load_review_diff_snapshot_for_working_tree(
     if files.iter().any(|file| !is_untracked_status(&file.status)) {
         let diff = git_output(
             repo_root,
-            &["diff", "--no-color", "--find-renames", "HEAD", "--"],
+            &options.diff_args(&["diff", "--no-color", "--find-renames", "HEAD", "--"]),
         )
         .await?;
         snapshot = snapshot_from_diff_text(diff, Some("working-tree")).await?;
@@ -251,7 +252,7 @@ pub async fn load_review_diff_snapshot_for_working_tree(
         .iter()
         .filter(|file| is_untracked_status(&file.status))
     {
-        let preview = load_diff_preview_for_working_tree(repo_root, file, false).await?;
+        let preview = load_diff_preview_for_working_tree(repo_root, file, false, options).await?;
         snapshot.append_preview_data(&preview)?;
     }
 
@@ -261,10 +262,11 @@ pub async fn load_review_diff_snapshot_for_working_tree(
 async fn load_working_tree_snapshot_file_by_file(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffSnapshot> {
     let mut snapshot = ReviewDiffSnapshot::default();
     for file in files {
-        let preview = load_diff_preview_for_working_tree(repo_root, file, false).await?;
+        let preview = load_diff_preview_for_working_tree(repo_root, file, false, options).await?;
         snapshot.append_preview_data(&preview)?;
     }
     Ok(snapshot)
@@ -273,16 +275,17 @@ async fn load_working_tree_snapshot_file_by_file(
 pub async fn load_review_diff_snapshot_for_commit_compare(
     repo_root: &Path,
     selection: &CommitCompareSelection,
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffSnapshot> {
     let diff = git_output(
         repo_root,
-        &[
+        &options.diff_args(&[
             "diff",
             "--no-color",
             "--find-renames",
             selection.base_ref.as_str(),
             selection.commit_hash.as_str(),
-        ],
+        ]),
     )
     .await?;
     snapshot_from_diff_text(diff, Some("commit")).await
@@ -291,11 +294,12 @@ pub async fn load_review_diff_snapshot_for_commit_compare(
 pub async fn load_review_diff_snapshot_for_branch_compare(
     repo_root: &Path,
     selection: &BranchCompareSelection,
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffSnapshot> {
     let diff_range = build_branch_diff_range(selection);
     let diff = git_output(
         repo_root,
-        &["diff", "--no-color", "--find-renames", diff_range.as_str()],
+        &options.diff_args(&["diff", "--no-color", "--find-renames", diff_range.as_str()]),
     )
     .await?;
     snapshot_from_diff_text(diff, Some("branch")).await

@@ -151,6 +151,7 @@ fn bench_startup_paths(c: &mut Criterion) {
                     black_box(&fixture.repo_root),
                     black_box(&fixture.selected_file),
                     false,
+                    git::DiffOptions::default(),
                 ))
                 .expect("diff preview should load");
             let view =

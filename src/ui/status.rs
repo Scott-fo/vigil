@@ -27,6 +27,7 @@ use super::{
 pub enum FooterAction {
     ToggleDiffViewMode,
     ToggleLineWrap,
+    ToggleWhitespace,
     ToggleSidebar,
     OpenHelp,
     SwitchPane,
@@ -86,6 +87,10 @@ impl FooterModel {
                 FooterAction::ToggleLineWrap,
             ),
         ];
+        if app.diff_whitespace_mode == crate::git::WhitespaceMode::Ignore {
+            right.push(FooterSegment::plain(" "));
+            right.push(chip("ignore ws", FooterAction::ToggleWhitespace));
+        }
         if app.sidebar_hidden {
             right.push(FooterSegment::plain(" "));
             right.push(chip("sidebar hidden", FooterAction::ToggleSidebar));

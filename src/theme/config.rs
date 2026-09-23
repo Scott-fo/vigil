@@ -18,6 +18,7 @@ pub fn read_tui_preference() -> TuiPreference {
         mode: env_mode.or(file_preference.mode),
         diff_view_mode: file_preference.diff_view_mode,
         diff_line_wrap_mode: file_preference.diff_line_wrap_mode,
+        diff_whitespace_mode: file_preference.diff_whitespace_mode,
         exclude_file_suffixes: file_preference.exclude_file_suffixes,
     }
 }
@@ -35,6 +36,12 @@ pub fn persist_diff_view_mode(diff_view_mode: &str) -> io::Result<()> {
 pub fn persist_diff_line_wrap_mode(diff_line_wrap_mode: &str) -> io::Result<()> {
     let preference =
         apply_diff_line_wrap_mode(read_tui_preference_from_config(), diff_line_wrap_mode);
+    write_tui_preference_to_config(&preference)
+}
+
+pub fn persist_diff_whitespace_mode(diff_whitespace_mode: &str) -> io::Result<()> {
+    let preference =
+        apply_diff_whitespace_mode(read_tui_preference_from_config(), diff_whitespace_mode);
     write_tui_preference_to_config(&preference)
 }
 
@@ -95,6 +102,14 @@ fn apply_diff_line_wrap_mode(
     preference
 }
 
+fn apply_diff_whitespace_mode(
+    mut preference: TuiPreference,
+    diff_whitespace_mode: &str,
+) -> TuiPreference {
+    preference.diff_whitespace_mode = Some(diff_whitespace_mode.to_owned());
+    preference
+}
+
 fn apply_exclude_file_suffixes(
     mut preference: TuiPreference,
     suffixes: &[String],
@@ -147,6 +162,7 @@ mod tests {
             mode: None,
             diff_view_mode: Some("unified".to_string()),
             diff_line_wrap_mode: Some("no_wrap".to_string()),
+            diff_whitespace_mode: None,
             exclude_file_suffixes: vec!["test.ts".to_string()],
         };
         write_tui_preference_to_path(&path, &initial).expect("should write initial preference");
@@ -176,6 +192,7 @@ mod tests {
             mode: Some(ThemeMode::Dark),
             diff_view_mode: None,
             diff_line_wrap_mode: Some("wrap".to_string()),
+            diff_whitespace_mode: None,
             exclude_file_suffixes: Vec::new(),
         };
         write_tui_preference_to_path(&path, &initial).expect("should write initial preference");
@@ -200,6 +217,7 @@ mod tests {
             mode: Some(ThemeMode::Dark),
             diff_view_mode: Some("split".to_string()),
             diff_line_wrap_mode: None,
+            diff_whitespace_mode: None,
             exclude_file_suffixes: vec!["test.ts".to_string()],
         };
         write_tui_preference_to_path(&path, &initial).expect("should write initial preference");
@@ -249,6 +267,7 @@ mod tests {
             mode: Some(ThemeMode::Dark),
             diff_view_mode: Some("unified".to_string()),
             diff_line_wrap_mode: Some("wrap".to_string()),
+            diff_whitespace_mode: None,
             exclude_file_suffixes: Vec::new(),
         };
         write_tui_preference_to_path(&path, &initial).expect("should write initial preference");
@@ -263,6 +282,31 @@ mod tests {
         assert_eq!(persisted.theme.as_deref(), Some("catppuccin-macchiato"));
         assert_eq!(persisted.mode, Some(ThemeMode::Dark));
         assert_eq!(persisted.diff_view_mode.as_deref(), Some("unified"));
+        assert_eq!(persisted.diff_line_wrap_mode.as_deref(), Some("wrap"));
+        assert_eq!(persisted.exclude_file_suffixes, ["test.ts"]);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn diff_whitespace_write_preserves_other_settings() {
+        let path = temp_config_path("diff-whitespace-write-preserves-other-settings");
+        let initial = TuiPreference {
+            theme: Some("catppuccin-macchiato".to_string()),
+            mode: Some(ThemeMode::Dark),
+            diff_view_mode: Some("split".to_string()),
+            diff_line_wrap_mode: Some("wrap".to_string()),
+            diff_whitespace_mode: None,
+            exclude_file_suffixes: vec!["test.ts".to_string()],
+        };
+        write_tui_preference_to_path(&path, &initial).expect("should write initial preference");
+
+        let updated = apply_diff_whitespace_mode(read_tui_preference_from_path(&path), "ignore");
+        write_tui_preference_to_path(&path, &updated).expect("should write updated preference");
+
+        let persisted = read_tui_preference_from_path(&path);
+        assert_eq!(persisted.diff_whitespace_mode.as_deref(), Some("ignore"));
+        assert_eq!(persisted.diff_view_mode.as_deref(), Some("split"));
         assert_eq!(persisted.diff_line_wrap_mode.as_deref(), Some("wrap"));
         assert_eq!(persisted.exclude_file_suffixes, ["test.ts"]);
 

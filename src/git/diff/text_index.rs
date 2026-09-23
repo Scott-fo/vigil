@@ -10,7 +10,7 @@ use std::{collections::HashMap, ops::Range, path::Path, sync::Arc};
 
 use color_eyre::eyre::WrapErr;
 
-use super::{DiffView, preview::load_diff_preview_for_working_tree};
+use super::{DiffOptions, DiffView, preview::load_diff_preview_for_working_tree};
 use crate::git::{
     BranchCompareSelection, CommitCompareSelection, FileEntry,
     command::git_output_streamed,
@@ -101,20 +101,22 @@ impl ReviewDiffTextIndex {
 pub async fn load_review_diff_text_index_for_working_tree(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffTextIndex> {
-    load_review_diff_text_index_for_working_tree_streaming(repo_root, files, |_| {}).await
+    load_review_diff_text_index_for_working_tree_streaming(repo_root, files, options, |_| {}).await
 }
 
 pub async fn load_review_diff_text_index_for_working_tree_streaming<F>(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
     on_file: F,
 ) -> color_eyre::Result<ReviewDiffTextIndex>
 where
     F: FnMut(ReviewDiffStreamedFile) + Send,
 {
     if files.iter().any(|file| is_unmerged_status(&file.status)) {
-        return load_working_tree_text_index_file_by_file(repo_root, files, on_file).await;
+        return load_working_tree_text_index_file_by_file(repo_root, files, options, on_file).await;
     }
 
     let mut diff = String::new();
@@ -122,26 +124,29 @@ where
     if files.iter().any(|file| file.status != "??") {
         diff = stream_git_diff(
             repo_root,
-            &["diff", "--no-color", "--find-renames", "HEAD", "--"],
+            &options.diff_args(&["diff", "--no-color", "--find-renames", "HEAD", "--"]),
             &mut on_file,
         )
         .await?;
     }
 
-    append_untracked_diffs(repo_root, files, &mut diff, &mut on_file).await?;
+    append_untracked_diffs(repo_root, files, options, &mut diff, &mut on_file).await?;
     Ok(ReviewDiffTextIndex::from_diff_text_owned(diff))
 }
 
 pub async fn load_review_diff_text_index_for_commit_compare(
     repo_root: &Path,
     selection: &CommitCompareSelection,
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffTextIndex> {
-    load_review_diff_text_index_for_commit_compare_streaming(repo_root, selection, |_| {}).await
+    load_review_diff_text_index_for_commit_compare_streaming(repo_root, selection, options, |_| {})
+        .await
 }
 
 pub async fn load_review_diff_text_index_for_commit_compare_streaming<F>(
     repo_root: &Path,
     selection: &CommitCompareSelection,
+    options: DiffOptions,
     mut on_file: F,
 ) -> color_eyre::Result<ReviewDiffTextIndex>
 where
@@ -149,13 +154,13 @@ where
 {
     let diff = stream_git_diff(
         repo_root,
-        &[
+        &options.diff_args(&[
             "diff",
             "--no-color",
             "--find-renames",
             selection.base_ref.as_str(),
             selection.commit_hash.as_str(),
-        ],
+        ]),
         &mut on_file,
     )
     .await?;
@@ -165,13 +170,16 @@ where
 pub async fn load_review_diff_text_index_for_branch_compare(
     repo_root: &Path,
     selection: &BranchCompareSelection,
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffTextIndex> {
-    load_review_diff_text_index_for_branch_compare_streaming(repo_root, selection, |_| {}).await
+    load_review_diff_text_index_for_branch_compare_streaming(repo_root, selection, options, |_| {})
+        .await
 }
 
 pub async fn load_review_diff_text_index_for_branch_compare_streaming<F>(
     repo_root: &Path,
     selection: &BranchCompareSelection,
+    options: DiffOptions,
     mut on_file: F,
 ) -> color_eyre::Result<ReviewDiffTextIndex>
 where
@@ -180,7 +188,7 @@ where
     let diff_range = build_branch_diff_range(selection);
     let diff = stream_git_diff(
         repo_root,
-        &["diff", "--no-color", "--find-renames", diff_range.as_str()],
+        &options.diff_args(&["diff", "--no-color", "--find-renames", diff_range.as_str()]),
         &mut on_file,
     )
     .await?;
@@ -190,6 +198,7 @@ where
 async fn load_working_tree_text_index_file_by_file<F>(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
     mut on_file: F,
 ) -> color_eyre::Result<ReviewDiffTextIndex>
 where
@@ -197,7 +206,7 @@ where
 {
     let mut diff = String::new();
     for file in files {
-        let preview = load_diff_preview_for_working_tree(repo_root, file, false)
+        let preview = load_diff_preview_for_working_tree(repo_root, file, false, options)
             .await
             .wrap_err_with(|| format!("failed to load preview for {}", file.path))?;
         send_preview_diff(&mut on_file, file.path.clone(), &preview.diff);
@@ -209,6 +218,7 @@ where
 async fn append_untracked_diffs<F>(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
     diff: &mut String,
     on_file: &mut F,
 ) -> color_eyre::Result<()>
@@ -216,7 +226,7 @@ where
     F: FnMut(ReviewDiffStreamedFile),
 {
     for file in files.iter().filter(|file| file.status == "??") {
-        let preview = load_diff_preview_for_working_tree(repo_root, file, false)
+        let preview = load_diff_preview_for_working_tree(repo_root, file, false, options)
             .await
             .wrap_err_with(|| format!("failed to load untracked preview for {}", file.path))?;
         send_preview_diff(on_file, file.path.clone(), &preview.diff);

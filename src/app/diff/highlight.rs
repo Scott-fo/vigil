@@ -80,6 +80,7 @@ impl App {
         let sender = self.events.sender();
         let review_mode = self.review_mode.clone();
         let repo_root = self.repo_root.clone();
+        let diff_options = cache_key.options;
         self.diff_highlight_job = Some(DiffHighlightJob {
             request_id,
             key: cache_key,
@@ -91,18 +92,31 @@ impl App {
                     if file.status.contains('U') {
                         let preview_result = match &review_mode {
                             ReviewMode::WorkingTree => {
-                                git::load_diff_preview_for_working_tree(&repo_root, &file, true)
-                                    .await
+                                git::load_diff_preview_for_working_tree(
+                                    &repo_root,
+                                    &file,
+                                    true,
+                                    diff_options,
+                                )
+                                .await
                             }
                             ReviewMode::CommitCompare(selection) => {
                                 git::load_diff_preview_for_commit_compare(
-                                    &repo_root, &file, selection, true,
+                                    &repo_root,
+                                    &file,
+                                    selection,
+                                    true,
+                                    diff_options,
                                 )
                                 .await
                             }
                             ReviewMode::BranchCompare(selection) => {
                                 git::load_diff_preview_for_branch_compare(
-                                    &repo_root, &file, selection, true,
+                                    &repo_root,
+                                    &file,
+                                    selection,
+                                    true,
+                                    diff_options,
                                 )
                                 .await
                             }

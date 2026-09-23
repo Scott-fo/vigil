@@ -79,10 +79,11 @@ impl App {
         let repo_root = self.repo_root.clone();
         let files = self.files.clone();
         let review_mode = self.review_mode.clone();
+        let diff_options = self.diff_options();
         let sender = self.events.sender();
 
         self.review_diff_stats_task = Some(task::spawn(async move {
-            let result = load_review_diff_stats(&repo_root, &files, &review_mode)
+            let result = load_review_diff_stats(&repo_root, &files, &review_mode, diff_options)
                 .await
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::ReviewDiffStatsLoaded {
@@ -152,16 +153,17 @@ async fn load_review_diff_stats(
     repo_root: &std::path::Path,
     files: &[git::FileEntry],
     review_mode: &ReviewMode,
+    diff_options: git::DiffOptions,
 ) -> color_eyre::Result<git::ReviewDiffStats> {
     match review_mode {
         ReviewMode::WorkingTree => {
-            git::load_review_diff_stats_for_working_tree(repo_root, files).await
+            git::load_review_diff_stats_for_working_tree(repo_root, files, diff_options).await
         }
         ReviewMode::CommitCompare(selection) => {
-            git::load_review_diff_stats_for_commit_compare(repo_root, selection).await
+            git::load_review_diff_stats_for_commit_compare(repo_root, selection, diff_options).await
         }
         ReviewMode::BranchCompare(selection) => {
-            git::load_review_diff_stats_for_branch_compare(repo_root, selection).await
+            git::load_review_diff_stats_for_branch_compare(repo_root, selection, diff_options).await
         }
     }
 }

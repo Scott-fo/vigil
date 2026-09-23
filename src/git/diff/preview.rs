@@ -11,7 +11,7 @@ use color_eyre::eyre::{WrapErr, eyre};
 use tokio::fs;
 
 use super::{
-    DiffExactContext, DiffPreviewData, DiffView, FileContents, MergeConflictLabels,
+    DiffExactContext, DiffOptions, DiffPreviewData, DiffView, FileContents, MergeConflictLabels,
     ParseMergeConflictDiffFromFileResult, build_diff_view_from_preview_data,
     parse_merge_conflict_diff_from_file,
 };
@@ -35,7 +35,8 @@ pub async fn load_diff_view_for_working_tree(
     file: &FileEntry,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_diff_preview_for_working_tree(repo_root, file, true).await?;
+    let preview =
+        load_diff_preview_for_working_tree(repo_root, file, true, DiffOptions::default()).await?;
     build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
@@ -45,7 +46,14 @@ pub async fn load_diff_view_for_commit_compare(
     selection: &CommitCompareSelection,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_diff_preview_for_commit_compare(repo_root, file, selection, true).await?;
+    let preview = load_diff_preview_for_commit_compare(
+        repo_root,
+        file,
+        selection,
+        true,
+        DiffOptions::default(),
+    )
+    .await?;
     build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
@@ -55,7 +63,14 @@ pub async fn load_diff_view_for_branch_compare(
     selection: &BranchCompareSelection,
     highlight_registry: Option<&HighlightRegistry>,
 ) -> color_eyre::Result<DiffView> {
-    let preview = load_diff_preview_for_branch_compare(repo_root, file, selection, true).await?;
+    let preview = load_diff_preview_for_branch_compare(
+        repo_root,
+        file,
+        selection,
+        true,
+        DiffOptions::default(),
+    )
+    .await?;
     build_diff_view_from_preview_data(&preview, file, highlight_registry)
 }
 
@@ -63,8 +78,9 @@ pub async fn load_diff_preview_for_working_tree(
     repo_root: &Path,
     file: &FileEntry,
     include_exact_context: bool,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffPreviewData> {
-    load_file_preview(repo_root, file, include_exact_context).await
+    load_file_preview(repo_root, file, include_exact_context, options).await
 }
 
 pub async fn load_diff_preview_for_commit_compare(
@@ -72,8 +88,9 @@ pub async fn load_diff_preview_for_commit_compare(
     file: &FileEntry,
     selection: &CommitCompareSelection,
     include_exact_context: bool,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffPreviewData> {
-    load_commit_preview(repo_root, file, selection, include_exact_context).await
+    load_commit_preview(repo_root, file, selection, include_exact_context, options).await
 }
 
 pub async fn load_diff_preview_for_branch_compare(
@@ -81,8 +98,9 @@ pub async fn load_diff_preview_for_branch_compare(
     file: &FileEntry,
     selection: &BranchCompareSelection,
     include_exact_context: bool,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffPreviewData> {
-    load_branch_preview(repo_root, file, selection, include_exact_context).await
+    load_branch_preview(repo_root, file, selection, include_exact_context, options).await
 }
 
 pub async fn load_diff_exact_context_for_working_tree(
@@ -142,6 +160,7 @@ async fn load_file_preview(
     repo_root: &Path,
     file: &FileEntry,
     include_exact_context: bool,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffPreviewData> {
     if let Some(preview) = load_merge_conflict_preview(repo_root, file).await? {
         return Ok(preview);
@@ -150,7 +169,7 @@ async fn load_file_preview(
     if file.status == "??" {
         load_untracked_preview(repo_root, &file.path, include_exact_context).await
     } else {
-        load_tracked_preview(repo_root, &file.path, include_exact_context).await
+        load_tracked_preview(repo_root, &file.path, include_exact_context, options).await
     }
 }
 
@@ -240,10 +259,11 @@ async fn load_commit_preview(
     file: &FileEntry,
     selection: &CommitCompareSelection,
     include_exact_context: bool,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffPreviewData> {
     load_revision_preview(
         repo_root,
-        &[
+        &options.diff_args(&[
             "diff",
             "--no-color",
             "--find-renames",
@@ -251,7 +271,7 @@ async fn load_commit_preview(
             selection.commit_hash.as_str(),
             "--",
             file.path.as_str(),
-        ],
+        ]),
         Some(PreviewTarget::Revision(selection.base_ref.as_str())),
         Some(PreviewTarget::Revision(selection.commit_hash.as_str())),
         file.path.as_str(),
@@ -265,19 +285,20 @@ async fn load_branch_preview(
     file: &FileEntry,
     selection: &BranchCompareSelection,
     include_exact_context: bool,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffPreviewData> {
     let diff_range = build_branch_diff_range(selection);
     let merge_base = resolve_branch_compare_base(repo_root, selection).await?;
     load_revision_preview(
         repo_root,
-        &[
+        &options.diff_args(&[
             "diff",
             "--no-color",
             "--find-renames",
             diff_range.as_str(),
             "--",
             file.path.as_str(),
-        ],
+        ]),
         Some(PreviewTarget::Revision(merge_base.as_str())),
         Some(PreviewTarget::Revision(selection.source_ref.as_str())),
         file.path.as_str(),
@@ -314,17 +335,18 @@ async fn load_tracked_preview(
     repo_root: &Path,
     file_path: &str,
     include_exact_context: bool,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffPreviewData> {
     load_revision_preview(
         repo_root,
-        &[
+        &options.diff_args(&[
             "diff",
             "--no-color",
             "--find-renames",
             "HEAD",
             "--",
             file_path,
-        ],
+        ]),
         Some(PreviewTarget::Revision("HEAD")),
         Some(PreviewTarget::WorkingTree),
         file_path,

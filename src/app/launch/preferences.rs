@@ -1,4 +1,7 @@
-use crate::theme::{self, ThemeMode, config};
+use crate::{
+    git::WhitespaceMode,
+    theme::{self, ThemeMode, config},
+};
 
 use super::super::{DiffLineWrapMode, DiffViewMode};
 
@@ -8,6 +11,7 @@ pub(super) struct LaunchPreference {
     pub theme_mode: ThemeMode,
     pub diff_view_mode: DiffViewMode,
     pub diff_line_wrap_mode: DiffLineWrapMode,
+    pub diff_whitespace_mode: WhitespaceMode,
     pub exclude_file_suffixes: Vec<String>,
 }
 
@@ -27,6 +31,11 @@ impl LaunchPreference {
                 .as_deref()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or_default(),
+            diff_whitespace_mode: preference
+                .diff_whitespace_mode
+                .as_deref()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_default(),
             exclude_file_suffixes: preference.exclude_file_suffixes,
         }
     }
@@ -37,6 +46,7 @@ impl LaunchPreference {
             theme_mode: ThemeMode::Dark,
             diff_view_mode: DiffViewMode::Split,
             diff_line_wrap_mode: DiffLineWrapMode::default(),
+            diff_whitespace_mode: WhitespaceMode::default(),
             exclude_file_suffixes: Vec::new(),
         }
     }

@@ -48,6 +48,8 @@ pub struct TuiPreference {
     pub diff_view_mode: Option<String>,
     #[serde(rename = "diff_line_wrap_mode")]
     pub diff_line_wrap_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_whitespace_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_file_suffixes: Vec<String>,
 }

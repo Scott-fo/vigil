@@ -29,8 +29,8 @@ use super::super::{
     parse::{build_branch_diff_range, resolve_diff_filetype},
 };
 use super::{
-    DiffPreviewData, FileDiffMetadata, Hunk, HunkContent, ParsedPatch, line_without_ending,
-    preview::load_diff_preview_for_working_tree,
+    DiffOptions, DiffPreviewData, FileDiffMetadata, Hunk, HunkContent, ParsedPatch,
+    line_without_ending, preview::load_diff_preview_for_working_tree,
 };
 
 mod case_insensitive_memmem;
@@ -1088,23 +1088,24 @@ impl DiffSearchResult {
 pub async fn load_diff_search_index_for_working_tree(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffSearchIndex> {
     if files.iter().any(|file| is_unmerged_status(&file.status)) {
-        return load_working_tree_index_file_by_file(repo_root, files).await;
+        return load_working_tree_index_file_by_file(repo_root, files, options).await;
     }
 
     let mut index = DiffSearchIndex::default();
     if files.iter().any(|file| file.status != "??") {
         let diff = git_output(
             repo_root,
-            &["diff", "--no-color", "--find-renames", "HEAD", "--"],
+            &options.diff_args(&["diff", "--no-color", "--find-renames", "HEAD", "--"]),
         )
         .await?;
         index.append_index(index_from_diff_text(diff).await?);
     }
 
     for file in files.iter().filter(|file| file.status == "??") {
-        let preview = load_diff_preview_for_working_tree(repo_root, file, false).await?;
+        let preview = load_diff_preview_for_working_tree(repo_root, file, false, options).await?;
         index.append_preview_data(&preview)?;
     }
 
@@ -1114,16 +1115,17 @@ pub async fn load_diff_search_index_for_working_tree(
 pub async fn load_diff_search_index_for_commit_compare(
     repo_root: &Path,
     selection: &CommitCompareSelection,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffSearchIndex> {
     let diff = git_output(
         repo_root,
-        &[
+        &options.diff_args(&[
             "diff",
             "--no-color",
             "--find-renames",
             selection.base_ref.as_str(),
             selection.commit_hash.as_str(),
-        ],
+        ]),
     )
     .await?;
     index_from_diff_text(diff).await
@@ -1132,11 +1134,12 @@ pub async fn load_diff_search_index_for_commit_compare(
 pub async fn load_diff_search_index_for_branch_compare(
     repo_root: &Path,
     selection: &BranchCompareSelection,
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffSearchIndex> {
     let diff_range = build_branch_diff_range(selection);
     let diff = git_output(
         repo_root,
-        &["diff", "--no-color", "--find-renames", diff_range.as_str()],
+        &options.diff_args(&["diff", "--no-color", "--find-renames", diff_range.as_str()]),
     )
     .await?;
     index_from_diff_text(diff).await
@@ -1145,10 +1148,11 @@ pub async fn load_diff_search_index_for_branch_compare(
 async fn load_working_tree_index_file_by_file(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
 ) -> color_eyre::Result<DiffSearchIndex> {
     let mut index = DiffSearchIndex::default();
     for file in files {
-        let preview = load_diff_preview_for_working_tree(repo_root, file, false).await?;
+        let preview = load_diff_preview_for_working_tree(repo_root, file, false, options).await?;
         index.append_preview_data(&preview)?;
     }
     Ok(index)

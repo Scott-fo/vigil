@@ -180,6 +180,9 @@ pub struct App {
     pub diff_view: DiffView,
     pub diff_view_mode: DiffViewMode,
     pub diff_line_wrap_mode: DiffLineWrapMode,
+    /// Whether diffs hide whitespace-only edits. Changes diff content, so it is
+    /// part of every diff cache key and toggling it reloads the review.
+    pub diff_whitespace_mode: git::WhitespaceMode,
     pub diff_scroll: u16,
     pub selected_diff_line_index: usize,
     pub diff_text_selection: Option<DiffTextSelection>,

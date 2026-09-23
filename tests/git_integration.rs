@@ -288,7 +288,12 @@ async fn status_stage_toggle_and_discard_cover_working_tree_flows() -> Result<()
     let rendered = rendered_lines(&mut new_file_view, DiffViewMode::Unified, 160).join("\n");
     assert!(rendered.contains("fn added() {}"));
 
-    let search_index = git::load_diff_search_index_for_working_tree(&repo.root, &files).await?;
+    let search_index = git::load_diff_search_index_for_working_tree(
+        &repo.root,
+        &files,
+        git::DiffOptions::default(),
+    )
+    .await?;
     assert!(diff_search_paths(&search_index, "'changed").contains(&"src/lib.rs".to_string()));
     assert!(diff_search_paths(&search_index, "'added").contains(&"new/script.rs".to_string()));
 
@@ -338,7 +343,12 @@ async fn working_tree_diff_stats_split_tracked_and_untracked_line_counts() -> Re
     repo.write("new/script.rs", "fn added() {}\nfn extra() {}\n");
 
     let files = git::load_files_with_status(&repo.root).await?;
-    let stats = git::load_review_diff_stats_for_working_tree(&repo.root, &files).await?;
+    let stats = git::load_review_diff_stats_for_working_tree(
+        &repo.root,
+        &files,
+        git::DiffOptions::default(),
+    )
+    .await?;
     let tracked = stats.tracked.expect("tracked scope");
     let untracked = stats.untracked.expect("untracked scope");
 
@@ -351,7 +361,12 @@ async fn working_tree_diff_stats_split_tracked_and_untracked_line_counts() -> Re
     assert_eq!(stats.file_count, 2);
     assert_eq!(stats.additions, 3);
 
-    let snapshot = git::load_review_diff_snapshot_for_working_tree(&repo.root, &files).await?;
+    let snapshot = git::load_review_diff_snapshot_for_working_tree(
+        &repo.root,
+        &files,
+        git::DiffOptions::default(),
+    )
+    .await?;
     let snapshot_stats = snapshot.stats_for_working_tree(&files);
     assert_eq!(snapshot_stats.tracked.map(|scope| scope.additions), Some(1));
     assert_eq!(
@@ -359,6 +374,69 @@ async fn working_tree_diff_stats_split_tracked_and_untracked_line_counts() -> Re
         Some(2)
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn ignore_whitespace_hides_reindented_lines_across_diff_loaders() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write(
+        "src/lib.rs",
+        "fn main() {\n    let a = 1;\n    let b = 2;\n}\n",
+    );
+    repo.commit_all("initial state", "2024-01-01T00:00:00+0000");
+    repo.rename_branch("main");
+
+    // Re-indent one line and change another for real.
+    repo.write(
+        "src/lib.rs",
+        "fn main() {\n        let a = 1;\n    let b = 3;\n}\n",
+    );
+    let files = git::load_files_with_status(&repo.root).await?;
+    let file = find_file(&files, "src/lib.rs");
+    let ignore = git::DiffOptions {
+        whitespace: git::WhitespaceMode::Ignore,
+    };
+
+    let render = |preview: &git::DiffPreviewData| -> Result<String> {
+        let mut view = git::build_diff_view_from_preview_data(preview, &file, None)?;
+        Ok(rendered_lines(&mut view, DiffViewMode::Unified, 120).join("\n"))
+    };
+    let shown = render(
+        &git::load_diff_preview_for_working_tree(
+            &repo.root,
+            &file,
+            false,
+            git::DiffOptions::default(),
+        )
+        .await?,
+    )?;
+    assert!(shown.contains("-     let a = 1;"), "{shown}");
+    assert!(shown.contains("-     let b = 2;"), "{shown}");
+
+    let ignored =
+        render(&git::load_diff_preview_for_working_tree(&repo.root, &file, false, ignore).await?)?;
+    assert!(!ignored.contains("-     let a = 1;"), "{ignored}");
+    assert!(ignored.contains("-     let b = 2;"), "{ignored}");
+    assert!(ignored.contains("+     let b = 3;"), "{ignored}");
+
+    let shown_stats = git::load_review_diff_stats_for_working_tree(
+        &repo.root,
+        &files,
+        git::DiffOptions::default(),
+    )
+    .await?;
+    let ignored_stats =
+        git::load_review_diff_stats_for_working_tree(&repo.root, &files, ignore).await?;
+    assert_eq!((shown_stats.additions, shown_stats.deletions), (2, 2));
+    assert_eq!((ignored_stats.additions, ignored_stats.deletions), (1, 1));
+
+    let snapshot =
+        git::load_review_diff_snapshot_for_working_tree(&repo.root, &files, ignore).await?;
+    assert_eq!(snapshot.stats().additions, 1);
+
+    let search = git::load_diff_search_index_for_working_tree(&repo.root, &files, ignore).await?;
+    assert!(diff_search_paths(&search, "'let b = 3").contains(&"src/lib.rs".to_string()));
     Ok(())
 }
 
@@ -473,8 +551,12 @@ async fn commit_search_blame_and_commit_compare_report_expected_metadata() -> Re
     assert!(rendered.contains("println!(\"two\")"));
     assert!(rendered.contains("println!(\"three\")"));
 
-    let search_index =
-        git::load_diff_search_index_for_commit_compare(&repo.root, &selection).await?;
+    let search_index = git::load_diff_search_index_for_commit_compare(
+        &repo.root,
+        &selection,
+        git::DiffOptions::default(),
+    )
+    .await?;
     assert!(diff_search_paths(&search_index, "'three").contains(&"src/main.rs".to_string()));
 
     repo.write(
@@ -532,8 +614,12 @@ async fn branch_compare_and_ref_listing_cover_diverged_history() -> Result<()> {
     let rendered = rendered_lines(&mut diff_view, DiffViewMode::Unified, 200).join("\n");
     assert!(rendered.contains("pub fn feature() {}"));
 
-    let search_index =
-        git::load_diff_search_index_for_branch_compare(&repo.root, &selection).await?;
+    let search_index = git::load_diff_search_index_for_branch_compare(
+        &repo.root,
+        &selection,
+        git::DiffOptions::default(),
+    )
+    .await?;
     assert!(diff_search_paths(&search_index, "'feature").contains(&"feature.rs".to_string()));
 
     Ok(())
@@ -572,9 +658,14 @@ async fn branch_compare_exact_highlighting_uses_merge_base_and_source_content() 
     assert_eq!(compared_file.status, "M");
     assert_eq!(compared_file.filetype, Some("rust"));
 
-    let preview =
-        git::load_diff_preview_for_branch_compare(&repo.root, &compared_file, &selection, true)
-            .await?;
+    let preview = git::load_diff_preview_for_branch_compare(
+        &repo.root,
+        &compared_file,
+        &selection,
+        true,
+        git::DiffOptions::default(),
+    )
+    .await?;
     let mut diff_view = git::build_diff_view_from_preview_data(&preview, &compared_file, None)?;
     let registry = git::HighlightRegistry::new_for_filetypes(["rust"])?;
     diff_view.apply_exact_syntax_highlighting(Some("rust"), &registry);

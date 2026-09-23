@@ -15,6 +15,8 @@ use std::path::Path;
 use color_eyre::eyre::WrapErr;
 use tokio::{fs, io::AsyncReadExt, task::JoinSet};
 
+use super::DiffOptions;
+
 use crate::git::{
     BranchCompareSelection, CommitCompareSelection, FileEntry, command::git_output_bytes,
     parse::build_branch_diff_range, status::is_untracked_status,
@@ -90,13 +92,14 @@ impl ReviewDiffStats {
 pub async fn load_review_diff_stats_for_working_tree(
     repo_root: &Path,
     files: &[FileEntry],
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffStats> {
     let mut tracked = ReviewDiffStats::default();
 
     if files.iter().any(|file| !is_untracked_status(&file.status)) {
         let output = git_output_bytes(
             repo_root,
-            &["diff", "--numstat", "-z", "--find-renames", "HEAD", "--"],
+            &options.diff_args(&["diff", "--numstat", "-z", "--find-renames", "HEAD", "--"]),
         )
         .await?;
         tracked = parse_numstat(&output);
@@ -109,17 +112,18 @@ pub async fn load_review_diff_stats_for_working_tree(
 pub async fn load_review_diff_stats_for_commit_compare(
     repo_root: &Path,
     selection: &CommitCompareSelection,
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffStats> {
     let output = git_output_bytes(
         repo_root,
-        &[
+        &options.diff_args(&[
             "diff",
             "--numstat",
             "-z",
             "--find-renames",
             selection.base_ref.as_str(),
             selection.commit_hash.as_str(),
-        ],
+        ]),
     )
     .await?;
     Ok(parse_numstat(&output))
@@ -128,17 +132,18 @@ pub async fn load_review_diff_stats_for_commit_compare(
 pub async fn load_review_diff_stats_for_branch_compare(
     repo_root: &Path,
     selection: &BranchCompareSelection,
+    options: DiffOptions,
 ) -> color_eyre::Result<ReviewDiffStats> {
     let diff_range = build_branch_diff_range(selection);
     let output = git_output_bytes(
         repo_root,
-        &[
+        &options.diff_args(&[
             "diff",
             "--numstat",
             "-z",
             "--find-renames",
             diff_range.as_str(),
-        ],
+        ]),
     )
     .await?;
     Ok(parse_numstat(&output))
