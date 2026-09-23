@@ -18,47 +18,40 @@ use super::{
     surface_color, text_color, text_faint_color, text_subtle_color,
 };
 
-/// Top bar: what is being reviewed and how big the change is.
-pub(super) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let mut left = vec![
-        Span::styled(
-            " vigil",
-            Style::new()
-                .fg(primary_color())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ", Style::new()),
-    ];
-    left.extend(review_target_spans(app));
-
-    let right = change_summary_spans(app);
-    render_split_line(frame, area, left, right, surface_color());
-}
-
-/// Bottom bar: view mode, transient status, and the most useful key hints.
+/// Bottom bar. Left: what is being compared and how big the change is, plus
+/// any transient status. Right: view mode chips and key hints for the focused
+/// pane. Hints are dropped first when the terminal is narrow.
 pub(super) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let mut left = vec![Span::raw(" ")];
-    left.extend(chip(diff_mode_label(app.diff_view_mode)));
-    left.push(Span::raw(" "));
-    left.extend(chip(app.diff_line_wrap_mode.label()));
-    if app.sidebar_hidden {
-        left.push(Span::raw(" "));
-        left.extend(chip("sidebar hidden"));
-    }
+    left.extend(review_target_spans(app));
+    left.push(Span::raw("   "));
+    left.extend(change_summary_spans(app));
     if !app.shows_review_summary_status()
         && let Some(message) = app.status_message.as_deref()
     {
-        left.push(Span::raw("  "));
+        left.push(Span::styled("   ", Style::new()));
         left.push(Span::styled(
             message.to_string(),
             Style::new().fg(text_color()),
         ));
     }
 
-    let left_width = spans_width(&left);
-    let budget = (area.width as usize).saturating_sub(left_width + 2);
-    let right = key_hint_spans(app, budget);
-    render_split_line(frame, area, left, right, surface_color());
+    let mut chips = chip(diff_mode_label(app.diff_view_mode));
+    chips.push(Span::raw(" "));
+    chips.extend(chip(app.diff_line_wrap_mode.label()));
+    if app.sidebar_hidden {
+        chips.push(Span::raw(" "));
+        chips.extend(chip("sidebar hidden"));
+    }
+
+    let budget = (area.width as usize).saturating_sub(spans_width(&left) + spans_width(&chips) + 5);
+    let mut right = key_hint_spans(app, budget);
+    if !right.is_empty() {
+        right.insert(0, Span::raw("   "));
+    }
+    let mut right_group = chips;
+    right_group.extend(right);
+    render_split_line(frame, area, left, right_group, surface_color());
 }
 
 fn render_split_line(
@@ -82,7 +75,6 @@ fn render_split_line(
 fn review_target_spans(app: &App) -> Vec<Span<'static>> {
     let subtle = Style::new().fg(text_subtle_color());
     let faint = Style::new().fg(text_faint_color());
-    let strong = Style::new().fg(text_color()).add_modifier(Modifier::BOLD);
     match &app.review_mode {
         ReviewMode::WorkingTree => {
             let repo_name = app
@@ -91,20 +83,20 @@ fn review_target_spans(app: &App) -> Vec<Span<'static>> {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
             vec![
-                Span::styled(repo_name, strong),
-                Span::styled("  working tree", subtle),
+                Span::styled(repo_name, subtle),
+                Span::styled(" · working tree", faint),
             ]
         }
         ReviewMode::CommitCompare(selection) => vec![
-            Span::styled("commit ", subtle),
-            Span::styled(selection.short_hash.clone(), strong),
+            Span::styled("commit ", faint),
+            Span::styled(selection.short_hash.clone(), subtle),
             Span::styled("  ", faint),
-            Span::styled(selection.subject.clone(), subtle),
+            Span::styled(selection.subject.clone(), faint),
         ],
         ReviewMode::BranchCompare(selection) => vec![
-            Span::styled(selection.source_ref.clone(), strong),
+            Span::styled(selection.source_ref.clone(), subtle),
             Span::styled(" → ", faint),
-            Span::styled(selection.destination_ref.clone(), strong),
+            Span::styled(selection.destination_ref.clone(), subtle),
         ],
     }
 }
@@ -168,7 +160,7 @@ fn file_count_spans(file_count: usize) -> Vec<Span<'static>> {
             "{file_count} file{}",
             if file_count == 1 { "" } else { "s" }
         ),
-        Style::new().fg(text_subtle_color()),
+        Style::new().fg(text_faint_color()),
     )]
 }
 
@@ -268,7 +260,7 @@ fn spans_width(spans: &[Span<'_>]) -> usize {
 }
 
 pub(super) fn render_notifications(frame: &mut Frame, app: &App) {
-    let mut top = frame.area().y + 2;
+    let mut top = frame.area().y + 1;
 
     if let Some(direction) = app.remote_sync {
         let label = match direction {

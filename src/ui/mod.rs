@@ -25,7 +25,7 @@ use self::{
     selection::{highlight_line, highlight_line_range},
     sidebar::render_sidebar,
     splash::Splash,
-    status::{render_footer, render_header, render_notifications},
+    status::{render_footer, render_notifications},
     style::{
         add_bg_color, background_color, chip_color, error_color, panel_color, primary_color,
         rule_color, selected_list_item_text_color, selection_color, success_color, surface_color,
@@ -65,7 +65,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         );
     } else {
         let layout = ScreenLayout::new(frame.area(), app.sidebar_hidden);
-        render_header(frame, app, layout.header);
         if let Some(sidebar) = layout.sidebar {
             render_sidebar(frame, app, sidebar);
         }

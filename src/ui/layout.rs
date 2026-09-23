@@ -8,7 +8,6 @@ const SIDEBAR_WIDTH: u16 = 32;
 /// they cannot disagree about where the sidebar list or diff body begins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ScreenLayout {
-    pub(super) header: Rect,
     pub(super) sidebar: Option<SidebarLayout>,
     pub(super) diff: DiffLayout,
     pub(super) footer: Rect,
@@ -35,13 +34,9 @@ pub(super) struct DiffLayout {
 
 impl ScreenLayout {
     pub(super) fn new(area: Rect, sidebar_hidden: bool) -> Self {
-        let [header, main, footer] = Layout::default()
+        let [main, footer] = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(1),
-                Constraint::Length(1),
-            ])
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
             .areas(area);
 
         let (sidebar, diff_area) = if sidebar_hidden {
@@ -69,7 +64,6 @@ impl ScreenLayout {
 
         let [diff_header, diff_body] = split_title_row(diff_area);
         Self {
-            header,
             sidebar,
             diff: DiffLayout {
                 area: diff_area,
@@ -135,14 +129,15 @@ mod tests {
     }
 
     #[test]
-    fn header_and_footer_frame_the_panes() {
+    fn panes_start_at_the_top_and_stop_at_the_footer() {
         let layout = ScreenLayout::new(Rect::new(0, 0, 120, 40), false);
         let sidebar = layout.sidebar.expect("sidebar should be visible");
 
-        assert_eq!(layout.header, Rect::new(0, 0, 120, 1));
         assert_eq!(layout.footer, Rect::new(0, 39, 120, 1));
-        assert_eq!(sidebar.list.y, 2);
-        assert_eq!(layout.diff.body.y, 2);
+        assert_eq!(sidebar.title.y, 0);
+        assert_eq!(layout.diff.header.y, 0);
+        assert_eq!(sidebar.list.y, 1);
+        assert_eq!(layout.diff.body.y, 1);
         assert_eq!(sidebar.list.bottom(), layout.footer.y);
         assert_eq!(layout.diff.body.bottom(), layout.footer.y);
     }
