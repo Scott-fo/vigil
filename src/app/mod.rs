@@ -169,6 +169,9 @@ pub struct App {
     pub sidebar_items: Vec<SidebarItem>,
     pub collapsed_directories: HashSet<DirectoryKey>,
     pub collapsed_sections: HashSet<SidebarSection>,
+    /// Generated files (lockfiles and similar) the user chose to show this
+    /// session. Every other generated file renders as a placeholder.
+    expanded_generated_files: HashSet<String>,
     pub sidebar_state: ListState,
     pub sidebar_scroll: usize,
     pub sidebar_viewport_height: usize,

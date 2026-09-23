@@ -491,6 +491,7 @@ impl App {
         let target = DiffSearchNavigationTarget::from_result(&result);
         self.close_diff_search_modal();
         self.pending_diff_search_target = Some(target.clone());
+        self.expand_generated_file(&target.file_path);
         self.select_file_by_path(&target.file_path).await?;
         self.apply_pending_diff_search_target();
         Ok(())

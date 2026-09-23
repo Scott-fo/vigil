@@ -37,6 +37,7 @@ impl App {
             sidebar_items: Vec::new(),
             collapsed_directories: HashSet::new(),
             collapsed_sections: HashSet::new(),
+            expanded_generated_files: HashSet::new(),
             sidebar_state: ListState::default(),
             sidebar_scroll: 0,
             sidebar_viewport_height: 0,

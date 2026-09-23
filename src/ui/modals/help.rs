@@ -122,6 +122,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                 keys: vec![
                     ("enter / o / e", "open in editor"),
                     ("enter on gap", "expand hidden lines"),
+                    ("enter on lockfile", "show collapsed generated diff"),
                     ("click gap row", "↓ top row, ↑ bottom row"),
                     ("Ctrl-C", "copy selection, or quit"),
                     ("space", "stage / unstage file"),

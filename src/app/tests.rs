@@ -497,3 +497,61 @@ fn mouse_moves_only_request_redraws_when_the_hover_target_changes() {
     );
     assert_eq!(app.mouse_position, Some(Position::new(90, 12)));
 }
+
+fn lockfile_app() -> App {
+    let mut app = build_test_app();
+    app.files = vec![
+        FileEntry {
+            status: " M".to_string(),
+            path: "Cargo.lock".to_string(),
+            label: "Cargo.lock".to_string(),
+            filetype: None,
+        },
+        FileEntry {
+            status: " M".to_string(),
+            path: "src/main.rs".to_string(),
+            label: "main.rs".to_string(),
+            filetype: Some("rust"),
+        },
+    ];
+    app.rebuild_sidebar_items();
+    app.selected_file_index = 0;
+    app.sync_sidebar_state();
+    app
+}
+
+#[tokio::test]
+async fn generated_files_start_collapsed_and_skip_diff_loading() {
+    let mut app = lockfile_app();
+
+    app.queue_selected_diff_load(true, true);
+
+    assert!(app.selected_file_is_collapsed_generated());
+    assert!(
+        app.pending_diff_cache_key.is_none(),
+        "no diff load is queued"
+    );
+    assert!(!app.diff_view.has_diff_rows());
+
+    app.selected_file_index = 1;
+    assert!(!app.selected_file_is_collapsed_generated());
+}
+
+#[tokio::test]
+async fn enter_on_a_collapsed_generated_file_expands_it_instead_of_opening_it() {
+    let mut app = lockfile_app();
+    app.active_pane = ActivePane::Diff;
+
+    let outcome = app
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .await
+        .unwrap();
+
+    assert!(outcome.is_none(), "enter must not open the editor");
+    assert!(!app.selected_file_is_collapsed_generated());
+    assert!(
+        app.pending_diff_cache_key.is_some(),
+        "expanding loads the diff"
+    );
+    assert!(!app.expand_selected_generated_file(), "already expanded");
+}

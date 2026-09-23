@@ -4,6 +4,7 @@ mod changed_files;
 mod command;
 mod commit;
 mod diff;
+mod generated;
 mod highlight;
 mod merge;
 mod parse;
@@ -74,6 +75,7 @@ pub use diff::{
     parse_merge_conflict_diff_from_file, parse_patch_files, process_file, process_patch,
     resolve_conflict, resolve_merge_conflict_contents, trim_patch_context,
 };
+pub use generated::is_generated_file;
 pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_highlight_registry};
 pub use merge::prepare_branch_merge;
 pub use refs::{list_comparable_refs, load_branch_compare_refs, load_files_with_branch_diff};

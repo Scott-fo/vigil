@@ -82,6 +82,11 @@ fn render_file_header(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.selected_file_is_collapsed_generated() {
+        render_generated_placeholder(frame, app, area);
+        return;
+    }
+
     let diff_focused = app.active_pane == ActivePane::Diff;
     let mode = app.diff_view_mode;
     let line_wrap = app.diff_line_wrap_mode;
@@ -126,6 +131,36 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
             .thumb_style(Style::new().fg(text_faint_color()));
         frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
+}
+
+/// `Generated file · +1204 −88 · ⏎ show diff`, in place of a lockfile diff.
+fn render_generated_placeholder(frame: &mut Frame, app: &App, area: Rect) {
+    if area.height < 2 {
+        return;
+    }
+    let faint = Style::new().fg(text_faint_color());
+    let mut spans = vec![Span::styled(
+        "   Generated file",
+        Style::new().fg(text_subtle_color()),
+    )];
+    if let Some(totals) = app
+        .files
+        .get(app.selected_file_index)
+        .and_then(|file| app.file_line_totals(&file.path))
+    {
+        spans.push(Span::styled("  ·  ", faint));
+        spans.extend(line_change_spans(totals.additions, totals.deletions));
+    }
+    spans.extend([
+        Span::styled("  ·  ", faint),
+        Span::styled(
+            "⏎",
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" show diff", faint),
+    ]);
+    let row = Rect::new(area.x, area.y + 1, area.width, 1);
+    frame.render_widget(Paragraph::new(Line::from(spans)), row);
 }
 
 fn render_diff_body_windowed(

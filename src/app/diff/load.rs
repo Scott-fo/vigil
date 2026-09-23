@@ -498,6 +498,15 @@ impl App {
             return;
         };
 
+        if self.is_collapsed_generated_file(&file) {
+            // The diff pane shows a placeholder; skip loading a diff that is
+            // usually huge and rarely read.
+            self.diff_view = DiffView::empty("");
+            self.diff_highlight_complete = true;
+            self.status_message = Some(self.current_status_message());
+            return;
+        }
+
         let cache_key = self.diff_cache_key(&file);
         self.pending_diff_cache_key = Some(cache_key.clone());
         if let Some((diff_view, highlight_complete)) =

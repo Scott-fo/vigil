@@ -19,6 +19,7 @@ impl App {
         self.repo_watcher_loading = false;
         self.collapsed_directories.clear();
         self.collapsed_sections.clear();
+        self.expanded_generated_files.clear();
         self.refresh().await?;
         self.status_message = Some(format!("watching {}", path.display()));
         Ok(())
