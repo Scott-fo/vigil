@@ -263,7 +263,7 @@ impl App {
         }
 
         self.diff_view = diff_view;
-        self.apply_pending_diff_search_target();
+        self.apply_pending_diff_targets();
         self.diff_highlight_complete = self.highlight_registry.is_none() || file.filetype.is_none();
         self.status_message = Some(self.current_status_message());
         true

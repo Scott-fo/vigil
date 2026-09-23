@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::super::{ActivePane, App};
 use super::{KeyOutcome, handled};
+use crate::git::ChangeDirection;
 
 impl App {
     pub(super) async fn handle_pane_key(
@@ -25,6 +26,14 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.move_active_pane_selection(-1).await?;
+                handled()
+            }
+            KeyCode::Char(']') => {
+                self.jump_to_change(ChangeDirection::Next).await?;
+                handled()
+            }
+            KeyCode::Char('[') => {
+                self.jump_to_change(ChangeDirection::Previous).await?;
                 handled()
             }
             KeyCode::Char(' ') => {

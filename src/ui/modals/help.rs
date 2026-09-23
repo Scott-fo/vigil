@@ -110,6 +110,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                 title: "Navigation",
                 keys: vec![
                     ("j / k", "move selection"),
+                    ("] / [", "next / previous change"),
                     ("Ctrl-D / Ctrl-U", "page diff"),
                     ("mouse wheel", "scroll hovered pane"),
                     ("drag in diff", "select code text"),
