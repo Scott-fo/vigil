@@ -1,59 +1,33 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Padding, Paragraph},
+    text::Span,
 };
 
-use crate::app::App;
+use crate::{app::App, git};
 
-use super::super::{
-    diff_context_color, panel_color, primary_color, selected_list_item_text_color, text_color,
-    text_muted_color,
-};
+use super::super::{text_color, text_subtle_color};
 use super::frame::render_modal_frame;
-use super::list::{
-    render_list_frame, render_list_message, render_modal_input, render_visible_list,
-};
+use super::hints::render_hint_footer;
+use super::list::{PickerLayout, render_list_message, render_visible_list};
+use super::prompt::{Prompt, render_prompt};
 
 pub(super) fn render_file_search_modal(frame: &mut Frame, app: &mut App) {
-    let inner = render_modal_frame(frame, 92, 22, "File Search");
+    let inner = render_modal_frame(frame, 92, 22, "Find file");
+    let layout = PickerLayout::new(inner, 1);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(6),
-            Constraint::Length(2),
-        ])
-        .split(inner);
-
-    if app.file_search_query.is_empty() {
-        render_modal_input(
-            frame,
-            chunks[0],
-            "Search changed files by name or path...",
-            true,
-            false,
-            None,
-        );
-    } else {
-        render_modal_input(
-            frame,
-            chunks[0],
-            app.file_search_query.clone(),
-            false,
-            false,
-            None,
-        );
-    }
+    render_prompt(
+        frame,
+        layout.prompt,
+        Prompt::new(
+            &app.file_search_query,
+            "Search changed files by name or path",
+        ),
+    );
 
     let filtered_indices = app.filtered_file_search_indices();
-    let list_inner = render_list_frame(frame, chunks[1]);
-
     if filtered_indices.is_empty() {
-        render_list_message(frame, list_inner, "No matching files.");
+        render_list_message(frame, layout.list, "No matching files.");
     } else {
         let selected_index = app
             .file_search_selected_index
@@ -61,54 +35,39 @@ pub(super) fn render_file_search_modal(frame: &mut Frame, app: &mut App) {
 
         render_visible_list(
             frame,
-            list_inner,
+            layout.list,
             filtered_indices.len(),
             selected_index,
             |display_index, selected| {
-                let file_index = filtered_indices[display_index];
-                let file = &app.files[file_index];
-                let base_style = if selected {
-                    Style::new()
-                        .bg(primary_color())
-                        .fg(selected_list_item_text_color())
-                } else {
-                    Style::new().fg(text_color())
-                };
-                let status_style = if selected {
-                    Style::new()
-                        .bg(primary_color())
-                        .fg(selected_list_item_text_color())
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::new()
-                        .fg(primary_color())
-                        .add_modifier(Modifier::BOLD)
-                };
-
-                Line::from(vec![
-                    Span::styled(format!("{:<3}", file.status), status_style),
-                    Span::styled(" ", base_style),
-                    Span::styled(file.path.clone(), base_style),
-                ])
-                .style(base_style)
+                let file = &app.files[filtered_indices[display_index]];
+                let directory = file
+                    .path
+                    .strip_suffix(file.label.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let mut name_style = Style::new().fg(text_color());
+                if selected {
+                    name_style = name_style.add_modifier(Modifier::BOLD);
+                }
+                vec![
+                    Span::styled(
+                        format!("{:1}  ", git::status_label(&file.status)),
+                        Style::new().fg(git::status_color(&file.status)),
+                    ),
+                    Span::styled(file.label.clone(), name_style),
+                    Span::styled(
+                        format!("  {}", directory.trim_end_matches('/')),
+                        Style::new().fg(text_subtle_color()),
+                    ),
+                ]
             },
         );
     }
 
-    let selected_label = app
-        .selected_file_search_path()
-        .unwrap_or_else(|| "no selection".to_string());
-    let footer = Paragraph::new(Text::from(vec![
-        Line::from(Span::styled(
-            "Type to filter. j/k preview. Enter keeps selection. Esc restores.",
-            Style::new().fg(text_muted_color()),
-        )),
-        Line::from(Span::styled(
-            selected_label,
-            Style::new().fg(diff_context_color()),
-        )),
-    ]))
-    .style(Style::new().bg(panel_color()))
-    .block(Block::new().padding(Padding::horizontal(1)));
-    frame.render_widget(footer, chunks[2]);
+    render_hint_footer(
+        frame,
+        layout.footer,
+        &[("j/k", "preview"), ("⏎", "keep"), ("esc", "restore")],
+        Some(format!("{} of {}", filtered_indices.len(), app.files.len())),
+    );
 }

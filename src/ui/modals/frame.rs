@@ -3,12 +3,15 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear},
+    widgets::{Block, BorderType, Borders, Clear, Padding},
 };
 
 use super::super::layout::centered_rect;
-use super::super::{error_color, panel_color, text_color, text_faint_color};
+use super::super::{error_color, surface_color, text_color, text_faint_color};
 
+/// Clears a centered area and draws a rounded frame titled `title`. Returns
+/// the inner area, inset one column from each side and one row below the
+/// title; modals lay out their own rows inside it.
 pub(super) fn render_modal_frame(
     frame: &mut Frame,
     width: u16,
@@ -50,12 +53,12 @@ fn render_modal_frame_with_colors(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(border_color))
-        .style(Style::new().bg(panel_color()))
+        .style(Style::new().bg(surface_color()))
         .title(Line::from(Span::styled(
             title,
             Style::new().fg(title_color).add_modifier(Modifier::BOLD),
         )));
-    let inner = block.inner(area);
+    let inner = block.clone().padding(Padding::new(1, 1, 1, 0)).inner(area);
     frame.render_widget(block, area);
     inner
 }

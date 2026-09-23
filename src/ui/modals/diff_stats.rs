@@ -1,5 +1,6 @@
 use ratatui::{
     Frame,
+    layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Padding, Paragraph},
@@ -9,15 +10,21 @@ use crate::app::{App, DiffStatsState};
 use crate::git::{DiffLineTotals, ReviewDiffStats};
 
 use super::super::{
-    error_color, panel_color, success_color, text_color, text_muted_color, warning_color,
+    error_color, rule_color, success_color, text_color, text_faint_color, text_subtle_color,
+    warning_color,
 };
 use super::frame::render_modal_frame;
+use super::hints::render_hint_footer;
 
 pub(super) fn render_diff_stats_modal(frame: &mut Frame, app: &App) {
-    let inner = render_modal_frame(frame, 58, 16, "Diff Stats (F2)");
-    let width = inner.width.saturating_sub(2) as usize;
+    let inner = render_modal_frame(frame, 58, 15, "Diff stats");
+    let [body, footer] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .areas(inner);
+    let width = body.width.saturating_sub(2) as usize;
 
-    let mut lines = match app.diff_stats_state() {
+    let lines = match app.diff_stats_state() {
         DiffStatsState::Ready(stats) if stats.has_working_tree_scopes() => {
             working_tree_stat_lines(stats, width)
         }
@@ -35,16 +42,15 @@ pub(super) fn render_diff_stats_modal(frame: &mut Frame, app: &App) {
             separator_line(width),
             Line::from(Span::styled(
                 "No parsed diff metrics are available yet.",
-                Style::new().fg(text_muted_color()),
+                Style::new().fg(text_subtle_color()),
             )),
         ],
     };
-    lines.push(muted_line("Esc, Enter, q, or F2 closes."));
 
-    let paragraph = Paragraph::new(Text::from(lines))
-        .style(Style::new().bg(panel_color()))
-        .block(Block::new().padding(Padding::horizontal(1)));
-    frame.render_widget(paragraph, inner);
+    let paragraph =
+        Paragraph::new(Text::from(lines)).block(Block::new().padding(Padding::horizontal(1)));
+    frame.render_widget(paragraph, body);
+    render_hint_footer(frame, footer, &[("esc", "close"), ("F2", "toggle")], None);
 }
 
 fn working_tree_stat_lines(stats: ReviewDiffStats, width: usize) -> Vec<Line<'static>> {
@@ -57,7 +63,6 @@ fn working_tree_stat_lines(stats: ReviewDiffStats, width: usize) -> Vec<Line<'st
         scope_row("Total", stats.totals(), width),
         separator_line(width),
         muted_line("Untracked files count as added lines."),
-        muted_line(""),
     ]
 }
 
@@ -90,16 +95,15 @@ fn combined_stat_lines(stats: ReviewDiffStats, width: usize) -> Vec<Line<'static
             "Lines",
             stats.lines,
             width,
-            Style::new().fg(text_muted_color()),
+            Style::new().fg(text_subtle_color()),
         ),
-        muted_line(""),
     ]
 }
 
 fn scope_header_line(width: usize) -> Line<'static> {
     let files = pad_left("files", 8);
     let additions = pad_left("+", 8);
-    let deletions = pad_left("-", 8);
+    let deletions = pad_left("−", 8);
     let label_width = width
         .saturating_sub(files.len())
         .saturating_sub(additions.len())
@@ -108,18 +112,18 @@ fn scope_header_line(width: usize) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!("{:label_width$}", ""),
-            Style::new().fg(text_muted_color()),
+            Style::new().fg(text_faint_color()),
         ),
-        Span::styled(files, Style::new().fg(text_muted_color())),
-        Span::styled(additions, Style::new().fg(text_muted_color())),
-        Span::styled(deletions, Style::new().fg(text_muted_color())),
+        Span::styled(files, Style::new().fg(text_faint_color())),
+        Span::styled(additions, Style::new().fg(text_faint_color())),
+        Span::styled(deletions, Style::new().fg(text_faint_color())),
     ])
 }
 
 fn scope_row(label: &'static str, scope: DiffLineTotals, width: usize) -> Line<'static> {
     let files = pad_left(&format_count(scope.file_count), 8);
     let additions = pad_left(&format!("+{}", format_count(scope.additions)), 8);
-    let deletions = pad_left(&format!("-{}", format_count(scope.deletions)), 8);
+    let deletions = pad_left(&format!("−{}", format_count(scope.deletions)), 8);
     let label_width = width
         .saturating_sub(files.len())
         .saturating_sub(additions.len())
@@ -128,7 +132,7 @@ fn scope_row(label: &'static str, scope: DiffLineTotals, width: usize) -> Line<'
     Line::from(vec![
         Span::styled(
             format!("{label:<label_width$}"),
-            Style::new().fg(text_muted_color()),
+            Style::new().fg(text_subtle_color()),
         ),
         Span::styled(files, Style::new().fg(text_color())),
         Span::styled(
@@ -151,7 +155,7 @@ fn stat_line(label: &'static str, value: usize, width: usize, value_style: Style
         .saturating_sub(value.len())
         .max(1);
     Line::from(vec![
-        Span::styled(label, Style::new().fg(text_muted_color())),
+        Span::styled(label, Style::new().fg(text_subtle_color())),
         Span::raw(" ".repeat(spacing)),
         Span::styled(value, value_style),
     ])
@@ -159,13 +163,13 @@ fn stat_line(label: &'static str, value: usize, width: usize, value_style: Style
 
 fn separator_line(width: usize) -> Line<'static> {
     Line::from(Span::styled(
-        "-".repeat(width.max(1)),
-        Style::new().fg(text_muted_color()),
+        "─".repeat(width.max(1)),
+        Style::new().fg(rule_color()),
     ))
 }
 
 fn muted_line(text: &'static str) -> Line<'static> {
-    Line::from(Span::styled(text, Style::new().fg(text_muted_color())))
+    Line::from(Span::styled(text, Style::new().fg(text_faint_color())))
 }
 
 fn pad_left(value: &str, width: usize) -> String {

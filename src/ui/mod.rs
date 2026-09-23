@@ -27,10 +27,9 @@ use self::{
     splash::Splash,
     status::{render_footer, render_header, render_notifications},
     style::{
-        add_bg_color, background_color, border_active_color, border_color, chip_color,
-        diff_context_color, element_color, error_color, panel_color, primary_color, rule_color,
-        selected_list_item_text_color, selection_color, success_color, surface_color, text_color,
-        text_faint_color, text_muted_color, text_subtle_color, warning_color,
+        add_bg_color, background_color, chip_color, error_color, panel_color, primary_color,
+        rule_color, selected_list_item_text_color, selection_color, success_color, surface_color,
+        text_color, text_faint_color, text_muted_color, text_subtle_color, warning_color,
     },
 };
 

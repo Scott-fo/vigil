@@ -22,21 +22,6 @@ pub(super) fn panel_color() -> Color {
 }
 
 #[inline]
-pub(super) fn element_color() -> Color {
-    palette().background_element
-}
-
-#[inline]
-pub(super) fn border_color() -> Color {
-    palette().border
-}
-
-#[inline]
-pub(super) fn border_active_color() -> Color {
-    palette().border_active
-}
-
-#[inline]
 pub(super) fn text_color() -> Color {
     palette().text
 }
