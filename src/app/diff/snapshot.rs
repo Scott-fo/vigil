@@ -25,6 +25,7 @@ impl App {
         let repo_root = self.repo_root.clone();
         let files = self.files.clone();
         let review_mode = self.review_mode.clone();
+        let diff_options = self.diff_options();
         let sender = self.events.sender();
 
         self.review_diff_snapshot_task = Some(task::spawn(async move {
@@ -36,34 +37,39 @@ impl App {
                     file,
                 });
             };
-            let text_index =
-                match load_review_diff_text_index(&repo_root, &files, &review_mode, on_file)
-                    .await
-                    .map(Arc::new)
-                {
-                    Ok(text_index) => {
-                        let _ = sender.send(Event::ReviewDiffTextIndexLoaded {
-                            request_id,
-                            generation,
-                            result: Ok(Arc::clone(&text_index)),
-                        });
-                        text_index
-                    }
-                    Err(error) => {
-                        let error = error.to_string();
-                        let _ = sender.send(Event::ReviewDiffTextIndexLoaded {
-                            request_id,
-                            generation,
-                            result: Err(error.clone()),
-                        });
-                        let _ = sender.send(Event::ReviewDiffSnapshotLoaded {
-                            request_id,
-                            generation,
-                            result: Err(error),
-                        });
-                        return;
-                    }
-                };
+            let text_index = match load_review_diff_text_index(
+                &repo_root,
+                &files,
+                &review_mode,
+                diff_options,
+                on_file,
+            )
+            .await
+            .map(Arc::new)
+            {
+                Ok(text_index) => {
+                    let _ = sender.send(Event::ReviewDiffTextIndexLoaded {
+                        request_id,
+                        generation,
+                        result: Ok(Arc::clone(&text_index)),
+                    });
+                    text_index
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    let _ = sender.send(Event::ReviewDiffTextIndexLoaded {
+                        request_id,
+                        generation,
+                        result: Err(error.clone()),
+                    });
+                    let _ = sender.send(Event::ReviewDiffSnapshotLoaded {
+                        request_id,
+                        generation,
+                        result: Err(error),
+                    });
+                    return;
+                }
+            };
 
             let cache_key_prefix = review_diff_snapshot_cache_key_prefix(&review_mode);
             let result = build_review_diff_snapshot_from_text_index(text_index, cache_key_prefix)
@@ -274,22 +280,34 @@ async fn load_review_diff_text_index(
     repo_root: &std::path::Path,
     files: &[git::FileEntry],
     review_mode: &ReviewMode,
+    diff_options: git::DiffOptions,
     on_file: impl FnMut(git::ReviewDiffStreamedFile) + Send,
 ) -> color_eyre::Result<git::ReviewDiffTextIndex> {
     match review_mode {
         ReviewMode::WorkingTree => {
-            git::load_review_diff_text_index_for_working_tree_streaming(repo_root, files, on_file)
-                .await
+            git::load_review_diff_text_index_for_working_tree_streaming(
+                repo_root,
+                files,
+                diff_options,
+                on_file,
+            )
+            .await
         }
         ReviewMode::CommitCompare(selection) => {
             git::load_review_diff_text_index_for_commit_compare_streaming(
-                repo_root, selection, on_file,
+                repo_root,
+                selection,
+                diff_options,
+                on_file,
             )
             .await
         }
         ReviewMode::BranchCompare(selection) => {
             git::load_review_diff_text_index_for_branch_compare_streaming(
-                repo_root, selection, on_file,
+                repo_root,
+                selection,
+                diff_options,
+                on_file,
             )
             .await
         }

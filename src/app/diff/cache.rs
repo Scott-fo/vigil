@@ -19,6 +19,9 @@ pub struct DiffCacheKey {
     pub(super) review_scope: String,
     pub(super) file_path: String,
     pub(super) file_status: String,
+    /// Diff options change the diff text, so views built with different
+    /// options must never be served for each other.
+    pub(super) options: crate::git::DiffOptions,
 }
 
 #[derive(Debug, Clone)]

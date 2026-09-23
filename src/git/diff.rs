@@ -13,6 +13,7 @@ mod layout;
 mod line;
 mod merge_conflict;
 mod model;
+mod options;
 mod patch;
 mod preview;
 mod rendering;
@@ -74,6 +75,7 @@ pub use self::model::{
     PrePropertiesConfig, ProcessFileConflictData, RenderDiffOptions, RenderFileOptions,
     SelectedLineRange, SelectionSide, ThemeSpec, WorkerStats,
 };
+pub use self::options::{DiffOptions, WhitespaceMode};
 pub use self::patch::{
     get_singular_patch, parse_patch_files, process_file, process_patch, trim_patch_context,
 };

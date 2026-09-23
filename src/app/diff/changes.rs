@@ -120,16 +120,29 @@ impl App {
         }
     }
 
-    /// The file after (or before) the selected one in sidebar order.
+    /// The file after (or before) the selected one in sidebar order. Collapsed
+    /// generated files are skipped: they never load a diff, so there is no
+    /// change to land on.
     fn neighbouring_file_path(&self, direction: ChangeDirection) -> Option<String> {
         let paths = self.visible_file_paths();
         let current = self.selected_file().map(|file| file.path.as_str())?;
         let position = paths.iter().position(|path| path == current)?;
-        let neighbour = match direction {
-            ChangeDirection::Next => position.checked_add(1)?,
-            ChangeDirection::Previous => position.checked_sub(1)?,
+        let has_changes_to_land_on = |path: &String| {
+            self.files
+                .iter()
+                .find(|file| &file.path == path)
+                .is_some_and(|file| !self.is_collapsed_generated_file(file))
         };
-        paths.get(neighbour).cloned()
+        match direction {
+            ChangeDirection::Next => paths[position + 1..]
+                .iter()
+                .find(|path| has_changes_to_land_on(path)),
+            ChangeDirection::Previous => paths[..position]
+                .iter()
+                .rev()
+                .find(|path| has_changes_to_land_on(path)),
+        }
+        .cloned()
     }
 }
 
@@ -227,6 +240,31 @@ mod tests {
 
         assert_eq!(selected_path(&app), "a.rs");
         assert_eq!(app.selected_diff_line_index, BLOCK_STARTS[2]);
+    }
+
+    #[tokio::test]
+    async fn rolling_over_skips_collapsed_generated_files() {
+        let mut app = app_with_cached_diffs();
+        app.files.push(file("Cargo.lock"));
+        app.rebuild_sidebar_items();
+        app.sync_sidebar_state();
+        let order = app.visible_file_paths();
+        let lock_position = order.iter().position(|path| path == "Cargo.lock").unwrap();
+        assert!(
+            lock_position > 0,
+            "fixture needs a file before the lockfile"
+        );
+        let before_lock = order[lock_position - 1].clone();
+        app.select_file_by_path(&before_lock).await.unwrap();
+        app.active_pane = ActivePane::Diff;
+
+        // Walk past every block of the file before the lockfile.
+        for _ in 0..BLOCK_STARTS.len() + 1 {
+            app.jump_to_change(ChangeDirection::Next).await.unwrap();
+        }
+
+        assert_ne!(selected_path(&app), "Cargo.lock");
+        assert_eq!(app.pending_change_landing, None);
     }
 
     #[tokio::test]

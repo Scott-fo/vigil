@@ -4,6 +4,19 @@ use super::super::{ActivePane, App, editor::AppCommand};
 
 impl App {
     pub(super) fn handle_open_key(&mut self, key_code: KeyCode) -> Option<AppCommand> {
+        let file_row_focused = match self.active_pane {
+            ActivePane::Diff => true,
+            ActivePane::Sidebar => self
+                .focused_sidebar_item()
+                .is_some_and(|item| item.file().is_some()),
+        };
+        if matches!(key_code, KeyCode::Enter)
+            && file_row_focused
+            && self.expand_selected_generated_file()
+        {
+            return None;
+        }
+
         if self.active_pane == ActivePane::Diff
             && matches!(key_code, KeyCode::Enter)
             && self

@@ -2,6 +2,7 @@ use super::*;
 
 mod cache;
 mod changes;
+mod generated;
 mod highlight;
 mod load;
 mod snapshot;

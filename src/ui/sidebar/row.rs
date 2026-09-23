@@ -187,8 +187,12 @@ fn file_spans(
         .saturating_sub(fixed_width + display_width(&display_label))
         .max(1);
 
+    // Generated files (lockfiles and similar) recede so hand-written changes
+    // stand out; their diffs start collapsed.
     let mut label_style = Style::new().fg(if deleted || context.viewed {
         text_faint_color()
+    } else if git::is_generated_file(&file.path) {
+        text_subtle_color()
     } else {
         text_color()
     });

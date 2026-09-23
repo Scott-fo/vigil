@@ -10,6 +10,7 @@ impl App {
         match action {
             FooterAction::ToggleDiffViewMode => self.toggle_diff_view_mode(),
             FooterAction::ToggleLineWrap => self.toggle_diff_line_wrap_mode(),
+            FooterAction::ToggleWhitespace => self.toggle_diff_whitespace_mode(),
             FooterAction::ToggleSidebar => self.toggle_sidebar_hidden(),
             FooterAction::OpenHelp => self.help_modal_open = true,
             FooterAction::SwitchPane => self.switch_active_pane(),

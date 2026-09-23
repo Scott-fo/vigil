@@ -27,6 +27,15 @@ impl App {
             return Ok(());
         }
 
+        if self.selected_file_is_collapsed_generated()
+            && ui::hovered_pane_at(self, mouse_event.column, mouse_event.row, width, height)
+                == Some(ActivePane::Diff)
+        {
+            self.active_pane = ActivePane::Diff;
+            self.expand_selected_generated_file();
+            return Ok(());
+        }
+
         if let Some(row_index) =
             ui::sidebar_item_index_at(self, mouse_event.column, mouse_event.row, width, height)
         {

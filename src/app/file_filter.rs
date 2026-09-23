@@ -122,20 +122,7 @@ impl App {
 
         let previously_selected = self.selected_file().map(|file| file.path.clone());
         self.file_exclude_suffixes = suffixes;
-        self.invalidate_review_snapshot();
-        self.clear_review_diff_snapshot();
-        self.clear_review_diff_stats();
-        self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
-        self.diff_view_cache.clear();
-        self.diff_prefetch_direction = Default::default();
-        self.diff_prefetch_anchor_file_index = None;
-        self.rebuild_visible_file_list(previously_selected.as_deref());
-        self.queue_review_diff_stats_load();
-        self.queue_review_diff_snapshot_load();
-        self.queue_diff_search_index_load();
-        self.queue_selected_diff_load(true, true);
-        self.status_message = Some(self.current_status_message());
-        self.queue_review_restore_for_current_snapshot();
+        self.reload_review_diffs(previously_selected.as_deref());
     }
 }
 

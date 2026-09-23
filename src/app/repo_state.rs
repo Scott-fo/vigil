@@ -143,6 +143,25 @@ impl App {
         self.queue_viewed_files_load();
     }
 
+    /// Drops every diff-derived cache and reloads the review for the current
+    /// file list. Used when a setting that changes diff content changes.
+    pub(in crate::app) fn reload_review_diffs(&mut self, previously_selected: Option<&str>) {
+        self.invalidate_review_snapshot();
+        self.clear_review_diff_snapshot();
+        self.clear_review_diff_stats();
+        self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
+        self.diff_view_cache.clear();
+        self.diff_prefetch_direction = Default::default();
+        self.diff_prefetch_anchor_file_index = None;
+        self.rebuild_visible_file_list(previously_selected);
+        self.queue_review_diff_stats_load();
+        self.queue_review_diff_snapshot_load();
+        self.queue_diff_search_index_load();
+        self.queue_selected_diff_load(true, true);
+        self.status_message = Some(self.current_status_message());
+        self.queue_review_restore_for_current_snapshot();
+    }
+
     fn apply_working_tree_status_root(&mut self, resolved_root: std::path::PathBuf) {
         let watcher_needs_restart = self.repo_error.is_some()
             || (!self.repo_watcher_loading && self.repo_watcher.is_none())

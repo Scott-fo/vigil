@@ -274,10 +274,11 @@ impl App {
         let repo_root = self.repo_root.clone();
         let files = self.files.clone();
         let review_mode = self.review_mode.clone();
+        let diff_options = self.diff_options();
         let sender = self.events.sender();
 
         self.diff_search_load_task = Some(task::spawn(async move {
-            let result = load_diff_search_index(&repo_root, &files, &review_mode)
+            let result = load_diff_search_index(&repo_root, &files, &review_mode, diff_options)
                 .await
                 .map_err(|error| error.to_string());
             let _ = sender.send(Event::DiffSearchIndexLoaded { request_id, result });
@@ -490,6 +491,7 @@ impl App {
         let target = DiffSearchNavigationTarget::from_result(&result);
         self.close_diff_search_modal();
         self.pending_diff_search_target = Some(target.clone());
+        self.expand_generated_file(&target.file_path);
         self.select_file_by_path(&target.file_path).await?;
         self.apply_pending_diff_search_target();
         Ok(())
@@ -522,6 +524,7 @@ async fn load_diff_search_index(
     repo_root: &std::path::Path,
     files: &[git::FileEntry],
     review_mode: &ReviewMode,
+    diff_options: git::DiffOptions,
 ) -> color_eyre::Result<git::DiffSearchIndex> {
     if files.is_empty() {
         return Ok(git::DiffSearchIndex::default());
@@ -529,13 +532,13 @@ async fn load_diff_search_index(
 
     match review_mode {
         ReviewMode::WorkingTree => {
-            git::load_diff_search_index_for_working_tree(repo_root, files).await
+            git::load_diff_search_index_for_working_tree(repo_root, files, diff_options).await
         }
         ReviewMode::CommitCompare(selection) => {
-            git::load_diff_search_index_for_commit_compare(repo_root, selection).await
+            git::load_diff_search_index_for_commit_compare(repo_root, selection, diff_options).await
         }
         ReviewMode::BranchCompare(selection) => {
-            git::load_diff_search_index_for_branch_compare(repo_root, selection).await
+            git::load_diff_search_index_for_branch_compare(repo_root, selection, diff_options).await
         }
     }
 }

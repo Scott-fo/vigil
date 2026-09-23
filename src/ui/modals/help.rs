@@ -83,6 +83,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
         ("ff / fg / fx", "find file / search diff / hide suffix"),
         ("v", "toggle unified / split diff"),
         ("z", "toggle line wrap"),
+        ("W", "ignore / show whitespace changes"),
         ("r", "refresh"),
         ("R", "run Codex review"),
         ("E", "edit Codex review context"),
@@ -121,6 +122,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                 keys: vec![
                     ("enter / o / e", "open in editor"),
                     ("enter on gap", "expand hidden lines"),
+                    ("enter on lockfile", "show collapsed generated diff"),
                     ("click gap row", "↓ top row, ↑ bottom row"),
                     ("Ctrl-C", "copy selection, or quit"),
                     ("space", "stage / unstage file"),

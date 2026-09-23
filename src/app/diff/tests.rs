@@ -17,6 +17,7 @@ fn build_cache_key(index: usize) -> DiffCacheKey {
         review_scope: "working-tree".to_string(),
         file_path: format!("src/file-{index}.rs"),
         file_status: "M ".to_string(),
+        options: git::DiffOptions::default(),
     }
 }
 
@@ -1107,6 +1108,7 @@ fn build_diff_cache_key_includes_review_scope() {
             subject: "subject".to_string(),
         }),
         &file,
+        git::DiffOptions::default(),
     );
     let branch_key = App::build_diff_cache_key(
         &ReviewMode::BranchCompare(BranchCompareSelection {
@@ -1114,8 +1116,52 @@ fn build_diff_cache_key_includes_review_scope() {
             destination_ref: "main".to_string(),
         }),
         &file,
+        git::DiffOptions::default(),
     );
 
     assert_eq!(commit_key.review_scope, "commit:base:commit");
     assert_eq!(branch_key.review_scope, "branch:feature:main");
+}
+
+#[test]
+fn diff_cache_key_distinguishes_whitespace_modes() {
+    let file = FileEntry {
+        status: " M".to_string(),
+        path: "src/app.rs".to_string(),
+        label: "app.rs".to_string(),
+        filetype: Some("rust"),
+    };
+    let show =
+        App::build_diff_cache_key(&ReviewMode::WorkingTree, &file, git::DiffOptions::default());
+    let ignore = App::build_diff_cache_key(
+        &ReviewMode::WorkingTree,
+        &file,
+        git::DiffOptions {
+            whitespace: git::WhitespaceMode::Ignore,
+        },
+    );
+
+    assert_ne!(show, ignore);
+}
+
+#[tokio::test]
+async fn changing_whitespace_mode_invalidates_cached_diffs() {
+    let mut app = build_test_app();
+    let file = FileEntry {
+        status: " M".to_string(),
+        path: "src/app.rs".to_string(),
+        label: "app.rs".to_string(),
+        filetype: Some("rust"),
+    };
+    let show_key = app.diff_cache_key(&file);
+    app.diff_view_cache
+        .insert_plain(show_key.clone(), build_diff_view(2));
+    let generation = app.diff_cache_generation;
+
+    app.set_diff_whitespace_mode(git::WhitespaceMode::Ignore);
+
+    assert_eq!(app.diff_options().whitespace, git::WhitespaceMode::Ignore);
+    assert!(app.diff_cache_generation > generation);
+    assert!(!app.diff_view_cache.has_plain(&show_key));
+    assert_ne!(app.diff_cache_key(&file), show_key);
 }

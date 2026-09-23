@@ -169,6 +169,9 @@ pub struct App {
     pub sidebar_items: Vec<SidebarItem>,
     pub collapsed_directories: HashSet<DirectoryKey>,
     pub collapsed_sections: HashSet<SidebarSection>,
+    /// Generated files (lockfiles and similar) the user chose to show this
+    /// session. Every other generated file renders as a placeholder.
+    expanded_generated_files: HashSet<String>,
     pub sidebar_state: ListState,
     pub sidebar_scroll: usize,
     pub sidebar_viewport_height: usize,
@@ -180,6 +183,9 @@ pub struct App {
     pub diff_view: DiffView,
     pub diff_view_mode: DiffViewMode,
     pub diff_line_wrap_mode: DiffLineWrapMode,
+    /// Whether diffs hide whitespace-only edits. Changes diff content, so it is
+    /// part of every diff cache key and toggling it reloads the review.
+    pub diff_whitespace_mode: git::WhitespaceMode,
     pub diff_scroll: u16,
     pub selected_diff_line_index: usize,
     pub diff_text_selection: Option<DiffTextSelection>,

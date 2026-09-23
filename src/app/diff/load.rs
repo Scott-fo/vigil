@@ -15,7 +15,11 @@ pub(in crate::app) struct DiffHighlightPrefetchFile {
 }
 
 impl App {
-    pub(super) fn build_diff_cache_key(review_mode: &ReviewMode, file: &FileEntry) -> DiffCacheKey {
+    pub(super) fn build_diff_cache_key(
+        review_mode: &ReviewMode,
+        file: &FileEntry,
+        options: git::DiffOptions,
+    ) -> DiffCacheKey {
         let review_scope = match review_mode {
             ReviewMode::WorkingTree => "working-tree".to_string(),
             ReviewMode::CommitCompare(selection) => {
@@ -31,11 +35,30 @@ impl App {
             review_scope,
             file_path: file.path.clone(),
             file_status: file.status.clone(),
+            options,
         }
     }
 
     pub(in crate::app) fn diff_cache_key(&self, file: &FileEntry) -> DiffCacheKey {
-        Self::build_diff_cache_key(&self.review_mode, file)
+        Self::build_diff_cache_key(&self.review_mode, file, self.diff_options())
+    }
+
+    /// Switches whitespace handling and reloads every diff-derived view, since
+    /// cached diffs, stats, and search indexes were built with the old mode.
+    pub(in crate::app) fn set_diff_whitespace_mode(&mut self, mode: git::WhitespaceMode) {
+        if mode == self.diff_whitespace_mode {
+            return;
+        }
+        self.diff_whitespace_mode = mode;
+        let previously_selected = self.selected_file().map(|file| file.path.clone());
+        self.reload_review_diffs(previously_selected.as_deref());
+    }
+
+    /// Options for every `git diff` the app runs for the current review.
+    pub(in crate::app) fn diff_options(&self) -> git::DiffOptions {
+        git::DiffOptions {
+            whitespace: self.diff_whitespace_mode,
+        }
     }
 
     fn update_diff_prefetch_direction(&mut self) {
@@ -111,6 +134,7 @@ impl App {
 
             let mut memory_jobs = task::JoinSet::new();
             for (cache_key, file) in prefetch_files {
+                let diff_options = cache_key.options;
                 if let Some(snapshot) = review_diff_snapshot
                     .as_ref()
                     .filter(|snapshot| snapshot.contains_file(&file.path))
@@ -145,17 +169,31 @@ impl App {
 
                 let preview_result = match &review_mode {
                     ReviewMode::WorkingTree => {
-                        git::load_diff_preview_for_working_tree(&repo_root, &file, false).await
+                        git::load_diff_preview_for_working_tree(
+                            &repo_root,
+                            &file,
+                            false,
+                            diff_options,
+                        )
+                        .await
                     }
                     ReviewMode::CommitCompare(selection) => {
                         git::load_diff_preview_for_commit_compare(
-                            &repo_root, &file, selection, false,
+                            &repo_root,
+                            &file,
+                            selection,
+                            false,
+                            diff_options,
                         )
                         .await
                     }
                     ReviewMode::BranchCompare(selection) => {
                         git::load_diff_preview_for_branch_compare(
-                            &repo_root, &file, selection, false,
+                            &repo_root,
+                            &file,
+                            selection,
+                            false,
+                            diff_options,
                         )
                         .await
                     }
@@ -460,6 +498,15 @@ impl App {
             return;
         };
 
+        if self.is_collapsed_generated_file(&file) {
+            // The diff pane shows a placeholder; skip loading a diff that is
+            // usually huge and rarely read.
+            self.diff_view = DiffView::empty("");
+            self.diff_highlight_complete = true;
+            self.status_message = Some(self.current_status_message());
+            return;
+        }
+
         let cache_key = self.diff_cache_key(&file);
         self.pending_diff_cache_key = Some(cache_key.clone());
         if let Some((diff_view, highlight_complete)) =
@@ -528,19 +575,33 @@ impl App {
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
         let plain_file = file.clone();
+        let diff_options = cache_key.options;
 
         self.diff_load_task = Some(task::spawn(async move {
             let preview_result = match &review_mode {
                 ReviewMode::WorkingTree => {
-                    git::load_diff_preview_for_working_tree(&repo_root, &file, false).await
+                    git::load_diff_preview_for_working_tree(&repo_root, &file, false, diff_options)
+                        .await
                 }
                 ReviewMode::CommitCompare(selection) => {
-                    git::load_diff_preview_for_commit_compare(&repo_root, &file, selection, false)
-                        .await
+                    git::load_diff_preview_for_commit_compare(
+                        &repo_root,
+                        &file,
+                        selection,
+                        false,
+                        diff_options,
+                    )
+                    .await
                 }
                 ReviewMode::BranchCompare(selection) => {
-                    git::load_diff_preview_for_branch_compare(&repo_root, &file, selection, false)
-                        .await
+                    git::load_diff_preview_for_branch_compare(
+                        &repo_root,
+                        &file,
+                        selection,
+                        false,
+                        diff_options,
+                    )
+                    .await
                 }
             };
 
@@ -770,16 +831,31 @@ async fn build_highlight_prefetch_event(
     review_mode: ReviewMode,
     highlight_registry: SharedHighlightRegistry,
 ) -> Option<DiffPrefetchedEvent> {
+    let diff_options = key.options;
     let highlighted = if file.status.contains('U') {
         let preview = match &review_mode {
             ReviewMode::WorkingTree => {
-                git::load_diff_preview_for_working_tree(&repo_root, &file, true).await
+                git::load_diff_preview_for_working_tree(&repo_root, &file, true, diff_options).await
             }
             ReviewMode::CommitCompare(selection) => {
-                git::load_diff_preview_for_commit_compare(&repo_root, &file, selection, true).await
+                git::load_diff_preview_for_commit_compare(
+                    &repo_root,
+                    &file,
+                    selection,
+                    true,
+                    diff_options,
+                )
+                .await
             }
             ReviewMode::BranchCompare(selection) => {
-                git::load_diff_preview_for_branch_compare(&repo_root, &file, selection, true).await
+                git::load_diff_preview_for_branch_compare(
+                    &repo_root,
+                    &file,
+                    selection,
+                    true,
+                    diff_options,
+                )
+                .await
             }
         }
         .ok()?;
