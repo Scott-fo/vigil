@@ -92,8 +92,9 @@ pub use self::search::{
     load_diff_search_index_for_working_tree,
 };
 pub use self::snapshot::{
-    DiffFileMetrics, ReviewDiffSnapshot, load_review_diff_snapshot_for_branch_compare,
-    load_review_diff_snapshot_for_commit_compare, load_review_diff_snapshot_for_working_tree,
+    DiffFileMetrics, DiffFingerprint, ReviewDiffSnapshot,
+    load_review_diff_snapshot_for_branch_compare, load_review_diff_snapshot_for_commit_compare,
+    load_review_diff_snapshot_for_working_tree,
 };
 pub use self::stats::{
     DiffLineTotals, ReviewDiffStats, load_review_diff_stats_for_branch_compare,

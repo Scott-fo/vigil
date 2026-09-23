@@ -140,6 +140,7 @@ impl App {
         self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
         self.queue_review_restore_for_current_snapshot();
+        self.queue_viewed_files_load();
     }
 
     fn apply_working_tree_status_root(&mut self, resolved_root: std::path::PathBuf) {

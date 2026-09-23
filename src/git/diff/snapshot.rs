@@ -32,12 +32,72 @@ pub struct DiffFileMetrics {
     pub old_side_line_count: usize,
 }
 
+/// Content identity of one file's diff within a review snapshot.
+///
+/// Two snapshots give a file the same fingerprint only when its hunks, changed
+/// lines, rename source, and modes are identical, so callers can tie
+/// per-file state (such as "viewed") to what the reviewer actually saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DiffFingerprint(u64);
+
+impl DiffFingerprint {
+    pub fn to_hex(self) -> String {
+        format!("{:016x}", self.0)
+    }
+
+    pub fn from_hex(value: &str) -> Option<Self> {
+        u64::from_str_radix(value, 16).ok().map(Self)
+    }
+
+    fn of_file(file: &FileDiffMetadata) -> Self {
+        let mut hasher = Fnv64::default();
+        hasher.write_str(&file.name);
+        hasher.write_str(file.prev_name.as_deref().unwrap_or_default());
+        hasher.write_str(file.mode.as_deref().unwrap_or_default());
+        hasher.write_str(file.prev_mode.as_deref().unwrap_or_default());
+        hasher.write_str(&format!("{:?}", file.change_type));
+        for hunk in &file.hunks {
+            hasher.write_str(&hunk.hunk_specs);
+        }
+        for line in &file.deletion_lines {
+            hasher.write_str(line);
+        }
+        hasher.write_str("+");
+        for line in &file.addition_lines {
+            hasher.write_str(line);
+        }
+        Self(hasher.0)
+    }
+}
+
+/// FNV-1a. Stable across processes and Rust versions, unlike
+/// `DefaultHasher`, so persisted fingerprints stay comparable.
+struct Fnv64(u64);
+
+impl Default for Fnv64 {
+    fn default() -> Self {
+        Self(0xcbf29ce484222325)
+    }
+}
+
+impl Fnv64 {
+    /// Hashes `value` followed by a NUL terminator so adjacent fields can't
+    /// run together.
+    fn write_str(&mut self, value: &str) {
+        for byte in value.as_bytes().iter().chain(std::iter::once(&0)) {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(0x100000001b3);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ReviewDiffSnapshot {
     generation: u64,
     files: HashMap<String, FileDiffMetadata>,
     file_order: Vec<String>,
     metrics: HashMap<String, DiffFileMetrics>,
+    fingerprints: HashMap<String, DiffFingerprint>,
 }
 
 impl ReviewDiffSnapshot {
@@ -109,6 +169,10 @@ impl ReviewDiffSnapshot {
         self.metrics.get(path).copied()
     }
 
+    pub fn fingerprint_for_file(&self, path: &str) -> Option<DiffFingerprint> {
+        self.fingerprints.get(path).copied()
+    }
+
     pub fn build_diff_view(&self, file: &FileEntry) -> Option<DiffView> {
         self.files
             .get(file.path.as_str())
@@ -145,6 +209,8 @@ impl ReviewDiffSnapshot {
         }
         self.metrics
             .insert(file.name.clone(), DiffFileMetrics::from_file(&file));
+        self.fingerprints
+            .insert(file.name.clone(), DiffFingerprint::of_file(&file));
         self.files.insert(file.name.clone(), file);
     }
 }
@@ -254,4 +320,55 @@ fn add_file_metrics(stats: &mut ReviewDiffStats, metrics: &DiffFileMetrics) {
     stats.deletions = stats.deletions.saturating_add(metrics.deletion_line_count);
     stats.lines = stats.lines.saturating_add(metrics.unified_line_count);
     stats.split_lines = stats.split_lines.saturating_add(metrics.split_line_count);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn two_file_diff(lib_body: &str) -> String {
+        format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- a/src/lib.rs\n\
+             +++ b/src/lib.rs\n\
+             @@ -1,1 +1,2 @@\n \
+             fn existing() {{}}\n\
+             +{lib_body}\n\
+             diff --git a/src/main.rs b/src/main.rs\n\
+             --- a/src/main.rs\n\
+             +++ b/src/main.rs\n\
+             @@ -1,1 +1,1 @@\n\
+             -fn main() {{}}\n\
+             +fn main() {{ run(); }}\n"
+        )
+    }
+
+    fn fingerprints(diff: &str) -> (DiffFingerprint, DiffFingerprint) {
+        let snapshot = ReviewDiffSnapshot::from_diff_text(diff, None).expect("diff parses");
+        (
+            snapshot.fingerprint_for_file("src/lib.rs").expect("lib.rs"),
+            snapshot
+                .fingerprint_for_file("src/main.rs")
+                .expect("main.rs"),
+        )
+    }
+
+    #[test]
+    fn file_fingerprint_changes_only_when_that_files_diff_changes() {
+        let (lib, main) = fingerprints(&two_file_diff("fn added() {}"));
+        let (lib_again, main_again) = fingerprints(&two_file_diff("fn added() {}"));
+        let (lib_changed, main_unaffected) = fingerprints(&two_file_diff("fn edited() {}"));
+
+        assert_eq!((lib, main), (lib_again, main_again), "stable across parses");
+        assert_ne!(lib, lib_changed);
+        assert_eq!(main, main_unaffected);
+    }
+
+    #[test]
+    fn fingerprint_hex_round_trips() {
+        let (lib, _) = fingerprints(&two_file_diff("fn added() {}"));
+
+        assert_eq!(DiffFingerprint::from_hex(&lib.to_hex()), Some(lib));
+        assert_eq!(DiffFingerprint::from_hex("not hex"), None);
+    }
 }

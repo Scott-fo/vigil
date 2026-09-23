@@ -34,6 +34,7 @@ mod review;
 mod runtime;
 mod sidebar_state;
 mod theme_modal;
+mod viewed;
 mod working_tree_actions;
 mod worktree;
 
@@ -53,7 +54,7 @@ use crate::{
         DiffView, FileEntry, ReviewDiffPartialTextIndex, ReviewDiffSnapshot, ReviewDiffTextIndex,
         SharedHighlightRegistry, WorktreeEntry,
     },
-    review::ReviewReport,
+    review::{ReviewReport, ViewedFiles, ViewedScope},
     sidebar::{DirectoryKey, SidebarItem, SidebarSection},
     theme::ThemeMode,
     watcher::RepoWatcher,
@@ -300,6 +301,9 @@ pub struct App {
     pub review_summary_scroll: u16,
     review_request_id: u64,
     review_task: Option<task::JoinHandle<()>>,
+    viewed_files: ViewedFiles,
+    viewed_scope: Option<ViewedScope>,
+    viewed_request_id: u64,
     pub snackbar_notice: Option<SnackbarNotice>,
     pub snackbar_generation: u64,
     pub status_message: Option<String>,

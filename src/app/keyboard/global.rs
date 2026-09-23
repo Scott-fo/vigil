@@ -95,6 +95,14 @@ impl App {
                 self.stage_all_files().await?;
                 handled()
             }
+            KeyCode::Char('x') => {
+                self.toggle_selected_file_viewed();
+                handled()
+            }
+            KeyCode::Char('X') => {
+                self.mark_viewed_and_select_next().await?;
+                handled()
+            }
             KeyCode::Char('1') => {
                 self.resolve_selected_merge_conflict(git::MergeConflictResolution::Current)
                     .await?;

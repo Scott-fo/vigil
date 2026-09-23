@@ -5,6 +5,9 @@
 //! then persist the structured summary and file comments returned by that
 //! provider. Reviews are tied to a snapshot id so UI code can tell fresh
 //! comments from stale comments after the working tree or compared refs move.
+//!
+//! The module also owns per-file "viewed" marks ([`ViewedFiles`]), which are
+//! tied to each file's diff fingerprint and clear when that diff changes.
 
 mod annotations;
 mod codex;
@@ -12,6 +15,7 @@ mod report;
 mod snapshot;
 mod store;
 mod target;
+mod viewed;
 
 pub use self::annotations::{ReviewDisplayComment, comments_for_display_line};
 pub use self::codex::{CodexAppReviewProvider, ProviderReview, ReviewProvider};
@@ -22,3 +26,4 @@ pub use self::report::{
 pub use self::snapshot::{BuildReviewSnapshotOptions, build_review_snapshot};
 pub use self::store::{PersistedReview, ReviewStore, default_database_path};
 pub use self::target::{ReviewScope, ReviewSnapshot, ReviewTarget};
+pub use self::viewed::{ViewedFiles, ViewedScope};

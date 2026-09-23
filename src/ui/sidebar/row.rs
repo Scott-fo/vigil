@@ -12,8 +12,8 @@ use crate::{
 
 use super::{
     super::{
-        chip_color, hover_color, primary_color, selection_color, text_color, text_faint_color,
-        text_subtle_color, warning_color,
+        chip_color, hover_color, primary_color, selection_color, success_color, text_color,
+        text_faint_color, text_subtle_color, warning_color,
     },
     text::{devicon_for_path, display_width, truncate_middle},
 };
@@ -40,6 +40,8 @@ pub(super) struct RowContext {
     /// The mouse is over this row. Selection tints take precedence.
     pub(super) hovered: bool,
     pub(super) review_comment_count: usize,
+    /// Marked viewed at its current diff; the row dims and shows a check.
+    pub(super) viewed: bool,
 }
 
 pub(super) fn row_line(item: &SidebarItem, context: RowContext) -> Line<'static> {
@@ -166,13 +168,15 @@ fn file_spans(
     } else {
         ""
     };
+    let viewed_marker = if context.viewed { "✓ " } else { "" };
     let stage_marker = if partially_staged { "◐" } else { "" };
 
-    // accent + indent + icon + label + gap + review marker + status slot
+    // accent + indent + icon + label + gap + markers + status slot
     let fixed_width = 1
         + display_width(&indent)
         + display_width(&icon)
         + display_width(review_marker)
+        + display_width(viewed_marker)
         + display_width(stage_marker)
         + STATUS_SLOT_WIDTH;
     let label_width = (context.width as usize)
@@ -183,7 +187,7 @@ fn file_spans(
         .saturating_sub(fixed_width + display_width(&display_label))
         .max(1);
 
-    let mut label_style = Style::new().fg(if deleted {
+    let mut label_style = Style::new().fg(if deleted || context.viewed {
         text_faint_color()
     } else {
         text_color()
@@ -197,7 +201,14 @@ fn file_spans(
 
     let mut spans = vec![
         Span::raw(indent),
-        Span::styled(icon, Style::new().fg(icon_color)),
+        Span::styled(
+            icon,
+            Style::new().fg(if context.viewed {
+                text_faint_color()
+            } else {
+                icon_color
+            }),
+        ),
         Span::styled(display_label, label_style),
         Span::raw(" ".repeat(gap)),
     ];
@@ -205,6 +216,12 @@ fn file_spans(
         spans.push(Span::styled(
             review_marker,
             Style::new().fg(warning_color()),
+        ));
+    }
+    if !viewed_marker.is_empty() {
+        spans.push(Span::styled(
+            viewed_marker,
+            Style::new().fg(success_color()),
         ));
     }
     if !stage_marker.is_empty() {
@@ -215,7 +232,11 @@ fn file_spans(
     }
     spans.push(Span::styled(
         format!(" {status:1} "),
-        Style::new().fg(status_color),
+        Style::new().fg(if context.viewed {
+            text_faint_color()
+        } else {
+            status_color
+        }),
     ));
     spans
 }
@@ -247,16 +268,24 @@ mod tests {
             selection: RowSelection::None,
             hovered: false,
             review_comment_count: 0,
+            viewed: false,
         }
     }
 
     #[test]
     fn file_rows_fill_the_row_width_exactly() {
-        for (width, review_comment_count) in [(24, 0), (24, 2), (40, 0)] {
+        for (width, review_comment_count, viewed) in [
+            (24, 0, false),
+            (24, 2, false),
+            (40, 0, false),
+            (24, 0, true),
+            (24, 2, true),
+        ] {
             let line = row_line(
                 &file_item("src/ui/JavaScriptSyntaxHighlighter.tsx", " M", 2),
                 RowContext {
                     review_comment_count,
+                    viewed,
                     ..context(width)
                 },
             );
