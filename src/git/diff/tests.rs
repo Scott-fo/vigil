@@ -3104,8 +3104,8 @@ fn split_render_wraps_sides_and_keeps_columns_aligned() {
         rows,
         vec![
             "   1 abcdefg │    1 xy       ",
-            "     hijklmn │               ",
-            "     op      │               ",
+            "   ↪ hijklmn │               ",
+            "   ↪ op      │               ",
         ]
     );
 }
@@ -3166,7 +3166,7 @@ fn unified_render_wraps_long_lines_with_indented_continuations() {
         .to_vec();
     let rows = render_lines_to_strings(rendered, 16);
 
-    assert_eq!(rows, vec!["   1 + abcdefgh ", "       ijklmnop "]);
+    assert_eq!(rows, vec!["   1 + abcdefgh ", "     ↪ ijklmnop "]);
 }
 
 #[test]
@@ -3289,6 +3289,185 @@ fn split_selection_extracts_only_selected_pane_text() {
     );
 
     assert_eq!(selected.as_deref(), Some("new_one\nnew"));
+}
+
+const WRAPPED_CALL_DIFF: &str = "@@ -1 +1 @@\n+let value = compute(alpha, beta_gamma);";
+
+#[test]
+fn wrap_breaks_after_punctuation_and_marks_continuation_rows() {
+    let mut view = build_diff_view_from_diff_text(WRAPPED_CALL_DIFF, Some("rust"));
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 30, DiffLineWrapMode::Wrap)
+        .to_vec();
+    let rows = render_lines_to_strings(rendered, 30);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].trim_end(), "   1 + let value = compute(");
+    assert_eq!(rows[1].trim_end(), "     ↪ alpha, beta_gamma);");
+}
+
+#[test]
+fn wrap_breaks_at_the_last_word_boundary_even_far_from_the_edge() {
+    let diff = "@@ -1 +1 @@\n+a bcdefghijklmnopqrstuvwxyz";
+    let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 16, DiffLineWrapMode::Wrap)
+        .to_vec();
+    let rows = render_lines_to_strings(rendered, 16);
+
+    assert_eq!(rows[0], "   1 + a        ");
+    assert_eq!(rows[1], "     ↪ bcdefghi ");
+}
+
+#[test]
+fn wrap_never_leaves_a_row_of_only_indentation() {
+    let diff = "@@ -1 +1 @@\n+    abcdefghijklmnop";
+    let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 16, DiffLineWrapMode::Wrap)
+        .to_vec();
+    let rows = render_lines_to_strings(rendered, 16);
+
+    assert_eq!(rows[0], "   1 +     abcd ");
+    assert_eq!(rows[1], "     ↪ efghijkl ");
+}
+
+#[test]
+fn wrapped_line_counts_match_windowed_rendering() {
+    let mut view = build_diff_view_from_diff_text(WRAPPED_CALL_DIFF, Some("rust"));
+    let count = view.display_line_count(DiffViewMode::Unified, 30, DiffLineWrapMode::Wrap);
+    let full = view
+        .rendered_lines(DiffViewMode::Unified, 30, DiffLineWrapMode::Wrap)
+        .to_vec();
+    let window =
+        view.rendered_lines_window(DiffViewMode::Unified, 30, DiffLineWrapMode::Wrap, 0, count);
+
+    assert_eq!(count, 2);
+    assert_eq!(full.len(), count);
+    assert_eq!(
+        render_lines_to_strings(window, 30),
+        render_lines_to_strings(full, 30)
+    );
+}
+
+#[test]
+fn copying_a_wrapped_line_rejoins_rows_without_breaks_or_markers() {
+    let mut view = build_diff_view_from_diff_text(WRAPPED_CALL_DIFF, Some("rust"));
+
+    let selected = view.selected_text(
+        DiffViewMode::Unified,
+        30,
+        DiffLineWrapMode::Wrap,
+        DiffSelectionPoint {
+            display_index: 0,
+            pane: DiffSelectionPane::Unified,
+            column: 0,
+        },
+        DiffSelectionPoint {
+            display_index: 1,
+            pane: DiffSelectionPane::Unified,
+            column: 40,
+        },
+    );
+
+    assert_eq!(
+        selected.as_deref(),
+        Some("let value = compute(alpha, beta_gamma);")
+    );
+}
+
+#[test]
+fn intra_line_emphasis_survives_soft_wrapping() {
+    let diff = "\
+@@ -1 +1 @@
+-let value = compute(alpha, beta);
++let value = compute(alpha, beta_gamma);
+";
+    let mut view = build_diff_view_from_diff_text(diff, Some("rust"));
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 30, DiffLineWrapMode::Wrap)
+        .to_vec();
+    let emphasis_bg = ui::diff_added_emphasis_style().bg;
+
+    let continuation = rendered
+        .iter()
+        .find(|line| {
+            let text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            text.contains('↪') && text.contains("gamma")
+        })
+        .expect("added line should wrap onto a continuation row");
+    let changed = continuation
+        .spans
+        .iter()
+        .find(|span| span.content.contains("gamma"))
+        .expect("changed identifier should be on the continuation row");
+    assert_eq!(changed.style.bg, emphasis_bg);
+}
+
+const TWO_HUNK_DIFF: &str = "\
+@@ -1,2 +1,2 @@ mod top
+-a
++b
+ c
+@@ -20,2 +20,2 @@ fn second() {
+-x
++y
+ z
+";
+
+#[test]
+fn gap_carries_the_scope_of_the_hunk_below_it() {
+    let view = build_diff_view_from_diff_text(TWO_HUNK_DIFF, Some("rust"));
+
+    assert_eq!(view.hunks[0].context.as_deref(), Some("mod top"));
+    assert_eq!(view.gaps.len(), 1);
+    assert_eq!(view.gaps[0].context.as_deref(), Some("fn second() {"));
+}
+
+#[test]
+fn gap_band_names_the_next_scope_before_the_rule() {
+    let mut view = build_diff_view_from_diff_text(TWO_HUNK_DIFF, Some("rust"));
+    let rendered = view
+        .rendered_lines(DiffViewMode::Unified, 60, DiffLineWrapMode::Wrap)
+        .to_vec();
+    let rows = render_lines_to_strings(rendered, 60);
+
+    let band = rows
+        .iter()
+        .find(|row| row.contains("unchanged lines"))
+        .expect("gap should render a band");
+    assert!(
+        band.contains("↓ 17 unchanged lines · fn second() { ┄"),
+        "{band}"
+    );
+    let reveal_up = rows
+        .iter()
+        .find(|row| row.contains('↑'))
+        .expect("gap should render its bottom row");
+    assert!(!reveal_up.contains("fn second"));
+}
+
+#[test]
+fn gap_band_truncates_long_scopes_and_keeps_a_rule() {
+    let line = super::rendering::render_expand_gap_line(
+        44,
+        12,
+        GapExpandDirection::Up,
+        Some("impl SomeVeryLongTypeName<WithGenerics> for Another {"),
+    );
+    let text: String = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+
+    assert_eq!(unicode_width::UnicodeWidthStr::width(text.as_str()), 44);
+    assert!(text.contains('…'), "{text}");
+    assert!(text.contains("┄┄┄┄"), "{text}");
 }
 
 #[test]

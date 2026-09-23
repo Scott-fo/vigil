@@ -41,9 +41,10 @@ pub use self::hit::{
 pub use self::status::FooterAction;
 pub use self::style::{
     added_sign_style, context_sign_style, diff_added_emphasis_style, diff_added_style,
-    diff_context_style, diff_gap_action_style, diff_gap_rule_style, diff_gap_style,
-    diff_hunk_style, diff_meta_style, diff_removed_emphasis_style, diff_removed_style,
-    line_number_style, removed_sign_style, syntax_style,
+    diff_context_style, diff_gap_action_style, diff_gap_context_style, diff_gap_rule_style,
+    diff_gap_style, diff_hunk_style, diff_meta_style, diff_removed_emphasis_style,
+    diff_removed_style, diff_wrap_marker_style, line_number_style, removed_sign_style,
+    syntax_style,
 };
 
 const NOTICE_WIDTH: u16 = 36;

@@ -1,4 +1,4 @@
-use super::super::FileEntry;
+use super::super::{FileEntry, types::RENAME_LABEL_SEPARATOR};
 use super::filetype::resolve_diff_filetype;
 
 #[derive(Debug, Clone)]
@@ -101,7 +101,7 @@ pub(crate) fn to_file_entry(entry: StatusEntry) -> FileEntry {
     let label = entry
         .original_path
         .as_ref()
-        .map(|from| format!("{from} -> {}", entry.path))
+        .map(|from| format!("{from}{RENAME_LABEL_SEPARATOR}{}", entry.path))
         .unwrap_or_else(|| entry.path.clone());
 
     FileEntry {

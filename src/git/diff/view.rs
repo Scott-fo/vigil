@@ -120,6 +120,8 @@ pub(super) struct DiffHunkBlock {
     pub(super) new_count: usize,
     pub(super) row_start: usize,
     pub(super) row_end: usize,
+    /// Enclosing scope from the `@@ … @@ <context>` header, as reported by git.
+    pub(super) context: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +129,9 @@ pub(super) struct DiffHunkGap {
     pub(super) gap_index: usize,
     pub(super) new_start: usize,
     pub(super) new_count: usize,
+    /// Scope of the hunk below the gap, shown in the collapsed-context band so
+    /// readers know where the next change lands.
+    pub(super) context: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]

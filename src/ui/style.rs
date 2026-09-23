@@ -220,6 +220,20 @@ pub fn diff_gap_rule_style() -> Style {
     Style::new().fg(rule_color())
 }
 
+/// Enclosing-scope label (git's hunk header context) inside the band.
+#[inline]
+pub fn diff_gap_context_style() -> Style {
+    Style::new()
+        .fg(text_faint_color())
+        .add_modifier(Modifier::ITALIC)
+}
+
+/// Continuation marker in the gutter of a soft-wrapped diff row.
+#[inline]
+pub fn diff_wrap_marker_style() -> Style {
+    Style::new().fg(text_faint_color())
+}
+
 /// Expand arrow inside the collapsed-context band.
 #[inline]
 pub fn diff_gap_action_style() -> Style {

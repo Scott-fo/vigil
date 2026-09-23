@@ -50,6 +50,7 @@ pub(super) fn diff_gaps_from_hunks(hunks: &[DiffHunkBlock]) -> Vec<DiffHunkGap> 
             gap_index,
             new_start,
             new_count,
+            context: next.context.clone(),
         });
     }
     gaps
@@ -159,6 +160,12 @@ pub(super) fn append_file_diff_rows_with_conflicts(
             new_count: hunk.addition_count,
             row_start,
             row_end: rows.len(),
+            context: hunk
+                .hunk_context
+                .as_deref()
+                .map(str::trim)
+                .filter(|context| !context.is_empty())
+                .map(str::to_owned),
         });
     }
 }
