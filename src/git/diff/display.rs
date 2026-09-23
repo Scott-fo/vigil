@@ -267,7 +267,7 @@ impl DiffView {
         self.ensure_display_cache(mode, width, line_wrap);
         let selection = self.display_cache.entry(mode).selection.as_slice();
         let (start, end) = normalize_selection_points(anchor, head);
-        let mut lines = Vec::new();
+        let mut text = String::new();
 
         for display_index in start.display_index..=end.display_index {
             let segment = selection.get(display_index)?.segment(anchor.pane)?;
@@ -281,14 +281,17 @@ impl DiffView {
             } else {
                 segment.content_width
             };
-            lines.push(segment.slice(start_column, end_column));
+            if display_index > start.display_index && !segment.continues_previous {
+                text.push('\n');
+            }
+            text.push_str(&segment.slice(start_column, end_column));
         }
 
-        if lines.iter().all(|line| line.is_empty()) {
+        if text.chars().all(|ch| ch == '\n') {
             return None;
         }
 
-        Some(lines.join("\n"))
+        Some(text)
     }
 
     pub fn selection_columns(
@@ -753,14 +756,14 @@ impl DiffView {
                 render_expand_gap_line(
                     gap_width,
                     remaining,
-                    expansion.from_previous > 0,
                     GapExpandDirection::Up,
+                    gap.context.as_deref(),
                 ),
                 render_expand_gap_line(
                     gap_width,
                     remaining,
-                    expansion.from_next > 0,
                     GapExpandDirection::Down,
+                    gap.context.as_deref(),
                 ),
             ] {
                 if push_window_line(lines, cursor, start, end, line) {
@@ -1039,8 +1042,8 @@ impl DiffView {
             lines.push(render_expand_gap_line(
                 width,
                 remaining,
-                expansion.from_previous > 0,
                 GapExpandDirection::Up,
+                gap.context.as_deref(),
             ));
             nav.push(Some(DisplayNavTarget::Gap(
                 gap.gap_index,
@@ -1051,8 +1054,8 @@ impl DiffView {
             lines.push(render_expand_gap_line(
                 width,
                 remaining,
-                expansion.from_next > 0,
                 GapExpandDirection::Down,
+                gap.context.as_deref(),
             ));
             nav.push(Some(DisplayNavTarget::Gap(
                 gap.gap_index,
@@ -1175,6 +1178,9 @@ pub(crate) struct DisplaySelectionSegment {
     pub(super) start_column: usize,
     pub(super) content_width: usize,
     pub(super) text: String,
+    /// Soft-wrapped continuation of the row above; copied text joins the two
+    /// without a line break.
+    pub(super) continues_previous: bool,
 }
 
 impl DisplaySelectionSegment {

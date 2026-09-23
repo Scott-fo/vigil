@@ -31,6 +31,9 @@ struct WrappedLineContent {
     spans: Vec<Span<'static>>,
     text: String,
     content_width: usize,
+    /// True for the second and later rows of a soft-wrapped line, so copied
+    /// text can rejoin them without a line break.
+    continues_previous: bool,
 }
 
 /// A row to draw plus the byte ranges of its text to emphasize as changed.
@@ -85,7 +88,10 @@ pub(super) fn render_unified_code_lines(
             " ".repeat(format_line_number(None).width()),
             base_style.patch(ui::line_number_style()),
         ),
-        Span::styled("  ", sign_style),
+        Span::styled(
+            format!("{WRAP_MARKER} "),
+            base_style.patch(ui::diff_wrap_marker_style()),
+        ),
     ];
     let content = render_row_content(row.unified_content(), row, emphasis, base_style);
     let prefix_width = spans_width(&prefix);
@@ -105,6 +111,7 @@ pub(super) fn render_unified_code_lines(
                 start_column: prefix_width,
                 content_width: wrapped.content_width,
                 text: wrapped.text,
+                continues_previous: wrapped.continues_previous,
             }),
             ..DisplaySelectionLine::default()
         },
@@ -125,14 +132,16 @@ pub(super) fn render_split_pair_lines(
 
     (0..line_count)
         .map(|index| {
+            // A side with fewer wrapped rows than the other is padded with
+            // blank rows that belong to its last line.
             let left_line = left_lines
                 .get(index)
                 .cloned()
-                .unwrap_or_else(|| blank_split_side(side_width));
+                .unwrap_or_else(|| blank_split_filler(side_width));
             let right_line = right_lines
                 .get(index)
                 .cloned()
-                .unwrap_or_else(|| blank_split_side(side_width));
+                .unwrap_or_else(|| blank_split_filler(side_width));
             let mut spans = Vec::new();
             spans.extend(left_line.spans.clone());
             spans.push(gap.clone());
@@ -144,11 +153,13 @@ pub(super) fn render_split_pair_lines(
                         start_column: left_line.start_column,
                         content_width: left_line.content_width,
                         text: left_line.text,
+                        continues_previous: left_line.continues_previous,
                     }),
                     right: Some(DisplaySelectionSegment {
                         start_column: side_width + 3 + right_line.start_column,
                         content_width: right_line.content_width,
                         text: right_line.text,
+                        continues_previous: right_line.continues_previous,
                     }),
                     ..DisplaySelectionLine::default()
                 },
@@ -263,14 +274,20 @@ pub(super) fn render_split_hunk_rows<'a>(
     rendered
 }
 
+/// Minimum dotted-rule cells kept after the scope label so the band still
+/// reads as a divider when the context is long.
+const GAP_RULE_MIN_WIDTH: usize = 4;
+
 /// One row of the collapsed-context band between hunks. Each gap renders as a
 /// pair of rows: the top row reveals lines below the previous hunk and the
-/// bottom row reveals lines above the next hunk.
+/// bottom row reveals lines above the next hunk. The top row also names the
+/// scope the next hunk starts in (git's `@@ … @@ <context>`), truncated so the
+/// dotted rule keeps a few cells.
 pub(super) fn render_expand_gap_line(
     width: usize,
     remaining: usize,
-    _has_expansion: bool,
     direction: GapExpandDirection,
+    context: Option<&str>,
 ) -> Line<'static> {
     let band_style = ui::diff_gap_style();
     let arrow = match direction {
@@ -291,6 +308,20 @@ pub(super) fn render_expand_gap_line(
             ),
             band_style,
         ));
+        if let Some(context) = context {
+            let separator = "· ";
+            // Reserve the space after the label, the rule, and the band's
+            // final blank column.
+            let budget = width
+                .saturating_sub(spans_width(&spans) + separator.width() + 2 + GAP_RULE_MIN_WIDTH);
+            if budget > 1 {
+                spans.push(Span::styled(separator, ui::diff_gap_rule_style()));
+                spans.push(Span::styled(
+                    format!("{} ", truncate_with_ellipsis(context, budget)),
+                    ui::diff_gap_context_style(),
+                ));
+            }
+        }
         let used = spans_width(&spans);
         spans.push(Span::styled(
             "┄".repeat(width.saturating_sub(used + 1)),
@@ -304,6 +335,16 @@ pub(super) fn render_expand_gap_line(
     ));
     spans = fit_spans_to_width(spans, width.max(1), band_style);
     Line::from(spans).style(band_style)
+}
+
+fn truncate_with_ellipsis(content: &str, max_width: usize) -> String {
+    if content.width() <= max_width {
+        return content.to_string();
+    }
+    format!(
+        "{}…",
+        truncate_to_width(content, max_width.saturating_sub(1))
+    )
 }
 
 pub(super) fn render_expanded_context_lines(
@@ -342,6 +383,7 @@ struct WrappedSideLine {
     start_column: usize,
     content_width: usize,
     text: String,
+    continues_previous: bool,
 }
 
 fn render_split_side_lines(
@@ -364,10 +406,17 @@ fn render_split_side_lines(
         format_line_number(line_number),
         base_style.patch(ui::line_number_style()),
     )];
-    let continuation_prefix = vec![Span::styled(
-        " ".repeat(format_line_number(None).width()),
-        base_style.patch(ui::line_number_style()),
-    )];
+    let gutter_width = format_line_number(None).width();
+    let continuation_prefix = vec![
+        Span::styled(
+            " ".repeat(gutter_width.saturating_sub(2)),
+            base_style.patch(ui::line_number_style()),
+        ),
+        Span::styled(
+            format!("{WRAP_MARKER} "),
+            base_style.patch(ui::diff_wrap_marker_style()),
+        ),
+    ];
     let content = render_row_content(row.side_content(left_side), row, emphasis, base_style);
     let prefix_width = spans_width(&prefix);
     prefixed_spans_to_lines(
@@ -384,6 +433,7 @@ fn render_split_side_lines(
         start_column: prefix_width,
         content_width: wrapped.content_width,
         text: wrapped.text,
+        continues_previous: wrapped.continues_previous,
     })
     .collect()
 }
@@ -394,6 +444,14 @@ fn blank_split_side(width: usize) -> WrappedSideLine {
         start_column: 0,
         content_width: width,
         text: String::new(),
+        continues_previous: false,
+    }
+}
+
+fn blank_split_filler(width: usize) -> WrappedSideLine {
+    WrappedSideLine {
+        continues_previous: true,
+        ..blank_split_side(width)
     }
 }
 
@@ -614,6 +672,7 @@ fn truncate_prefixed_spans_to_line(
             spans: Vec::new(),
             text: String::new(),
             content_width: 0,
+            continues_previous: false,
         };
     }
 
@@ -623,6 +682,7 @@ fn truncate_prefixed_spans_to_line(
             spans: fit_spans_to_width(prefix, target_width, pad_style),
             text: String::new(),
             content_width: 0,
+            continues_previous: false,
         };
     }
 
@@ -636,6 +696,7 @@ fn truncate_prefixed_spans_to_line(
         spans,
         text,
         content_width,
+        continues_previous: false,
     }
 }
 
@@ -661,22 +722,35 @@ fn wrap_prefixed_spans_to_lines(
                 text: line_text(&line),
                 content_width: spans_width(&line),
                 spans: line,
+                continues_previous: false,
             })
             .collect();
     }
 
-    let wrapped_content = wrap_spans_to_width(content, content_width, pad_style);
-    wrapped_content
-        .into_iter()
+    // Continuation rows share the first row's content width, since both
+    // prefixes are gutter-wide.
+    let row_width = content_width.min(continuation_content_width);
+    let rows = wrap_spans_at_words(content, row_width);
+    let last_index = rows.len().saturating_sub(1);
+    rows.into_iter()
         .enumerate()
-        .map(|(index, line_content)| {
-            let text = line_text(&line_content);
+        .map(|(index, row)| {
             let mut spans = if index == 0 {
                 prefix.clone()
             } else {
                 continuation_prefix.clone()
             };
-            spans.extend(line_content);
+            spans.extend(row.spans);
+            if row.width < row_width {
+                spans.push(Span::styled(" ".repeat(row_width - row.width), pad_style));
+            }
+            // Only the final row drops trailing spaces; earlier rows keep them
+            // so copying a wrapped line reproduces the original text.
+            let mut text = row.text;
+            if index == last_index {
+                let trimmed_len = text.trim_end_matches(' ').len();
+                text.truncate(trimmed_len);
+            }
             WrappedLineContent {
                 text,
                 content_width: if index == 0 {
@@ -685,9 +759,141 @@ fn wrap_prefixed_spans_to_lines(
                     continuation_content_width
                 },
                 spans,
+                continues_previous: index > 0,
             }
         })
         .collect()
+}
+
+/// Gutter glyph marking the second and later rows of a soft-wrapped line.
+const WRAP_MARKER: &str = "↪";
+
+struct WrappedRow {
+    spans: Vec<Span<'static>>,
+    /// The row's source text, without padding.
+    text: String,
+    /// Display width of `spans`.
+    width: usize,
+}
+
+/// Soft-wraps styled content into rows at most `width` cells wide, breaking
+/// after whitespace or punctuation when possible so identifiers stay whole.
+fn wrap_spans_at_words(spans: Vec<Span<'static>>, width: usize) -> Vec<WrappedRow> {
+    let mut text = String::with_capacity(spans.iter().map(|span| span.content.len()).sum());
+    let mut total_width = 0usize;
+    for span in &spans {
+        text.push_str(&span.content);
+        total_width += UnicodeWidthStr::width(span.content.as_ref());
+    }
+    // Most diff lines fit; keep their spans untouched.
+    if total_width <= width {
+        return vec![WrappedRow {
+            spans,
+            text,
+            width: total_width,
+        }];
+    }
+
+    let row_ends = word_wrap_row_ends(&text, width);
+    let mut rows = Vec::with_capacity(row_ends.len());
+    let mut row_start = 0usize;
+    for &(row_end, row_width) in &row_ends {
+        rows.push(WrappedRow {
+            spans: Vec::new(),
+            text: text[row_start..row_end].to_string(),
+            width: row_width,
+        });
+        row_start = row_end;
+    }
+    let row_ends = row_ends
+        .into_iter()
+        .map(|(row_end, _)| row_end)
+        .collect::<Vec<_>>();
+
+    // Cut each span at the row boundaries that fall inside it.
+    let mut row_index = 0usize;
+    let mut span_start = 0usize;
+    for span in spans {
+        let span_end = span_start + span.content.len();
+        while row_ends[row_index] <= span_start && row_index + 1 < row_ends.len() {
+            row_index += 1;
+        }
+        // Spans that sit inside one row move over without copying.
+        if span_end <= row_ends[row_index] {
+            rows[row_index].spans.push(span);
+            span_start = span_end;
+            continue;
+        }
+
+        let content = span.content.as_ref();
+        let mut cursor = span_start;
+        while cursor < span_end {
+            while row_ends[row_index] <= cursor && row_index + 1 < row_ends.len() {
+                row_index += 1;
+            }
+            let piece_end = row_ends[row_index].min(span_end);
+            rows[row_index].spans.push(Span::styled(
+                content[cursor - span_start..piece_end - span_start].to_string(),
+                span.style,
+            ));
+            cursor = piece_end;
+        }
+        span_start = span_end;
+    }
+
+    rows
+}
+
+/// Byte offset where each soft-wrapped row of `text` ends, with the row's
+/// display width; the last entry ends at `text.len()`. Rows break after the
+/// last whitespace or punctuation that fits, like an editor's soft wrap, and
+/// hard-break only a run with no break point. A break never leaves a row of
+/// nothing but indentation.
+fn word_wrap_row_ends(text: &str, width: usize) -> Vec<(usize, usize)> {
+    let width = width.max(1);
+    let mut row_ends = Vec::new();
+    let mut row_width = 0usize;
+    // Width of the whitespace the current row starts with; a break inside it
+    // would produce a blank row.
+    let mut leading_blank = 0usize;
+    let mut row_has_text = false;
+    // Byte offset and row width just after the most recent break opportunity.
+    let mut break_after: Option<(usize, usize)> = None;
+
+    for (index, ch) in text.char_indices() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        while ch_width > 0 && row_width > 0 && row_width + ch_width > width {
+            let (cut_end, cut_width) = break_after
+                .filter(|&(_, cut_width)| cut_width > leading_blank)
+                .unwrap_or((index, row_width));
+            row_ends.push((cut_end, cut_width));
+            row_width -= cut_width;
+            // Anything carried to the next row follows the last break point,
+            // so it holds no whitespace.
+            leading_blank = 0;
+            row_has_text = row_width > 0;
+            break_after = None;
+        }
+        row_width += ch_width;
+        if !row_has_text {
+            if ch.is_whitespace() {
+                leading_blank += ch_width;
+            } else {
+                row_has_text = ch_width > 0;
+            }
+        }
+        if is_word_break(ch) {
+            break_after = Some((index + ch.len_utf8(), row_width));
+        }
+    }
+    row_ends.push((text.len(), row_width));
+    row_ends
+}
+
+/// Characters a soft wrap may follow: whitespace and punctuation, but not `_`,
+/// which is part of identifiers.
+fn is_word_break(ch: char) -> bool {
+    ch.is_whitespace() || (ch.is_ascii_punctuation() && ch != '_')
 }
 
 fn line_text(spans: &[Span<'static>]) -> String {

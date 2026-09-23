@@ -49,20 +49,9 @@ fn render_file_header(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    let directory = file
-        .path
-        .strip_suffix(file.label.as_str())
-        .unwrap_or_default()
-        .to_string();
     let status = git::status_label(&file.status);
-    let mut left = vec![
-        Span::raw(" "),
-        Span::styled(directory, Style::new().fg(text_subtle_color())),
-        Span::styled(
-            file.label.clone(),
-            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
-        ),
-    ];
+    let mut left = vec![Span::raw(" ")];
+    left.extend(file_path_spans(file));
     if !status.is_empty() {
         left.push(Span::styled(
             format!("  {status}"),
@@ -79,6 +68,62 @@ fn render_file_header(frame: &mut Frame, app: &App, area: Rect) {
             area,
         );
     }
+}
+
+/// The file's path with its directory dimmed and file name bold. Renames use
+/// git's compact form, sharing the common directory: `src/{old.rs → new.rs}`.
+fn file_path_spans(file: &git::FileEntry) -> Vec<Span<'static>> {
+    let dim = Style::new().fg(text_subtle_color());
+    let faint = Style::new().fg(text_faint_color());
+    let name = Style::new().fg(text_color()).add_modifier(Modifier::BOLD);
+    let (directory, file_name) = split_directory(&file.path);
+
+    let Some(original) = file.original_path() else {
+        return vec![
+            Span::styled(directory.to_string(), dim),
+            Span::styled(file_name.to_string(), name),
+        ];
+    };
+
+    let shared = shared_directory_prefix(original, &file.path);
+    let original_rest = &original[shared.len()..];
+    let (new_directory, _) = split_directory(&file.path[shared.len()..]);
+    let mut spans = Vec::new();
+    if !shared.is_empty() {
+        spans.push(Span::styled(shared.to_string(), dim));
+        spans.push(Span::styled("{", faint));
+    }
+    spans.push(Span::styled(original_rest.to_string(), dim));
+    spans.push(Span::styled(" → ", faint));
+    spans.push(Span::styled(new_directory.to_string(), dim));
+    spans.push(Span::styled(file_name.to_string(), name));
+    if !shared.is_empty() {
+        spans.push(Span::styled("}", faint));
+    }
+    spans
+}
+
+/// Splits `a/b/c.rs` into `("a/b/", "c.rs")`.
+fn split_directory(path: &str) -> (&str, &str) {
+    match path.rfind('/') {
+        Some(index) => path.split_at(index + 1),
+        None => ("", path),
+    }
+}
+
+/// Longest leading run of whole directories two paths share, such as `src/`
+/// for `src/old.rs` and `src/new.rs`.
+fn shared_directory_prefix<'a>(left: &'a str, right: &str) -> &'a str {
+    let mut end = 0;
+    for ((index, a), b) in left.char_indices().zip(right.chars()) {
+        if a != b {
+            break;
+        }
+        if a == '/' {
+            end = index + 1;
+        }
+    }
+    &left[..end]
 }
 
 fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -399,5 +444,52 @@ fn push_wrapped_word(word: &str, width: usize, lines: &mut Vec<String>) {
 
     if !current.is_empty() {
         lines.push(current);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(path: &str, label: &str) -> git::FileEntry {
+        git::FileEntry {
+            status: "R ".to_string(),
+            path: path.to_string(),
+            label: label.to_string(),
+            filetype: None,
+        }
+    }
+
+    fn text(spans: &[Span<'_>]) -> String {
+        spans.iter().map(|span| span.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn header_shows_plain_path_for_unrenamed_files() {
+        let spans = file_path_spans(&entry("src/app/mod.rs", "src/app/mod.rs"));
+
+        assert_eq!(text(&spans), "src/app/mod.rs");
+        assert_eq!(
+            spans.last().map(|span| span.content.as_ref()),
+            Some("mod.rs")
+        );
+    }
+
+    #[test]
+    fn header_shows_renames_with_shared_directory_in_braces() {
+        let spans = file_path_spans(&entry("src/git/new.rs", "src/git/old.rs -> src/git/new.rs"));
+        assert_eq!(text(&spans), "src/git/{old.rs → new.rs}");
+
+        let moved = file_path_spans(&entry("docs/notes.md", "notes.md -> docs/notes.md"));
+        assert_eq!(text(&moved), "notes.md → docs/notes.md");
+    }
+
+    #[test]
+    fn shared_prefix_only_counts_whole_directories() {
+        assert_eq!(
+            shared_directory_prefix("src/app/a.rs", "src/apple/a.rs"),
+            "src/"
+        );
+        assert_eq!(shared_directory_prefix("a.rs", "b.rs"), "");
     }
 }
