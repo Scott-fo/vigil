@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{ActivePane, App};
 
-use super::super::{panel_color, primary_color, text_color, text_faint_color, text_subtle_color};
+use super::super::{primary_color, text_color, text_faint_color, text_subtle_color};
 use super::frame::render_modal_frame;
 
 struct Section {
@@ -26,14 +26,15 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
     let left_width = lines_width(&left_lines);
     let right_width = lines_width(&right_lines);
 
-    // Two columns plus frame border (2) and horizontal padding (2 each side).
+    // Two columns plus frame border (2), frame inset (1 each side), and
+    // extra help padding (1 each side).
     let width = (left_width + right_width) as u16 + COLUMN_GAP + 6;
     let body_height = left_lines.len().max(right_lines.len()) as u16;
-    // Body, blank line, footer hint, and the frame border.
-    let height = body_height + 4;
+    // Body, blank line, footer hint, frame border, and the row under the title.
+    let height = body_height + 5;
     let inner = render_modal_frame(frame, width, height, "Keyboard shortcuts");
 
-    let inner = Block::new().padding(Padding::horizontal(2)).inner(inner);
+    let inner = Block::new().padding(Padding::horizontal(1)).inner(inner);
     let [body, _, footer] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -51,15 +52,8 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
         ])
         .areas(body);
 
-    let background = Style::new().bg(panel_color());
-    frame.render_widget(
-        Paragraph::new(Text::from(left_lines)).style(background),
-        left_area,
-    );
-    frame.render_widget(
-        Paragraph::new(Text::from(right_lines)).style(background),
-        right_area,
-    );
+    frame.render_widget(Paragraph::new(Text::from(left_lines)), left_area);
+    frame.render_widget(Paragraph::new(Text::from(right_lines)), right_area);
 
     let pane_hint = match app.active_pane {
         ActivePane::Sidebar if !app.sidebar_hidden => "sidebar focused",
@@ -75,8 +69,7 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
                 Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
             ),
             Span::styled(" close", Style::new().fg(text_faint_color())),
-        ]))
-        .style(background),
+        ])),
         footer,
     );
 }

@@ -13,19 +13,22 @@ use crate::{
 };
 
 use super::super::{
-    element_color, error_color, panel_color, primary_color, success_color, text_color,
-    text_muted_color, warning_color,
+    chip_color, error_color, primary_color, success_color, text_color, text_faint_color,
+    text_subtle_color, warning_color,
 };
 use super::frame::render_modal_frame;
+use super::hints::render_hint_footer;
 
 pub(super) fn render_review_context_modal(frame: &mut Frame, app: &App) {
-    let inner = render_modal_frame(frame, 104, 26, "Codex Review Context");
+    let inner = render_modal_frame(frame, 104, 26, "Codex review context");
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),
+            Constraint::Length(1),
             Constraint::Min(4),
-            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(inner);
 
@@ -39,10 +42,9 @@ pub(super) fn render_review_context_modal(frame: &mut Frame, app: &App) {
                 "{} characters saved for the next review.",
                 app.review_extra_context.len()
             ),
-            Style::new().fg(text_muted_color()),
+            Style::new().fg(text_subtle_color()),
         )),
     ]))
-    .style(Style::new().bg(panel_color()))
     .block(Block::new().padding(Padding::horizontal(1)));
     frame.render_widget(header, chunks[0]);
 
@@ -52,29 +54,33 @@ pub(super) fn render_review_context_modal(frame: &mut Frame, app: &App) {
     } else {
         app.review_extra_context.as_str()
     };
-    let scroll = text_area_scroll(body, chunks[1].width, chunks[1].height);
+    let scroll = text_area_scroll(body, chunks[2].width, chunks[2].height);
     let text_area = Paragraph::new(body)
         .style(
             Style::new()
                 .fg(if is_empty {
-                    text_muted_color()
+                    text_faint_color()
                 } else {
                     text_color()
                 })
-                .bg(element_color()),
+                .bg(chip_color()),
         )
         .block(Block::new().padding(Padding::horizontal(1)))
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
-    frame.render_widget(text_area, chunks[1]);
+    frame.render_widget(text_area, chunks[2]);
 
-    let footer = Paragraph::new(Text::from(vec![Line::from(Span::styled(
-        "Enter inserts newline. Ctrl-R runs review. Ctrl-L clears. Esc closes.",
-        Style::new().fg(text_muted_color()),
-    ))]))
-    .style(Style::new().bg(panel_color()))
-    .block(Block::new().padding(Padding::horizontal(1)));
-    frame.render_widget(footer, chunks[2]);
+    render_hint_footer(
+        frame,
+        chunks[4],
+        &[
+            ("⏎", "newline"),
+            ("Ctrl-R", "run review"),
+            ("Ctrl-L", "clear"),
+            ("esc", "close"),
+        ],
+        None,
+    );
 }
 
 fn text_area_scroll(text: &str, width: u16, height: u16) -> u16 {
@@ -90,15 +96,29 @@ fn text_area_scroll(text: &str, width: u16, height: u16) -> u16 {
 }
 
 pub(super) fn render_review_summary_modal(frame: &mut Frame, app: &mut App) {
-    let inner = render_modal_frame(frame, 110, 28, "Codex Review");
+    let inner = render_modal_frame(frame, 110, 28, "Codex review");
+    let [body, _, footer] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
     let lines = review_lines(app);
-    clamp_review_summary_scroll(app, &lines, inner.width, inner.height);
+    clamp_review_summary_scroll(app, &lines, body.width, body.height);
     let paragraph = Paragraph::new(Text::from(lines))
-        .style(Style::new().fg(text_color()).bg(panel_color()))
+        .style(Style::new().fg(text_color()))
         .block(Block::new().padding(Padding::horizontal(1)))
         .wrap(Wrap { trim: false })
         .scroll((app.review_summary_scroll, 0));
-    frame.render_widget(paragraph, inner);
+    frame.render_widget(paragraph, body);
+    render_hint_footer(
+        frame,
+        footer,
+        &[("j/k", "scroll"), ("c", "copy"), ("esc", "close")],
+        None,
+    );
 }
 
 fn clamp_review_summary_scroll(app: &mut App, lines: &[Line<'static>], width: u16, height: u16) {
@@ -131,14 +151,14 @@ fn review_lines(app: &App) -> Vec<Line<'static>> {
     if app.review_loading {
         return vec![
             Line::from(Span::styled(
-                "Codex review running...",
+                "Codex review running…",
                 Style::new()
                     .fg(primary_color())
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
                 "Results will appear here when the review finishes.",
-                Style::new().fg(text_muted_color()),
+                Style::new().fg(text_subtle_color()),
             )),
         ];
     }
@@ -160,7 +180,7 @@ fn review_lines(app: &App) -> Vec<Line<'static>> {
     let Some(report) = app.review_report.as_ref() else {
         return vec![Line::from(Span::styled(
             "No Codex review loaded.",
-            Style::new().fg(text_muted_color()),
+            Style::new().fg(text_subtle_color()),
         ))];
     };
 
@@ -172,7 +192,7 @@ fn review_lines(app: &App) -> Vec<Line<'static>> {
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(vec![
-            Span::styled("Verdict ", Style::new().fg(text_muted_color())),
+            Span::styled("Verdict ", Style::new().fg(text_subtle_color())),
             Span::styled(
                 verdict_label(report.summary.verdict),
                 verdict_style(report.summary.verdict).add_modifier(Modifier::BOLD),
@@ -183,7 +203,7 @@ fn review_lines(app: &App) -> Vec<Line<'static>> {
                     report.findings.len(),
                     if report.findings.len() == 1 { "" } else { "s" }
                 ),
-                Style::new().fg(text_muted_color()),
+                Style::new().fg(text_subtle_color()),
             ),
         ]),
         Line::default(),
@@ -198,7 +218,7 @@ fn review_lines(app: &App) -> Vec<Line<'static>> {
         lines.push(section_line("Risk Areas"));
         for area in &report.summary.risk_areas {
             lines.push(Line::from(vec![
-                Span::styled("- ", Style::new().fg(text_muted_color())),
+                Span::styled("- ", Style::new().fg(text_subtle_color())),
                 Span::styled(area.clone(), Style::new().fg(text_color())),
             ]));
         }
@@ -221,7 +241,7 @@ fn review_lines(app: &App) -> Vec<Line<'static>> {
             ]));
             lines.push(Line::from(Span::styled(
                 finding_location(finding),
-                Style::new().fg(text_muted_color()),
+                Style::new().fg(text_subtle_color()),
             )));
             lines.push(Line::from(Span::styled(
                 finding.body.clone(),
@@ -230,18 +250,15 @@ fn review_lines(app: &App) -> Vec<Line<'static>> {
         }
     }
 
-    lines.push(Line::default());
-    lines.push(Line::from(Span::styled(
-        "c copies. Esc closes. S reopens this summary.",
-        Style::new().fg(text_muted_color()),
-    )));
     lines
 }
 
 fn section_line(title: &str) -> Line<'static> {
     Line::from(Span::styled(
-        title.to_string(),
-        Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+        title.to_uppercase(),
+        Style::new()
+            .fg(text_faint_color())
+            .add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -285,6 +302,6 @@ fn severity_style(severity: ReviewSeverity) -> Style {
     match severity {
         ReviewSeverity::Critical | ReviewSeverity::High => Style::new().fg(error_color()),
         ReviewSeverity::Medium => Style::new().fg(warning_color()),
-        ReviewSeverity::Low | ReviewSeverity::Info => Style::new().fg(text_muted_color()),
+        ReviewSeverity::Low | ReviewSeverity::Info => Style::new().fg(text_subtle_color()),
     }
 }

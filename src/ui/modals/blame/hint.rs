@@ -1,16 +1,26 @@
 use crate::app::App;
 
-pub(super) fn blame_hint(app: &App) -> &'static str {
+use super::super::hints::KeyHint;
+
+/// Footer hints for the blame modal, plus a note when the blamed line has no
+/// commit to compare against.
+pub(super) fn blame_hints(app: &App) -> (&'static [KeyHint], Option<&'static str>) {
     if app.blame_loading {
-        "Esc closes."
+        (&[("esc", "close")], None)
     } else if app
         .blame_details
         .as_ref()
         .and_then(|details| details.compare_selection.as_ref())
         .is_some()
     {
-        "Enter or o opens commit compare. j/k scroll. Esc closes."
+        (
+            &[("⏎", "compare commit"), ("j/k", "scroll"), ("esc", "close")],
+            None,
+        )
     } else {
-        "No commit compare available for this line. j/k scroll. Esc closes."
+        (
+            &[("j/k", "scroll"), ("esc", "close")],
+            Some("no commit compare for this line"),
+        )
     }
 }

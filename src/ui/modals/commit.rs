@@ -1,51 +1,53 @@
 use ratatui::{
     Frame,
+    layout::{Constraint, Direction, Layout},
     style::Style,
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{Block, Padding, Paragraph},
 };
 
 use crate::app::App;
 
-use super::super::{element_color, error_color, panel_color, text_color, text_muted_color};
+use super::super::{error_color, text_faint_color};
 use super::frame::render_modal_frame;
+use super::hints::render_hint_footer;
+use super::prompt::{Prompt, render_prompt};
 
 pub(super) fn render_commit_modal(frame: &mut Frame, app: &App) {
-    let inner = render_modal_frame(frame, 72, 9, "Commit Staged Changes");
+    let inner = render_modal_frame(frame, 72, 8, "Commit staged changes");
+    let [label, prompt, _, error, footer] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
 
-    let message_label = Line::from(Span::styled("Message:", Style::new().fg(text_color())));
-    let input_line = Line::from(Span::styled(
-        if app.commit_message.is_empty() {
-            "Enter commit message..."
-        } else {
-            app.commit_message.as_str()
-        },
-        if app.commit_message.is_empty() {
-            Style::new().fg(text_muted_color()).bg(element_color())
-        } else {
-            Style::new().fg(text_color()).bg(element_color())
-        },
-    ));
-    let hint_or_error = Line::from(Span::styled(
-        app.commit_error
-            .as_deref()
-            .unwrap_or("Enter commits. Esc closes without committing."),
-        if app.commit_error.is_some() {
-            Style::new().fg(error_color())
-        } else {
-            Style::new().fg(text_muted_color())
-        },
-    ));
-
-    let content = vec![
-        message_label,
-        Line::default(),
-        input_line,
-        Line::default(),
-        hint_or_error,
-    ];
-    let paragraph = Paragraph::new(Text::from(content))
-        .style(Style::new().bg(panel_color()))
-        .block(Block::new().padding(Padding::horizontal(1)));
-    frame.render_widget(paragraph, inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Message",
+            Style::new().fg(text_faint_color()),
+        )))
+        .block(Block::new().padding(Padding::horizontal(1))),
+        label,
+    );
+    render_prompt(
+        frame,
+        prompt,
+        Prompt::new(&app.commit_message, "Describe the change"),
+    );
+    if let Some(message) = app.commit_error.as_deref() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                message.to_string(),
+                Style::new().fg(error_color()),
+            )))
+            .block(Block::new().padding(Padding::horizontal(1))),
+            error,
+        );
+    }
+    render_hint_footer(frame, footer, &[("⏎", "commit"), ("esc", "cancel")], None);
 }

@@ -1,9 +1,9 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::Paragraph,
 };
 
 use crate::{
@@ -12,73 +12,53 @@ use crate::{
 };
 
 use super::super::{
-    border_active_color, border_color, diff_added_style, diff_context_color, diff_removed_style,
-    panel_color, primary_color, selected_list_item_text_color, syntax_style, text_color,
-    text_muted_color,
+    error_color, primary_color, selected_list_item_text_color, success_color, syntax_style,
+    text_color, text_faint_color, text_subtle_color,
 };
 use super::frame::render_modal_frame;
+use super::hints::render_hint_footer;
 use super::list::{
-    render_list_error, render_list_frame, render_list_message, render_modal_input,
+    PickerLayout, list_row, render_list_error, render_list_message, render_quiet_scrollbar,
     visible_list_range,
 };
+use super::prompt::{Prompt, render_prompt};
 
 pub(super) fn render_diff_search_modal(frame: &mut Frame, app: &App) {
-    let inner = render_modal_frame(frame, 104, 24, "Diff Search");
+    let inner = render_modal_frame(frame, 104, 24, "Search diff");
+    let layout = PickerLayout::new(inner, 1);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(1),
-        ])
-        .split(inner);
+    render_prompt(
+        frame,
+        layout.prompt,
+        Prompt::new(&app.diff_search_query, "Search changed diff lines"),
+    );
 
-    if app.diff_search_query.is_empty() {
-        render_modal_input(
-            frame,
-            chunks[0],
-            "Search changed diff lines...",
-            true,
-            false,
-            None,
-        );
-    } else {
-        render_modal_input(
-            frame,
-            chunks[0],
-            app.diff_search_query.clone(),
-            false,
-            false,
-            None,
-        );
-    }
-
-    let list_inner = render_list_frame(frame, chunks[1]);
+    let list = layout.list;
     if let Some(error) = app.diff_search_error.as_ref() {
-        render_list_error(frame, list_inner, "Diff search failed", error);
+        render_list_error(frame, list, "Diff search failed", error);
     } else if app.diff_search_loading {
-        render_list_message(frame, list_inner, diff_search_loading_message(app));
+        render_list_message(frame, list, diff_search_loading_message(app));
     } else if app.diff_search_query.trim().is_empty() {
-        render_list_message(frame, list_inner, "Type a query to search changed lines.");
+        render_list_message(frame, list, "Type a query to search changed lines.");
     } else if app.diff_search_results.items.is_empty() && app.diff_search_is_indexing_partial() {
-        render_list_message(frame, list_inner, app.diff_search_partial_loading_message());
+        render_list_message(frame, list, app.diff_search_partial_loading_message());
     } else if app.diff_search_results.items.is_empty() {
-        render_list_message(frame, list_inner, "No matching diff lines.");
+        render_list_message(frame, list, "No matching diff lines.");
     } else {
-        render_diff_search_results(frame, list_inner, app);
+        render_diff_search_results(frame, list, app);
     }
 
-    let footer = Paragraph::new(Line::from(Span::styled(
-        format!(
-            "Tab toggles mode. {} search. j/k select. Enter jumps. Esc closes.",
-            app.diff_search_mode.label()
-        ),
-        Style::new().fg(text_muted_color()),
-    )))
-    .style(Style::new().bg(panel_color()))
-    .block(Block::new().padding(Padding::horizontal(1)));
-    frame.render_widget(footer, chunks[2]);
+    render_hint_footer(
+        frame,
+        layout.footer,
+        &[
+            ("tab", "mode"),
+            ("j/k", "select"),
+            ("⏎", "jump"),
+            ("esc", "close"),
+        ],
+        Some(format!("{} search", app.diff_search_mode.label())),
+    );
 }
 
 fn render_diff_search_results(frame: &mut Frame, area: Rect, app: &App) {
@@ -120,24 +100,8 @@ fn render_result_list(
         }
     }
 
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .style(Style::new().bg(panel_color()))
-            .block(Block::new().padding(Padding::horizontal(1))),
-        area,
-    );
-
-    if display_entries.len() > viewport_height {
-        let mut scrollbar_state = ScrollbarState::new(display_entries.len())
-            .position(visible_range.start)
-            .viewport_content_length(viewport_height);
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None)
-            .thumb_style(Style::new().fg(border_active_color()))
-            .track_style(Style::new().fg(border_color()));
-        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
-    }
+    frame.render_widget(Paragraph::new(Text::from(lines)), area);
+    render_quiet_scrollbar(frame, area, display_entries.len(), visible_range.start);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,7 +136,7 @@ fn diff_search_loading_message(app: &App) -> &'static str {
 
 fn render_diff_search_file_header(result: &DiffSearchResult) -> Line<'static> {
     let (file_name, parent) = file_name_and_parent(&result.file_path);
-    let mut spans = vec![Span::styled("  ", Style::new().fg(text_muted_color()))];
+    let mut spans = vec![Span::raw("  ")];
     if let Some((icon, color)) = devicon_for_path(&result.file_path) {
         spans.push(Span::styled(format!("{icon} "), Style::new().fg(color)));
     }
@@ -183,49 +147,34 @@ fn render_diff_search_file_header(result: &DiffSearchResult) -> Line<'static> {
     if let Some(parent) = parent {
         spans.push(Span::styled(
             format!("  {parent}"),
-            Style::new().fg(text_muted_color()),
+            Style::new().fg(text_subtle_color()),
         ));
     }
-    Line::from(spans).style(Style::new().bg(panel_color()))
+    Line::from(spans)
 }
 
+/// Result rows indent under their file header. The +/- marker carries the
+/// change kind; rows stay on the modal background so the cursor tint and
+/// match highlights read clearly.
 fn render_diff_search_result(result: &DiffSearchResult, selected: bool) -> Line<'static> {
-    let base_style = if selected {
-        Style::new()
-            .bg(primary_color())
-            .fg(selected_list_item_text_color())
-    } else {
-        diff_search_line_style(result.kind)
-    };
-    let marker_style = if selected {
-        base_style.add_modifier(Modifier::BOLD)
-    } else {
-        match result.kind {
-            DiffSearchLineKind::Addition => diff_added_style(),
-            DiffSearchLineKind::Deletion => diff_removed_style(),
-            DiffSearchLineKind::Context => Style::new().fg(diff_context_color()),
-        }
-    };
+    let base_style = Style::new().fg(text_color());
+    let marker_style = match result.kind {
+        DiffSearchLineKind::Addition => Style::new().fg(success_color()),
+        DiffSearchLineKind::Deletion => Style::new().fg(error_color()),
+        DiffSearchLineKind::Context => Style::new().fg(text_faint_color()),
+    }
+    .add_modifier(Modifier::BOLD);
 
-    let mut match_line = vec![
-        Span::styled("  ", base_style),
+    let mut spans = vec![
+        Span::raw("  "),
         Span::styled(
-            format!("{}  ", line_range_label(result)),
-            muted_style_for_selection(selected),
+            format!("{:>9}  ", line_range_label(result)),
+            Style::new().fg(text_faint_color()),
         ),
         Span::styled(format!("{} ", diff_marker(result.kind)), marker_style),
     ];
-    match_line.extend(line_spans(result, base_style, selected));
-
-    Line::from(match_line).style(base_style)
-}
-
-fn diff_search_line_style(kind: DiffSearchLineKind) -> Style {
-    match kind {
-        DiffSearchLineKind::Addition => diff_added_style(),
-        DiffSearchLineKind::Deletion => diff_removed_style(),
-        DiffSearchLineKind::Context => Style::new().fg(text_color()),
-    }
+    spans.extend(line_spans(result, base_style));
+    list_row(spans, selected)
 }
 
 fn diff_marker(kind: DiffSearchLineKind) -> &'static str {
@@ -253,17 +202,7 @@ fn line_range_label(result: &DiffSearchResult) -> String {
     format!("{line_number}:{start}-{end}")
 }
 
-fn muted_style_for_selection(selected: bool) -> Style {
-    if selected {
-        Style::new()
-            .fg(selected_list_item_text_color())
-            .bg(primary_color())
-    } else {
-        Style::new().fg(text_muted_color())
-    }
-}
-
-fn line_spans(result: &DiffSearchResult, base_style: Style, selected: bool) -> Vec<Span<'static>> {
+fn line_spans(result: &DiffSearchResult, base_style: Style) -> Vec<Span<'static>> {
     if result.line.is_empty() {
         return vec![Span::styled(String::new(), base_style)];
     }
@@ -301,7 +240,7 @@ fn line_spans(result: &DiffSearchResult, base_style: Style, selected: bool) -> V
             .match_ranges
             .iter()
             .any(|range| range.start < end && start < range.end);
-        let style = diff_search_segment_style(base_style, syntax_name, matched, selected);
+        let style = diff_search_segment_style(base_style, syntax_name, matched);
         spans.push(Span::styled(result.line[start..end].to_string(), style));
     }
 
@@ -319,7 +258,7 @@ fn devicon_for_path(path: &str) -> Option<(char, Color)> {
 
     Some((
         icon.icon,
-        hex_color(icon.color).unwrap_or_else(text_muted_color),
+        hex_color(icon.color).unwrap_or_else(text_subtle_color),
     ))
 }
 
@@ -362,19 +301,10 @@ fn syntax_name_for_segment(
         .and_then(|range| range.highlight_name)
 }
 
-fn diff_search_segment_style(
-    base_style: Style,
-    syntax_name: Option<&str>,
-    matched: bool,
-    selected: bool,
-) -> Style {
+fn diff_search_segment_style(base_style: Style, syntax_name: Option<&str>, matched: bool) -> Style {
     let mut style = syntax_name
         .map(|name| syntax_style(name, base_style))
         .unwrap_or(base_style);
-
-    if selected {
-        style = style.bg(primary_color());
-    }
 
     if matched {
         style = style
