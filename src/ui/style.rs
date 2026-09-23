@@ -172,6 +172,29 @@ pub fn diff_removed_style() -> Style {
     Style::new().fg(text_color()).bg(remove_bg_color())
 }
 
+/// Background for the changed words inside an added line. Blends the line
+/// background toward the theme's addition accent so it reads as "more added".
+#[inline]
+pub fn diff_added_emphasis_style() -> Style {
+    let palette = palette();
+    Style::new().bg(mix(
+        palette.diff_added_bg,
+        palette.diff_highlight_added,
+        0.28,
+    ))
+}
+
+/// Background for the changed words inside a removed line.
+#[inline]
+pub fn diff_removed_emphasis_style() -> Style {
+    let palette = palette();
+    Style::new().bg(mix(
+        palette.diff_removed_bg,
+        palette.diff_highlight_removed,
+        0.28,
+    ))
+}
+
 #[inline]
 pub fn line_number_style() -> Style {
     Style::new().fg(palette().diff_line_number)

@@ -9,10 +9,11 @@ use crate::{
 use super::{
     DiffDisplayLineAnchor, DiffHunkGap, DiffLineKind, DiffSelectionPane, DiffSelectionPoint,
     DiffView, GapExpandDirection, SyntaxToken,
+    emphasis::EmphasisCache,
     rendering::{
-        normalize_selection_points, render_expand_gap_line, render_expanded_context_lines,
-        render_split_hunk_rows, render_split_pair_lines, render_unified_code_lines,
-        slice_string_by_width,
+        RenderRow, normalize_selection_points, render_expand_gap_line,
+        render_expanded_context_lines, render_split_hunk_rows, render_split_pair_lines,
+        render_unified_code_lines, slice_string_by_width,
     },
 };
 
@@ -60,7 +61,7 @@ impl DiffView {
                 DiffViewMode::Unified => {
                     for row_index in hunk.row_start..hunk.row_end {
                         for rendered_line in
-                            render_unified_code_lines(&self.rows[row_index], width, line_wrap)
+                            render_unified_code_lines(self.render_row(row_index), width, line_wrap)
                         {
                             if push_window_line(
                                 &mut lines,
@@ -657,12 +658,8 @@ impl DiffView {
 
                     let pair_count = removed.len().max(added.len());
                     for pair_index in 0..pair_count {
-                        let left = removed
-                            .get(pair_index)
-                            .and_then(|index| self.rows.get(*index));
-                        let right = added
-                            .get(pair_index)
-                            .and_then(|index| self.rows.get(*index));
+                        let left = removed.get(pair_index).map(|&index| self.render_row(index));
+                        let right = added.get(pair_index).map(|&index| self.render_row(index));
                         for rendered_line in
                             render_split_pair_lines(left, right, side_width, line_wrap)
                         {
@@ -673,6 +670,7 @@ impl DiffView {
                     }
                 }
                 DiffLineKind::Context => {
+                    let row = RenderRow::plain(row);
                     for rendered_line in
                         render_split_pair_lines(Some(row), Some(row), side_width, line_wrap)
                     {
@@ -683,9 +681,11 @@ impl DiffView {
                     row_index += 1;
                 }
                 DiffLineKind::ConflictAction | DiffLineKind::ConflictMarker(_) => {
-                    for rendered_line in
-                        render_unified_code_lines(row, side_width * 2 + 3, line_wrap)
-                    {
+                    for rendered_line in render_unified_code_lines(
+                        RenderRow::plain(row),
+                        side_width * 2 + 3,
+                        line_wrap,
+                    ) {
                         if push_window_line(lines, cursor, start, end, rendered_line.line) {
                             return;
                         }
@@ -905,7 +905,9 @@ impl DiffView {
                         }
                     }
                 };
-                for rendered_line in render_unified_code_lines(row, width, line_wrap) {
+                for rendered_line in
+                    render_unified_code_lines(self.render_row(row_index), width, line_wrap)
+                {
                     lines.push(rendered_line.line);
                     nav.push(
                         row.conflict_index
@@ -964,6 +966,7 @@ impl DiffView {
                 hunk.row_start,
                 side_width,
                 line_wrap,
+                |row_index| self.row_emphasis(row_index),
             ) {
                 lines.push(line);
                 nav.push(target_line);
@@ -1085,7 +1088,12 @@ impl DiffView {
     }
 
     pub(super) fn invalidate_display_cache(&mut self) {
-        self.display_cache = DiffDisplayCache::default();
+        // Rows never change after a view is built, so emphasis stays valid.
+        let emphasis = std::mem::take(&mut self.display_cache.emphasis);
+        self.display_cache = DiffDisplayCache {
+            emphasis,
+            ..DiffDisplayCache::default()
+        };
     }
 
     fn expanded_context_highlighting(&self, line_number: usize) -> Option<Vec<SyntaxToken>> {
@@ -1115,6 +1123,7 @@ fn push_window_line(
 pub(crate) struct DiffDisplayCache {
     unified: CachedDisplay,
     split: CachedDisplay,
+    pub(super) emphasis: EmphasisCache,
 }
 
 impl DiffDisplayCache {

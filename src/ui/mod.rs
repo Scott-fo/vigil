@@ -39,9 +39,10 @@ pub use self::hit::{
     prepare_diff_viewport_for_terminal, sidebar_file_at, sidebar_item_index_at,
 };
 pub use self::style::{
-    added_sign_style, context_sign_style, diff_added_style, diff_context_style,
-    diff_gap_action_style, diff_gap_rule_style, diff_gap_style, diff_hunk_style, diff_meta_style,
-    diff_removed_style, line_number_style, removed_sign_style, syntax_style,
+    added_sign_style, context_sign_style, diff_added_emphasis_style, diff_added_style,
+    diff_context_style, diff_gap_action_style, diff_gap_rule_style, diff_gap_style,
+    diff_hunk_style, diff_meta_style, diff_removed_emphasis_style, diff_removed_style,
+    line_number_style, removed_sign_style, syntax_style,
 };
 
 const NOTICE_WIDTH: u16 = 36;

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, ops::Range};
 
 use ratatui::{
     style::Style,
@@ -33,11 +33,26 @@ struct WrappedLineContent {
     content_width: usize,
 }
 
+/// A row to draw plus the byte ranges of its text to emphasize as changed.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct RenderRow<'a> {
+    pub(super) row: &'a DiffRow,
+    pub(super) emphasis: &'a [Range<usize>],
+}
+
+impl<'a> RenderRow<'a> {
+    /// A row drawn without intra-line emphasis, such as context or chrome.
+    pub(super) fn plain(row: &'a DiffRow) -> Self {
+        Self { row, emphasis: &[] }
+    }
+}
+
 pub(super) fn render_unified_code_lines(
-    row: &DiffRow,
+    input: RenderRow<'_>,
     width: usize,
     line_wrap: DiffLineWrapMode,
 ) -> Vec<RenderedDisplayLine> {
+    let RenderRow { row, emphasis } = input;
     let base_style = base_style(row.kind);
     let sign_style = match row.kind {
         DiffLineKind::Context => ui::context_sign_style(),
@@ -72,7 +87,7 @@ pub(super) fn render_unified_code_lines(
         ),
         Span::styled("  ", sign_style),
     ];
-    let content = render_row_content(row.unified_content(), &row.text, base_style);
+    let content = render_row_content(row.unified_content(), row, emphasis, base_style);
     let prefix_width = spans_width(&prefix);
     prefixed_spans_to_lines(
         prefix,
@@ -98,8 +113,8 @@ pub(super) fn render_unified_code_lines(
 }
 
 pub(super) fn render_split_pair_lines(
-    left: Option<&DiffRow>,
-    right: Option<&DiffRow>,
+    left: Option<RenderRow<'_>>,
+    right: Option<RenderRow<'_>>,
     side_width: usize,
     line_wrap: DiffLineWrapMode,
 ) -> Vec<RenderedDisplayLine> {
@@ -142,11 +157,12 @@ pub(super) fn render_split_pair_lines(
         .collect()
 }
 
-pub(super) fn render_split_hunk_rows(
-    rows: &[DiffRow],
+pub(super) fn render_split_hunk_rows<'a>(
+    rows: &'a [DiffRow],
     row_index_offset: usize,
     side_width: usize,
     line_wrap: DiffLineWrapMode,
+    emphasis_for: impl Fn(usize) -> &'a [Range<usize>],
 ) -> Vec<(
     Line<'static>,
     Option<DisplayNavTarget>,
@@ -154,8 +170,8 @@ pub(super) fn render_split_hunk_rows(
     DisplaySelectionLine,
 )> {
     let mut rendered = Vec::with_capacity(rows.len());
-    let mut pending_removed: Vec<(usize, &DiffRow)> = Vec::new();
-    let mut pending_added: Vec<(usize, &DiffRow)> = Vec::new();
+    let mut pending_removed: Vec<(usize, RenderRow<'a>)> = Vec::new();
+    let mut pending_added: Vec<(usize, RenderRow<'a>)> = Vec::new();
 
     let flush_pending = |rendered: &mut Vec<(
         Line<'static>,
@@ -163,21 +179,23 @@ pub(super) fn render_split_hunk_rows(
         DisplayRowRefs,
         DisplaySelectionLine,
     )>,
-                         removed: &mut Vec<(usize, &DiffRow)>,
-                         added: &mut Vec<(usize, &DiffRow)>| {
+                         removed: &mut Vec<(usize, RenderRow<'a>)>,
+                         added: &mut Vec<(usize, RenderRow<'a>)>| {
         let row_count = removed.len().max(added.len());
         for index in 0..row_count {
             let left = removed.get(index).copied();
             let right = added.get(index).copied();
-            let target_line =
-                resolve_split_target_line(left.map(|(_, row)| row), right.map(|(_, row)| row));
+            let target_line = resolve_split_target_line(
+                left.map(|(_, render)| render.row),
+                right.map(|(_, render)| render.row),
+            );
             let row_refs = DisplayRowRefs {
                 left: left.map(|(row_index, _)| row_index),
                 right: right.map(|(row_index, _)| row_index),
             };
             for rendered_line in render_split_pair_lines(
-                left.map(|(_, row)| row),
-                right.map(|(_, row)| row),
+                left.map(|(_, render)| render),
+                right.map(|(_, render)| render),
                 side_width,
                 line_wrap,
             ) {
@@ -195,9 +213,13 @@ pub(super) fn render_split_hunk_rows(
 
     for (row_offset, row) in rows.iter().enumerate() {
         let row_index = row_index_offset + row_offset;
+        let with_emphasis = || RenderRow {
+            row,
+            emphasis: emphasis_for(row_index),
+        };
         match row.kind {
-            DiffLineKind::Removed => pending_removed.push((row_index, row)),
-            DiffLineKind::Added => pending_added.push((row_index, row)),
+            DiffLineKind::Removed => pending_removed.push((row_index, with_emphasis())),
+            DiffLineKind::Added => pending_added.push((row_index, with_emphasis())),
             DiffLineKind::Context => {
                 flush_pending(&mut rendered, &mut pending_removed, &mut pending_added);
                 let target_line = resolve_split_target_line(Some(row), Some(row));
@@ -205,8 +227,9 @@ pub(super) fn render_split_hunk_rows(
                     left: Some(row_index),
                     right: Some(row_index),
                 };
+                let plain = RenderRow::plain(row);
                 for rendered_line in
-                    render_split_pair_lines(Some(row), Some(row), side_width, line_wrap)
+                    render_split_pair_lines(Some(plain), Some(plain), side_width, line_wrap)
                 {
                     rendered.push((
                         rendered_line.line,
@@ -222,7 +245,9 @@ pub(super) fn render_split_hunk_rows(
                     left: Some(row_index),
                     right: Some(row_index),
                 };
-                for rendered_line in render_unified_code_lines(row, side_width * 2 + 3, line_wrap) {
+                for rendered_line in
+                    render_unified_code_lines(RenderRow::plain(row), side_width * 2 + 3, line_wrap)
+                {
                     rendered.push((
                         rendered_line.line,
                         row.conflict_index.map(DisplayNavTarget::Conflict),
@@ -300,13 +325,14 @@ pub(super) fn render_expanded_context_lines(
             right: highlighted_content,
         },
     };
+    let row = RenderRow::plain(&row);
     if split {
         let total_width = width.saturating_sub(1);
         let gutter_width = 3;
         let side_width = total_width.saturating_sub(gutter_width) / 2;
-        render_split_pair_lines(Some(&row), Some(&row), side_width, line_wrap)
+        render_split_pair_lines(Some(row), Some(row), side_width, line_wrap)
     } else {
-        render_unified_code_lines(&row, width, line_wrap)
+        render_unified_code_lines(row, width, line_wrap)
     }
 }
 
@@ -319,12 +345,12 @@ struct WrappedSideLine {
 }
 
 fn render_split_side_lines(
-    row: Option<&DiffRow>,
+    input: Option<RenderRow<'_>>,
     left_side: bool,
     width: usize,
     line_wrap: DiffLineWrapMode,
 ) -> Vec<WrappedSideLine> {
-    let Some(row) = row else {
+    let Some(RenderRow { row, emphasis }) = input else {
         return vec![blank_split_side(width)];
     };
 
@@ -342,7 +368,7 @@ fn render_split_side_lines(
         " ".repeat(format_line_number(None).width()),
         base_style.patch(ui::line_number_style()),
     )];
-    let content = render_row_content(row.side_content(left_side), &row.text, base_style);
+    let content = render_row_content(row.side_content(left_side), row, emphasis, base_style);
     let prefix_width = spans_width(&prefix);
     prefixed_spans_to_lines(
         prefix,
@@ -373,26 +399,47 @@ fn blank_split_side(width: usize) -> WrappedSideLine {
 
 fn render_row_content(
     syntax_tokens: Option<&[SyntaxToken]>,
-    text: &str,
+    row: &DiffRow,
+    emphasis: &[Range<usize>],
     fallback: Style,
 ) -> Vec<Span<'static>> {
+    let text = row.text.as_str();
     let has_tabs = text.as_bytes().contains(&b'\t');
 
-    let raw_spans = match syntax_tokens {
-        Some(tokens) if !tokens.is_empty() => tokens
+    let token_style = |token: &SyntaxToken| {
+        token
+            .highlight_name
+            .map(|name| ui::syntax_style(name, fallback))
+            .unwrap_or(fallback)
+    };
+    let emphasis_style = match row.kind {
+        DiffLineKind::Added if !emphasis.is_empty() => Some(ui::diff_added_emphasis_style()),
+        DiffLineKind::Removed if !emphasis.is_empty() => Some(ui::diff_removed_emphasis_style()),
+        _ => None,
+    };
+
+    let raw_spans = match (syntax_tokens, emphasis_style) {
+        (Some(tokens), None) if !tokens.is_empty() => tokens
             .iter()
             .map(|token| {
-                let style = token
-                    .highlight_name
-                    .map(|name| ui::syntax_style(name, fallback))
-                    .unwrap_or(fallback);
                 let content = text
                     .get(token.start..token.end)
                     .map(str::to_string)
                     .unwrap_or_default();
-                Span::styled(content, style)
+                Span::styled(content, token_style(token))
             })
             .collect(),
+        (Some(tokens), Some(emphasis_style)) if !tokens.is_empty() => {
+            let segments: Vec<(Range<usize>, Style)> = tokens
+                .iter()
+                .filter(|token| text.get(token.start..token.end).is_some())
+                .map(|token| (token.start..token.end, token_style(token)))
+                .collect();
+            emphasized_spans(text, &segments, emphasis, emphasis_style)
+        }
+        (_, Some(emphasis_style)) => {
+            emphasized_spans(text, &[(0..text.len(), fallback)], emphasis, emphasis_style)
+        }
         _ => vec![Span::styled(text.to_string(), fallback)],
     };
 
@@ -401,6 +448,45 @@ fn render_row_content(
     } else {
         raw_spans
     }
+}
+
+/// Splits styled segments at emphasis boundaries and patches the emphasis
+/// background onto the changed parts, keeping each segment's syntax color.
+fn emphasized_spans(
+    text: &str,
+    segments: &[(Range<usize>, Style)],
+    emphasis: &[Range<usize>],
+    emphasis_style: Style,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::with_capacity(segments.len() + emphasis.len() * 2);
+    for (range, style) in segments {
+        let mut cursor = range.start;
+        for emphasized in emphasis {
+            let start = emphasized.start.max(cursor);
+            let end = emphasized.end.min(range.end);
+            if start >= end {
+                continue;
+            }
+            if cursor < start
+                && let Some(plain) = text.get(cursor..start)
+            {
+                spans.push(Span::styled(plain.to_string(), *style));
+            }
+            if let Some(changed) = text.get(start..end) {
+                spans.push(Span::styled(
+                    changed.to_string(),
+                    style.patch(emphasis_style),
+                ));
+            }
+            cursor = end;
+        }
+        if cursor < range.end
+            && let Some(plain) = text.get(cursor..range.end)
+        {
+            spans.push(Span::styled(plain.to_string(), *style));
+        }
+    }
+    spans
 }
 
 pub(super) fn expand_tabs_in_spans(spans: Vec<Span<'static>>) -> Vec<Span<'static>> {
