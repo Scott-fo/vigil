@@ -2,6 +2,7 @@ use super::highlight::SyntaxToken;
 use crate::app::{DiffLineWrapMode, DiffViewMode};
 
 mod display;
+mod emphasis;
 mod equality;
 mod full_file;
 mod highlighting;

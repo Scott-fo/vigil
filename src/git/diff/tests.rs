@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use ratatui::text::{Line, Span};
 
 use crate::git::FileEntry;
+use crate::ui;
 
 use super::super::highlight::HighlightRegistry;
 use super::full_file::{FullDiffOp, compute_full_diff_ops, split_file_contents_owned};
@@ -3448,4 +3449,102 @@ fn tab_expansion_tracks_columns_across_spans() {
         .collect::<Vec<_>>();
 
     assert_eq!(contents, vec!["ab", "  ", "cd"]);
+}
+
+const INTRA_LINE_DIFF: &str = "\
+diff --git a/src/event.rs b/src/event.rs
+--- a/src/event.rs
++++ b/src/event.rs
+@@ -1,3 +1,4 @@
+-use std::path::PathBuf;
++use std::{path::PathBuf, sync::Arc};
+
+ use crossterm::event::Event;
++use tokio::task;
+";
+
+#[test]
+fn paired_modified_line_gets_emphasis_and_pure_addition_does_not() {
+    let view = build_diff_view_from_diff_text(INTRA_LINE_DIFF, Some("rust"));
+    let row_index = |prefix: &str, kind: DiffLineKind| {
+        view.rows
+            .iter()
+            .position(|row| row.kind == kind && row.text.starts_with(prefix))
+            .expect("row should be present")
+    };
+
+    let removed = row_index("use std::path", DiffLineKind::Removed);
+    let added = row_index("use std::{", DiffLineKind::Added);
+    let pure_addition = row_index("use tokio", DiffLineKind::Added);
+
+    assert!(view.row_emphasis(removed).is_empty());
+    let added_emphasis: Vec<&str> = view
+        .row_emphasis(added)
+        .iter()
+        .map(|range| &view.rows[added].text[range.clone()])
+        .collect();
+    assert_eq!(added_emphasis, ["{", ", sync::Arc}"]);
+    assert!(view.row_emphasis(pure_addition).is_empty());
+}
+
+#[test]
+fn emphasis_survives_display_cache_invalidation() {
+    let mut view = build_diff_view_from_diff_text(INTRA_LINE_DIFF, Some("rust"));
+    let added = view
+        .rows
+        .iter()
+        .position(|row| row.text.starts_with("use std::{"))
+        .expect("row should be present");
+    let before = view.row_emphasis(added).to_vec();
+
+    view.invalidate_display_cache();
+
+    assert!(!before.is_empty());
+    assert_eq!(view.row_emphasis(added), before.as_slice());
+}
+
+#[test]
+fn emphasized_spans_carry_emphasis_background_and_keep_syntax_color() {
+    let registry =
+        HighlightRegistry::new_for_filetypes(["rust"]).expect("rust registry should initialize");
+    let mut view = build_diff_view_from_diff_text(INTRA_LINE_DIFF, Some("rust"));
+    let line_count = view.display_line_count(DiffViewMode::Unified, 120, DiffLineWrapMode::Wrap);
+    view.apply_syntax_highlighting_for_display_range(
+        DiffViewMode::Unified,
+        120,
+        DiffLineWrapMode::Wrap,
+        0,
+        line_count,
+        Some("rust"),
+        &registry,
+    );
+
+    let lines = view
+        .rendered_lines(DiffViewMode::Unified, 120, DiffLineWrapMode::Wrap)
+        .to_vec();
+    let added_line = lines
+        .iter()
+        .find(|line| line.spans.iter().any(|span| span.content.contains("sync")))
+        .expect("added line should render");
+    let line_bg = ui::diff_added_style().bg;
+
+    let sync = added_line
+        .spans
+        .iter()
+        .find(|span| span.content.as_ref() == "sync")
+        .expect("changed token should be its own span");
+    assert_eq!(sync.style.bg, ui::diff_added_emphasis_style().bg);
+    assert_ne!(sync.style.bg, line_bg);
+    assert_ne!(
+        sync.style.fg,
+        ui::diff_added_style().fg,
+        "syntax color should survive the emphasis overlay"
+    );
+
+    let path = added_line
+        .spans
+        .iter()
+        .find(|span| span.content.as_ref() == "path")
+        .expect("unchanged token should render");
+    assert_eq!(path.style.bg, line_bg);
 }
