@@ -43,6 +43,12 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, layout: SidebarLa
         .min(app.sidebar_items.len());
 
     let focused = app.active_pane == ActivePane::Sidebar;
+    // Derived from the mouse position each frame, so hover stays on the row
+    // under the pointer even after the list scrolls.
+    let hovered_row = app
+        .mouse_position
+        .filter(|position| list.contains(*position))
+        .map(|position| visible_start + (position.y - list.y) as usize);
     let row_width = list.width;
     for (offset, index) in (visible_start..visible_end).enumerate() {
         let item = &app.sidebar_items[index];
@@ -54,6 +60,7 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, layout: SidebarLa
         let context = RowContext {
             width: row_width,
             selection,
+            hovered: hovered_row == Some(index),
             review_comment_count: item
                 .file()
                 .map(|file| app.review_comment_count_for_file(&file.path))

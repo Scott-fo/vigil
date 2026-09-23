@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     super::{
-        chip_color, primary_color, selection_color, text_color, text_faint_color,
+        chip_color, hover_color, primary_color, selection_color, text_color, text_faint_color,
         text_subtle_color, warning_color,
     },
     text::{devicon_for_path, display_width, truncate_middle},
@@ -37,11 +37,14 @@ pub(super) enum RowSelection {
 pub(super) struct RowContext {
     pub(super) width: u16,
     pub(super) selection: RowSelection,
+    /// The mouse is over this row. Selection tints take precedence.
+    pub(super) hovered: bool,
     pub(super) review_comment_count: usize,
 }
 
 pub(super) fn row_line(item: &SidebarItem, context: RowContext) -> Line<'static> {
     let background = match context.selection {
+        RowSelection::None if context.hovered => Some(hover_color()),
         RowSelection::None => None,
         RowSelection::Focused => Some(selection_color()),
         RowSelection::Unfocused => Some(chip_color()),
@@ -242,6 +245,7 @@ mod tests {
         RowContext {
             width,
             selection: RowSelection::None,
+            hovered: false,
             review_comment_count: 0,
         }
     }
@@ -298,5 +302,30 @@ mod tests {
         assert_eq!(focused.spans[0].content, ACCENT_BAR);
         assert_eq!(unfocused.spans[0].content, " ");
         assert!(unfocused.style.bg.is_some());
+    }
+
+    #[test]
+    fn hovered_rows_get_the_hover_tint_but_selection_wins() {
+        let item = file_item("src/main.rs", " M", 0);
+        let plain = row_line(&item, context(30));
+        let hovered = row_line(
+            &item,
+            RowContext {
+                hovered: true,
+                ..context(30)
+            },
+        );
+        let hovered_and_selected = row_line(
+            &item,
+            RowContext {
+                hovered: true,
+                selection: RowSelection::Focused,
+                ..context(30)
+            },
+        );
+
+        assert_eq!(plain.style.bg, None);
+        assert_eq!(hovered.style.bg, Some(hover_color()));
+        assert_eq!(hovered_and_selected.style.bg, Some(selection_color()));
     }
 }

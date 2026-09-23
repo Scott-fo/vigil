@@ -5,7 +5,7 @@ use std::{
 };
 
 use nucleo_matcher::Matcher;
-use ratatui::widgets::ListState;
+use ratatui::{layout::Position, widgets::ListState};
 use strum_macros::{EnumString, IntoStaticStr};
 use tokio::task;
 
@@ -170,6 +170,8 @@ pub struct App {
     pub sidebar_scroll: usize,
     pub sidebar_viewport_height: usize,
     pub sidebar_hidden: bool,
+    /// Last known mouse cell. Rendering derives hover highlights from it.
+    pub mouse_position: Option<Position>,
     pub selected_sidebar_row: usize,
     pub selected_file_index: usize,
     pub diff_view: DiffView,

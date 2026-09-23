@@ -99,6 +99,13 @@ pub(super) fn selection_color() -> Color {
     mix(palette.background, palette.primary, 0.24)
 }
 
+/// Background of a sidebar row under the mouse; quieter than selection.
+#[inline]
+pub(super) fn hover_color() -> Color {
+    let palette = palette();
+    mix(palette.background, palette.text, 0.06)
+}
+
 /// Background for inline keycaps and chips.
 #[inline]
 pub(super) fn chip_color() -> Color {

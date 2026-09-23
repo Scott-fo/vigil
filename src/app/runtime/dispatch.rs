@@ -163,8 +163,7 @@ impl App {
                 Ok(true)
             }
             crossterm::event::Event::Mouse(mouse_event) => {
-                self.handle_mouse_event(mouse_event).await?;
-                Ok(true)
+                self.handle_mouse_event(mouse_event).await
             }
             crossterm::event::Event::Paste(text) => Ok(self.handle_review_context_paste(&text)),
             crossterm::event::Event::Resize(_, _) => Ok(true),

@@ -2,20 +2,25 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 mod click;
 mod drag;
+mod footer;
+mod hover;
 mod scroll;
 
 use super::App;
 
 impl App {
+    /// Applies a mouse event. Returns whether anything visible changed, so
+    /// pointer motion that stays on the same target does not redraw.
     pub(super) async fn handle_mouse_event(
         &mut self,
         mouse_event: MouseEvent,
-    ) -> color_eyre::Result<()> {
+    ) -> color_eyre::Result<bool> {
         if self.mouse_input_blocked_by_modal() {
-            return Ok(());
+            return Ok(false);
         }
 
         match mouse_event.kind {
+            MouseEventKind::Moved => return self.handle_mouse_moved(mouse_event),
             MouseEventKind::ScrollDown => {
                 self.handle_mouse_scroll(mouse_event, 3)?;
             }
@@ -31,9 +36,9 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) => {
                 self.handle_mouse_left_up();
             }
-            _ => {}
+            _ => return Ok(false),
         }
-        Ok(())
+        Ok(true)
     }
 
     fn mouse_input_blocked_by_modal(&self) -> bool {

@@ -30,13 +30,7 @@ impl App {
                 handled()
             }
             KeyCode::Tab => {
-                self.clear_diff_text_selection();
-                if !self.sidebar_hidden {
-                    self.active_pane = match self.active_pane {
-                        ActivePane::Sidebar => ActivePane::Diff,
-                        ActivePane::Diff => ActivePane::Sidebar,
-                    };
-                }
+                self.switch_active_pane();
                 handled()
             }
             KeyCode::Char('?') => {
@@ -167,7 +161,17 @@ impl App {
         }
     }
 
-    fn toggle_diff_view_mode(&mut self) {
+    pub(in crate::app) fn switch_active_pane(&mut self) {
+        self.clear_diff_text_selection();
+        if !self.sidebar_hidden {
+            self.active_pane = match self.active_pane {
+                ActivePane::Sidebar => ActivePane::Diff,
+                ActivePane::Diff => ActivePane::Sidebar,
+            };
+        }
+    }
+
+    pub(in crate::app) fn toggle_diff_view_mode(&mut self) {
         self.clear_diff_text_selection();
         self.diff_view_mode = match self.diff_view_mode {
             DiffViewMode::Unified => DiffViewMode::Split,
@@ -184,7 +188,7 @@ impl App {
         );
     }
 
-    fn toggle_diff_line_wrap_mode(&mut self) {
+    pub(in crate::app) fn toggle_diff_line_wrap_mode(&mut self) {
         self.clear_diff_text_selection();
         self.diff_line_wrap_mode = self.diff_line_wrap_mode.toggle();
         if let Err(error) = config::persist_diff_line_wrap_mode(self.diff_line_wrap_mode.as_str()) {

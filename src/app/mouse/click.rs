@@ -1,5 +1,6 @@
 use color_eyre::eyre::WrapErr;
 use crossterm::{event::MouseEvent, terminal};
+use ratatui::layout::Position;
 
 use super::super::{ActivePane, App};
 use crate::ui;
@@ -10,6 +11,13 @@ impl App {
         mouse_event: MouseEvent,
     ) -> color_eyre::Result<()> {
         let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
+        self.mouse_position = Some(Position::new(mouse_event.column, mouse_event.row));
+        if let Some(action) =
+            ui::footer_action_at(self, mouse_event.column, mouse_event.row, width, height)
+        {
+            return self.run_footer_action(action).await;
+        }
+
         if self.start_diff_text_selection(mouse_event, width, height) {
             return Ok(());
         }
