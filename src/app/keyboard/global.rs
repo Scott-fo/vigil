@@ -74,11 +74,15 @@ impl App {
                 handled()
             }
             KeyCode::Char('p') => {
-                self.start_pull();
+                self.start_branch_operation(git::BranchOperation::Pull);
                 handled()
             }
             KeyCode::Char('P') => {
-                self.start_push();
+                self.start_branch_operation(git::BranchOperation::Push);
+                handled()
+            }
+            KeyCode::Char('B') => {
+                self.open_branch_panel();
                 handled()
             }
             KeyCode::Char('f') if key_event.modifiers == KeyModifiers::NONE => {

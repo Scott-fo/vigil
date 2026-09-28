@@ -10,7 +10,8 @@ mod style;
 
 use ratatui::{
     Frame,
-    style::Style,
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Clear},
 };
 
@@ -25,7 +26,7 @@ use self::{
     selection::{highlight_line, highlight_line_range},
     sidebar::render_sidebar,
     splash::Splash,
-    status::{render_footer, render_notifications},
+    status::{branch_readout_spans, render_footer, render_notifications},
     style::{
         background_color, chip_color, error_color, hover_color, panel_color, primary_color,
         rule_color, selected_list_item_text_color, selection_color, success_color, surface_color,
@@ -57,13 +58,29 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     );
 
     if app.show_splash() {
+        let branch = app
+            .branch_snapshot()
+            .filter(|_| app.splash_error().is_none() && !app.repo_loading)
+            .map(|snapshot| {
+                let mut spans = branch_readout_spans(snapshot);
+                spans.extend([
+                    Span::raw("   "),
+                    Span::styled(
+                        "B",
+                        Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" branches", Style::new().fg(text_faint_color())),
+                ]);
+                Line::from(spans)
+            });
         frame.render_widget(
             Splash::new(
                 app.splash_error(),
                 app.repo_loading,
                 Style::new().fg(text_color()),
                 Style::new().fg(text_muted_color()),
-            ),
+            )
+            .branch(branch),
             frame.area(),
         );
     } else {

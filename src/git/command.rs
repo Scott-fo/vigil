@@ -5,6 +5,10 @@
 //! `load_files_with_status` or `list_worktrees`; this module exists for the few
 //! places that need raw command output while keeping process setup and error
 //! handling in one place.
+//!
+//! Every command runs with `GIT_TERMINAL_PROMPT=0` and no stdin. Vigil owns
+//! the terminal, so a credential prompt would corrupt the screen and wait
+//! forever; git fails with a message instead.
 
 use std::{path::Path, process::Output};
 
@@ -35,7 +39,7 @@ pub(crate) async fn git_output_bytes(
 }
 
 pub(crate) async fn git_output_raw(repo_root: &Path, args: &[&str]) -> color_eyre::Result<Output> {
-    Command::new("git")
+    git_command()
         .arg("-C")
         .arg(repo_root)
         .args(args)
@@ -52,7 +56,7 @@ pub(crate) async fn git_output_streamed<F>(
 where
     F: FnMut(&[u8]) -> color_eyre::Result<()>,
 {
-    let mut child = Command::new("git")
+    let mut child = git_command()
         .arg("-C")
         .arg(repo_root)
         .args(args)
@@ -117,7 +121,7 @@ pub(crate) async fn git_output_with_stdin(
     stdin: &[u8],
     accepted_codes: &[i32],
 ) -> color_eyre::Result<String> {
-    let mut child = Command::new("git")
+    let mut child = git_command()
         .arg("-C")
         .arg(repo_root)
         .args(args)
@@ -148,6 +152,14 @@ pub(crate) async fn git_output_with_stdin(
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null());
+    command
 }
 
 pub(crate) fn stderr_error(output: &Output) -> color_eyre::Report {

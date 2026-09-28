@@ -40,7 +40,7 @@ async fn global_shortcuts_use_ff_for_file_search_fg_for_diff_search_and_p_for_pu
         .unwrap();
 
     assert!(app.file_search_modal_open);
-    assert!(app.remote_sync.is_none());
+    assert!(app.branch_operation().is_none());
 
     app.file_search_modal_open = false;
     app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
@@ -71,7 +71,7 @@ async fn global_shortcuts_use_ff_for_file_search_fg_for_diff_search_and_p_for_pu
         .unwrap();
 
     assert!(!app.file_search_modal_open);
-    assert_eq!(app.remote_sync, Some(RemoteSyncDirection::Pull));
+    assert_eq!(app.branch_operation(), Some(&git::BranchOperation::Pull));
 
     app.cancel_diff_search_tasks();
     app.abort_background_tasks();

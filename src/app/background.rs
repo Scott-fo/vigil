@@ -4,14 +4,20 @@ use super::{App, SnackbarNotice, SnackbarVariant};
 use crate::{event::Event, git};
 
 impl App {
+    /// Shows a transient notice. Errors stay up longer since they are often
+    /// several lines of git output worth reading.
     pub(super) fn show_snackbar(&mut self, message: String, variant: SnackbarVariant) {
+        let visible_for = match variant {
+            SnackbarVariant::Info => std::time::Duration::from_secs(2),
+            SnackbarVariant::Error => std::time::Duration::from_secs(6),
+        };
         self.snackbar_generation = self.snackbar_generation.saturating_add(1);
         let generation = self.snackbar_generation;
         self.snackbar_notice = Some(SnackbarNotice { message, variant });
 
         let sender = self.events.sender();
         self.track_background_task(task::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(visible_for).await;
             let _ = sender.send(Event::ClearSnackbar(generation));
         }));
     }

@@ -3,23 +3,27 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Padding, Paragraph},
+    widgets::{Block, BorderType, Borders, Padding, Paragraph, Wrap},
 };
 use std::ops::Range;
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{
-    ActivePane, App, DiffStatsState, DiffViewMode, RemoteSyncDirection, ReviewMode, SnackbarVariant,
+use crate::app::{ActivePane, App, DiffStatsState, DiffViewMode, ReviewMode, SnackbarVariant};
+use crate::git::{
+    BranchOperation, BranchSnapshot, DiffLineTotals, Divergence, HeadState, RepoOperation,
+    ReviewDiffStats,
 };
-use crate::git::{DiffLineTotals, ReviewDiffStats};
 use crate::sidebar::SidebarSection;
 
 use super::layout::top_right_rect;
 use super::{
     NOTICE_WIDTH, chip_color, error_color, panel_color, primary_color, success_color,
-    surface_color, text_color, text_faint_color, text_subtle_color,
+    surface_color, text_color, text_faint_color, text_subtle_color, warning_color,
 };
+
+/// Nerd Font branch glyph, matching the file icons in the sidebar.
+pub(super) const BRANCH_ICON: &str = "\u{e0a0}";
 
 /// A clickable control in the footer. Rendering and mouse hit testing both
 /// derive these from the same footer model, so a click lands on what is drawn.
@@ -34,6 +38,7 @@ pub enum FooterAction {
     ToggleStage,
     FindFile,
     SearchDiff,
+    OpenBranches,
 }
 
 /// A run of right-hand footer text, optionally clickable.
@@ -44,8 +49,12 @@ struct FooterSegment {
 
 impl FooterSegment {
     fn plain(text: &'static str) -> Self {
+        Self::spans(vec![Span::raw(text)])
+    }
+
+    fn spans(spans: Vec<Span<'static>>) -> Self {
         Self {
-            spans: vec![Span::raw(text)],
+            spans,
             action: None,
         }
     }
@@ -53,7 +62,7 @@ impl FooterSegment {
 
 /// Footer content for one frame at a given width.
 struct FooterModel {
-    left: Vec<Span<'static>>,
+    left: Vec<FooterSegment>,
     right: Vec<FooterSegment>,
 }
 
@@ -62,18 +71,18 @@ impl FooterModel {
     /// transient status. Right: view mode chips and key hints for the focused
     /// pane. Hints are dropped first when the terminal is narrow.
     fn new(app: &App, width: u16) -> Self {
-        let mut left = vec![Span::raw(" ")];
-        left.extend(review_target_spans(app));
-        left.push(Span::raw("   "));
-        left.extend(change_summary_spans(app));
+        let mut left = vec![FooterSegment::plain(" ")];
+        left.extend(review_target_segments(app));
+        left.push(FooterSegment::plain("   "));
+        left.push(FooterSegment::spans(change_summary_spans(app)));
         if !app.shows_review_summary_status()
             && let Some(message) = app.status_message.as_deref()
         {
-            left.push(Span::styled("   ", Style::new()));
-            left.push(Span::styled(
+            left.push(FooterSegment::plain("   "));
+            left.push(FooterSegment::spans(vec![Span::styled(
                 message.to_string(),
                 Style::new().fg(text_color()),
-            ));
+            )]));
         }
 
         let mut right = vec![
@@ -97,7 +106,7 @@ impl FooterModel {
         }
 
         let budget =
-            (width as usize).saturating_sub(spans_width(&left) + segments_width(&right) + 5);
+            (width as usize).saturating_sub(segments_width(&left) + segments_width(&right) + 5);
         let hints = key_hint_segments(app, budget);
         if !hints.is_empty() {
             right.push(FooterSegment::plain("   "));
@@ -106,18 +115,23 @@ impl FooterModel {
         Self { left, right }
     }
 
-    /// Column range of each clickable right-hand segment. The right group is
-    /// right-aligned with one trailing space of padding.
+    /// Column range of each clickable segment. The left group starts at the
+    /// area's edge; the right group is right-aligned with one trailing space
+    /// of padding.
     fn action_columns(&self, area: Rect) -> Vec<(Range<u16>, FooterAction)> {
-        let total = segments_width(&self.right) + 1;
-        let mut column = area.right().saturating_sub(total as u16);
+        let right_start = area
+            .right()
+            .saturating_sub(segments_width(&self.right) as u16 + 1);
         let mut regions = Vec::new();
-        for segment in &self.right {
-            let width = spans_width(&segment.spans) as u16;
-            if let Some(action) = segment.action {
-                regions.push((column..column + width, action));
+        for (start, segments) in [(area.x, &self.left), (right_start, &self.right)] {
+            let mut column = start;
+            for segment in segments {
+                let width = spans_width(&segment.spans) as u16;
+                if let Some(action) = segment.action {
+                    regions.push((column..column + width, action));
+                }
+                column += width;
             }
-            column += width;
         }
         regions
     }
@@ -148,23 +162,30 @@ pub(super) fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         .mouse_position
         .filter(|position| position.y == area.y)
         .and_then(|position| model.action_at(area, position.x));
-    let right = model
-        .right
-        .into_iter()
-        .flat_map(|segment| {
-            // Hovered controls brighten so they read as clickable.
-            let hovered = hovered.is_some() && segment.action == hovered;
-            segment.spans.into_iter().map(move |span| {
-                if hovered {
-                    let style = span.style.fg(text_color());
-                    span.style(style)
-                } else {
-                    span
-                }
+    // Hovered controls brighten so they read as clickable.
+    let flatten = |segments: Vec<FooterSegment>| -> Vec<Span<'static>> {
+        segments
+            .into_iter()
+            .flat_map(|segment| {
+                let hovered = hovered.is_some() && segment.action == hovered;
+                segment.spans.into_iter().map(move |span| {
+                    if hovered {
+                        let style = span.style.fg(text_color());
+                        span.style(style)
+                    } else {
+                        span
+                    }
+                })
             })
-        })
-        .collect();
-    render_split_line(frame, area, model.left, right, surface_color());
+            .collect()
+    };
+    render_split_line(
+        frame,
+        area,
+        flatten(model.left),
+        flatten(model.right),
+        surface_color(),
+    );
 }
 
 fn render_split_line(
@@ -185,7 +206,9 @@ fn render_split_line(
     }
 }
 
-fn review_target_spans(app: &App) -> Vec<Span<'static>> {
+/// What is under review. In the working tree this is the repository and its
+/// checked-out branch; the branch readout opens the branch panel.
+fn review_target_segments(app: &App) -> Vec<FooterSegment> {
     let subtle = Style::new().fg(text_subtle_color());
     let faint = Style::new().fg(text_faint_color());
     match &app.review_mode {
@@ -195,11 +218,30 @@ fn review_target_spans(app: &App) -> Vec<Span<'static>> {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            let branch = match app.branch_snapshot() {
+                Some(snapshot) => branch_readout_spans(snapshot),
+                None => vec![Span::styled("working tree", faint)],
+            };
             vec![
-                Span::styled(repo_name, subtle),
-                Span::styled(" · working tree", faint),
+                FooterSegment::spans(vec![
+                    Span::styled(repo_name, subtle),
+                    Span::styled(" · ", faint),
+                ]),
+                FooterSegment {
+                    spans: branch,
+                    action: Some(FooterAction::OpenBranches),
+                },
             ]
         }
+        mode => vec![FooterSegment::spans(compare_target_spans(mode))],
+    }
+}
+
+fn compare_target_spans(mode: &ReviewMode) -> Vec<Span<'static>> {
+    let subtle = Style::new().fg(text_subtle_color());
+    let faint = Style::new().fg(text_faint_color());
+    match mode {
+        ReviewMode::WorkingTree => Vec::new(),
         ReviewMode::CommitCompare(selection) => vec![
             Span::styled("commit ", faint),
             Span::styled(selection.short_hash.clone(), subtle),
@@ -406,22 +448,104 @@ fn spans_width(spans: &[Span<'_>]) -> usize {
     spans.iter().map(|span| span.content.width()).sum()
 }
 
+/// `main ↑2 ↓1 · merging`: the checked-out branch, how it differs from its
+/// upstream, and any operation git is in the middle of.
+pub(super) fn branch_readout_spans(snapshot: &BranchSnapshot) -> Vec<Span<'static>> {
+    let subtle = Style::new().fg(text_subtle_color());
+    let faint = Style::new().fg(text_faint_color());
+    let mut spans = vec![Span::styled(format!("{BRANCH_ICON} "), faint)];
+    match &snapshot.head {
+        HeadState::Branch(name) => spans.push(Span::styled(name.clone(), subtle)),
+        HeadState::Unborn(name) => {
+            spans.push(Span::styled(name.clone(), subtle));
+            spans.push(Span::styled(" (no commits)", faint));
+        }
+        HeadState::Detached { short_hash } => {
+            spans.push(Span::styled("detached ", faint));
+            spans.push(Span::styled(short_hash.clone(), subtle));
+        }
+    }
+    if let Some(upstream) = snapshot
+        .head_branch()
+        .and_then(|branch| branch.upstream.as_ref())
+    {
+        spans.extend(divergence_spans(upstream.divergence));
+    }
+    if let Some(operation) = snapshot.operation {
+        spans.push(Span::styled(" · ", faint));
+        spans.push(Span::styled(
+            repo_operation_label(operation),
+            Style::new().fg(warning_color()),
+        ));
+    }
+    spans
+}
+
+/// ` ↑2 ↓1` for commits to push and pull; nothing when in sync.
+pub(super) fn divergence_spans(divergence: Divergence) -> Vec<Span<'static>> {
+    match divergence {
+        Divergence::Tracking { ahead, behind } => {
+            let mut spans = Vec::new();
+            if ahead > 0 {
+                spans.push(Span::styled(
+                    format!(" ↑{ahead}"),
+                    Style::new().fg(primary_color()),
+                ));
+            }
+            if behind > 0 {
+                spans.push(Span::styled(
+                    format!(" ↓{behind}"),
+                    Style::new().fg(warning_color()),
+                ));
+            }
+            spans
+        }
+        Divergence::Gone => vec![Span::styled(
+            " upstream gone",
+            Style::new().fg(text_faint_color()),
+        )],
+    }
+}
+
+pub(super) fn repo_operation_label(operation: RepoOperation) -> &'static str {
+    match operation {
+        RepoOperation::Merge => "merging",
+        RepoOperation::Rebase => "rebasing",
+        RepoOperation::CherryPick => "cherry-picking",
+        RepoOperation::Revert => "reverting",
+        RepoOperation::Bisect => "bisecting",
+    }
+}
+
+/// Present-tense description of a running operation.
+pub(super) fn operation_progress_label(operation: &BranchOperation) -> String {
+    match operation {
+        BranchOperation::Fetch => "Fetching…".to_string(),
+        BranchOperation::Pull => "Pulling…".to_string(),
+        BranchOperation::Push => "Pushing…".to_string(),
+        BranchOperation::Switch { branch } => format!("Switching to {branch}…"),
+        BranchOperation::Track { local_name, .. } => format!("Checking out {local_name}…"),
+        BranchOperation::Create { name, .. } => format!("Creating {name}…"),
+        BranchOperation::Rename { from, .. } => format!("Renaming {from}…"),
+        BranchOperation::Delete { branch, .. } => format!("Deleting {branch}…"),
+    }
+}
+
 pub(super) fn render_notifications(frame: &mut Frame, app: &App) {
     let mut top = frame.area().y + 1;
 
-    if let Some(direction) = app.remote_sync {
-        let label = match direction {
-            RemoteSyncDirection::Pull => "Pulling from remote…",
-            RemoteSyncDirection::Push => "Pushing to remote…",
-        };
-        render_notice(
+    // The branch panel shows its own progress.
+    if let Some(operation) = app.branch_operation()
+        && !app.branch_panel_open()
+    {
+        let height = render_notice(
             frame,
             top,
-            label,
+            &operation_progress_label(operation),
             primary_color(),
             Style::new().fg(text_subtle_color()),
         );
-        top = top.saturating_add(4);
+        top = top.saturating_add(height + 1);
     }
 
     if let Some(notice) = app.snackbar_notice.as_ref() {
@@ -439,14 +563,17 @@ pub(super) fn render_notifications(frame: &mut Frame, app: &App) {
     }
 }
 
+/// Draws a notice in the top-right corner and returns its height. Long
+/// messages, such as git errors, widen the notice and then wrap.
 fn render_notice(
     frame: &mut Frame,
     top: u16,
     message: &str,
     accent: ratatui::style::Color,
     text_style: Style,
-) {
-    let area = top_right_rect(NOTICE_WIDTH, 3, top, frame.area());
+) -> u16 {
+    let (width, height) = notice_size(message);
+    let area = top_right_rect(width, height, top, frame.area());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -455,11 +582,35 @@ fn render_notice(
         .style(Style::new().bg(panel_color()));
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(
-        Paragraph::new(Text::from(Line::from(Span::styled(
-            message.to_string(),
-            text_style,
-        ))))
+        Paragraph::new(Text::from(
+            message
+                .lines()
+                .map(|line| Line::from(Span::styled(line.to_string(), text_style)))
+                .collect::<Vec<_>>(),
+        ))
+        .wrap(Wrap { trim: true })
         .block(block),
         area,
     );
+    area.height
+}
+
+const NOTICE_MAX_WIDTH: u16 = 64;
+const NOTICE_MAX_TEXT_ROWS: u16 = 8;
+
+/// Outer size of a notice: border and padding take four columns and two rows.
+fn notice_size(message: &str) -> (u16, u16) {
+    let longest = message
+        .lines()
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or(0) as u16;
+    let width = (longest + 4).clamp(NOTICE_WIDTH, NOTICE_MAX_WIDTH);
+    let text_width = (width - 4).max(1) as usize;
+    let rows = message
+        .lines()
+        .map(|line| line.width().max(1).div_ceil(text_width) as u16)
+        .sum::<u16>()
+        .clamp(1, NOTICE_MAX_TEXT_ROWS);
+    (width, rows + 2)
 }

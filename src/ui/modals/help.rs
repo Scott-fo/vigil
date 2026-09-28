@@ -91,10 +91,11 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
         ("g", "open commit search"),
         ("b", "open branch compare"),
         ("m", "merge compared branches"),
+        ("B", "branches: switch, create, sync"),
         ("w", "open worktree picker"),
         ("t", "open theme picker"),
         ("Ctrl-L", "reset compare mode"),
-        ("p / P", "pull / push"),
+        ("p / P", "pull / push current branch"),
         ("q", "quit"),
     ];
     if app.can_initialize_git_repo() {

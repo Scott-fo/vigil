@@ -1,6 +1,7 @@
 mod blame;
 mod branch_compare;
 mod branch_merge;
+mod branches;
 mod commit;
 mod commit_search;
 mod diff_search;
@@ -25,6 +26,7 @@ use self::{
     blame::render_blame_modal,
     branch_compare::render_branch_compare_modal,
     branch_merge::render_branch_merge_modal,
+    branches::render_branch_panel,
     commit::render_commit_modal,
     commit_search::render_commit_search_modal,
     diff_search::render_diff_search_modal,
@@ -81,6 +83,10 @@ pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
 
     if app.worktree_modal_open {
         render_worktree_modal(frame, app);
+    }
+
+    if app.branch_panel_open() {
+        render_branch_panel(frame, app);
     }
 
     if app.blame_modal_open {
