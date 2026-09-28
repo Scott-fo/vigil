@@ -4,7 +4,6 @@ use crate::{event::Event, git};
 
 use super::{App, ReviewMode};
 
-mod remote;
 mod selection;
 mod status;
 mod watcher;
@@ -141,6 +140,7 @@ impl App {
         self.status_message = Some(self.current_status_message());
         self.queue_review_restore_for_current_snapshot();
         self.queue_viewed_files_load();
+        self.queue_branch_status_load();
     }
 
     /// Drops every diff-derived cache and reloads the review for the current

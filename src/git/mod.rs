@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+mod branch;
 mod changed_files;
 mod command;
 mod commit;
@@ -14,6 +15,11 @@ mod status;
 mod types;
 mod worktree;
 
+pub use branch::{
+    BranchEntry, BranchLocation, BranchOperation, BranchOperationError, BranchOperationOutcome,
+    BranchSnapshot, BranchTip, Divergence, HeadState, RepoOperation, Upstream,
+    load_branch_snapshot, run_branch_operation,
+};
 pub use command::git_output;
 pub use commit::{
     commit_staged_changes, list_searchable_commits, load_blame_commit_details,
@@ -80,8 +86,8 @@ pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_high
 pub use merge::prepare_branch_merge;
 pub use refs::{list_comparable_refs, load_branch_compare_refs, load_files_with_branch_diff};
 pub use repo::{
-    init_repo, load_revision_file_bytes, pull_from_remote, push_to_remote, resolve_repo_root,
-    resolve_repo_root_from, revision_matches_head,
+    init_repo, load_revision_file_bytes, resolve_repo_root, resolve_repo_root_from,
+    revision_matches_head,
 };
 pub use status::{
     StageState, WorkingTreeStatus, discard_file_changes, is_file_fully_staged, is_file_staged,

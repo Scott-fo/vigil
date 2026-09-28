@@ -147,8 +147,13 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
-            Event::RemoteSyncFinished(result) => {
-                self.handle_remote_sync_finished(result);
+            Event::BranchStatusLoaded { request_id, result } => {
+                if self.handle_branch_status_loaded(request_id, result) {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
+            Event::BranchOperationFinished(result) => {
+                self.handle_branch_operation_finished(result).await?;
                 self.redraw_if_running(terminal)?;
             }
             Event::ClearSnackbar(generation) => {

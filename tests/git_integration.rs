@@ -869,3 +869,268 @@ async fn refresh_path_filtering_respects_gitignore_and_special_cases() -> Result
 
     Ok(())
 }
+
+impl TestRepo {
+    /// A bare repository to act as `origin`, and a second clone of it that
+    /// plays a teammate pushing their own work.
+    fn with_origin(&self) -> (TestRepo, TestRepo) {
+        let remote_id = NEXT_REPO_ID.fetch_add(1, Ordering::Relaxed);
+        let origin = TestRepo {
+            root: self.root.with_file_name(format!(
+                "vigil-git-origin-{}-{remote_id}.git",
+                std::process::id()
+            )),
+        };
+        let _ = fs::remove_dir_all(&origin.root);
+        fs::create_dir_all(&origin.root).expect("create bare origin");
+        origin.git(&["init", "--bare", "--initial-branch=main"]);
+        self.git(&["remote", "add", "origin", origin.root.to_str().unwrap()]);
+
+        let teammate = TestRepo {
+            root: origin.root.with_extension("teammate"),
+        };
+        let _ = fs::remove_dir_all(&teammate.root);
+        (origin, teammate)
+    }
+
+    fn clone_from(&self, origin: &TestRepo) {
+        let output = Command::new("git")
+            .args(["clone", "--quiet"])
+            .arg(&origin.root)
+            .arg(&self.root)
+            .output()
+            .expect("run git clone");
+        assert!(output.status.success(), "git clone failed: {output:?}");
+        self.git(&["config", "user.name", "Teammate"]);
+        self.git(&["config", "user.email", "teammate@example.com"]);
+        self.git(&["config", "commit.gpgsign", "false"]);
+    }
+}
+
+async fn run_branch_op(
+    repo: &TestRepo,
+    operation: git::BranchOperation,
+) -> std::result::Result<git::BranchOperationOutcome, git::BranchOperationError> {
+    git::run_branch_operation(&repo.root, &operation).await
+}
+
+fn head_divergence(snapshot: &git::BranchSnapshot) -> Option<git::Divergence> {
+    snapshot
+        .head_branch()
+        .and_then(|branch| branch.upstream.as_ref())
+        .map(|upstream| upstream.divergence)
+}
+
+#[tokio::test]
+async fn branch_operations_publish_sync_and_manage_branches() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("README.md", "hello\n");
+    repo.commit_all("Initial commit", "2024-01-01T00:00:00Z");
+    repo.rename_branch("main");
+    let (origin, teammate) = repo.with_origin();
+
+    // A branch without an upstream is published to origin and tracks it.
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert_eq!(snapshot.head, git::HeadState::Branch("main".to_string()));
+    assert_eq!(snapshot.last_fetch, None);
+    assert_eq!(head_divergence(&snapshot), None);
+    assert_eq!(
+        run_branch_op(&repo, git::BranchOperation::Push).await,
+        Ok(git::BranchOperationOutcome::Pushed {
+            upstream: "origin/main".to_string(),
+            upstream_created: true,
+        })
+    );
+
+    repo.append("README.md", "local\n");
+    repo.commit_all("Local work", "2024-01-02T00:00:00Z");
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert_eq!(
+        head_divergence(&snapshot),
+        Some(git::Divergence::Tracking {
+            ahead: 1,
+            behind: 0
+        })
+    );
+    run_branch_op(&repo, git::BranchOperation::Push).await?;
+
+    // A teammate pushes to main and publishes a review branch.
+    teammate.clone_from(&origin);
+    teammate.write("NOTES.md", "from teammate\n");
+    teammate.commit_all("Teammate notes", "2024-01-03T00:00:00Z");
+    teammate.git(&["push", "--quiet", "origin", "main"]);
+    teammate.checkout_new_branch("review");
+    teammate.write("REVIEW.md", "please review\n");
+    teammate.commit_all("Review me", "2024-01-04T00:00:00Z");
+    teammate.git(&["push", "--quiet", "origin", "review"]);
+
+    assert_eq!(
+        run_branch_op(&repo, git::BranchOperation::Fetch).await,
+        Ok(git::BranchOperationOutcome::Fetched)
+    );
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert!(snapshot.last_fetch.is_some());
+    assert_eq!(
+        head_divergence(&snapshot),
+        Some(git::Divergence::Tracking {
+            ahead: 0,
+            behind: 1
+        })
+    );
+    let review = snapshot
+        .branches
+        .iter()
+        .find(|branch| branch.name == "origin/review")
+        .expect("fetched remote branch is listed");
+    assert!(review.is_remote());
+    assert_eq!(review.local_name(), "review");
+    assert_eq!(review.tip.subject, "Review me");
+
+    let pulled = run_branch_op(&repo, git::BranchOperation::Pull).await;
+    assert!(matches!(
+        pulled,
+        Ok(git::BranchOperationOutcome::Pulled {
+            up_to_date: false,
+            ..
+        })
+    ));
+    assert_eq!(repo.read("NOTES.md"), "from teammate\n");
+    assert!(matches!(
+        run_branch_op(&repo, git::BranchOperation::Pull).await,
+        Ok(git::BranchOperationOutcome::Pulled {
+            up_to_date: true,
+            ..
+        })
+    ));
+
+    // Checking out a remote-only branch creates a tracking local branch.
+    assert_eq!(
+        run_branch_op(
+            &repo,
+            git::BranchOperation::Track {
+                remote_branch: "origin/review".to_string(),
+                local_name: "review".to_string(),
+            }
+        )
+        .await,
+        Ok(git::BranchOperationOutcome::Switched {
+            branch: "review".to_string()
+        })
+    );
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert_eq!(snapshot.previous_branch.as_deref(), Some("main"));
+    assert_eq!(
+        snapshot
+            .head_branch()
+            .and_then(|branch| branch.upstream.as_ref())
+            .map(|upstream| upstream.name.as_str()),
+        Some("origin/review")
+    );
+
+    // New branches never track their start point.
+    run_branch_op(
+        &repo,
+        git::BranchOperation::Create {
+            name: "spike".to_string(),
+            start_point: "origin/main".to_string(),
+        },
+    )
+    .await
+    .expect("create spike");
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert_eq!(snapshot.head, git::HeadState::Branch("spike".to_string()));
+    assert_eq!(snapshot.head_branch().unwrap().upstream, None);
+    assert_eq!(
+        run_branch_op(
+            &repo,
+            git::BranchOperation::Create {
+                name: "bad name?".to_string(),
+                start_point: "main".to_string(),
+            }
+        )
+        .await,
+        Err(git::BranchOperationError::InvalidName {
+            name: "bad name?".to_string()
+        })
+    );
+
+    repo.write("SPIKE.md", "unmerged\n");
+    repo.commit_all("Spike", "2024-01-05T00:00:00Z");
+    run_branch_op(
+        &repo,
+        git::BranchOperation::Rename {
+            from: "spike".to_string(),
+            to: "experiment".to_string(),
+        },
+    )
+    .await
+    .expect("rename spike");
+    run_branch_op(
+        &repo,
+        git::BranchOperation::Switch {
+            branch: "main".to_string(),
+        },
+    )
+    .await
+    .expect("switch to main");
+
+    // Unmerged work is protected until the delete is forced.
+    let delete = |force| git::BranchOperation::Delete {
+        branch: "experiment".to_string(),
+        force,
+    };
+    assert_eq!(
+        run_branch_op(&repo, delete(false)).await,
+        Err(git::BranchOperationError::NotFullyMerged {
+            branch: "experiment".to_string()
+        })
+    );
+    assert_eq!(
+        run_branch_op(&repo, delete(true)).await,
+        Ok(git::BranchOperationOutcome::Deleted {
+            branch: "experiment".to_string()
+        })
+    );
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert!(snapshot.local_branch("experiment").is_none());
+    assert!(snapshot.local_branch("review").is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn branch_snapshot_reports_unborn_detached_and_merge_states() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert_eq!(snapshot.head, git::HeadState::Unborn("main".to_string()));
+    assert!(snapshot.branches.is_empty());
+    assert_eq!(
+        run_branch_op(&repo, git::BranchOperation::Fetch).await,
+        Err(git::BranchOperationError::NoRemote)
+    );
+
+    repo.write("app.txt", "base\n");
+    repo.commit_all("Base", "2024-01-01T00:00:00Z");
+    repo.checkout_new_branch("topic");
+    repo.write("app.txt", "topic\n");
+    repo.commit_all("Topic", "2024-01-02T00:00:00Z");
+    repo.checkout("main");
+    repo.write("app.txt", "main\n");
+    repo.commit_all("Main", "2024-01-03T00:00:00Z");
+
+    let merge = repo.try_git(&["merge", "topic"]);
+    assert!(!merge.status.success(), "merge should conflict");
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert_eq!(snapshot.operation, Some(git::RepoOperation::Merge));
+    repo.git(&["merge", "--abort"]);
+
+    repo.git(&["checkout", "--quiet", "--detach", "HEAD"]);
+    let snapshot = git::load_branch_snapshot(&repo.root).await?;
+    assert!(matches!(snapshot.head, git::HeadState::Detached { .. }));
+    assert_eq!(snapshot.operation, None);
+    assert_eq!(
+        run_branch_op(&repo, git::BranchOperation::Push).await,
+        Err(git::BranchOperationError::DetachedHead)
+    );
+    Ok(())
+}

@@ -22,6 +22,7 @@ pub struct Splash<'a> {
     loading: bool,
     text_style: Style,
     text_muted_style: Style,
+    branch: Option<Line<'a>>,
 }
 
 impl<'a> Splash<'a> {
@@ -36,7 +37,15 @@ impl<'a> Splash<'a> {
             loading,
             text_style,
             text_muted_style,
+            branch: None,
         }
+    }
+
+    /// A line under the subtitle naming the checked-out branch, so a clean
+    /// working tree still shows where you are.
+    pub fn branch(mut self, branch: Option<Line<'a>>) -> Self {
+        self.branch = branch;
+        self
     }
 
     fn subtitle(&self) -> Cow<'a, str> {
@@ -57,6 +66,7 @@ impl<'a> Splash<'a> {
 
 impl Widget for Splash<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let show_init_hint = self.show_init_hint();
         let mut lines = VIGIL_LOGO
             .iter()
             .map(|line| {
@@ -73,7 +83,11 @@ impl Widget for Splash<'_> {
             self.text_muted_style,
         )));
 
-        if self.show_init_hint() {
+        if let Some(branch) = self.branch {
+            lines.push(branch);
+        }
+
+        if show_init_hint {
             lines.push(Line::from(Span::styled(
                 "Press i to git init.",
                 self.text_muted_style,

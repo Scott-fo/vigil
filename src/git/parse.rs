@@ -5,12 +5,14 @@
 //! parser file handles commits, statuses, refs, worktrees, or filetype
 //! inference.
 
+mod branch;
 mod commit;
 mod filetype;
 mod refs;
 mod status;
 mod worktree;
 
+pub(crate) use self::branch::{BRANCH_REF_FORMAT, parse_branch_refs};
 pub(crate) use self::commit::{
     is_uncommitted_blame_hash, parse_blame_porcelain_header, parse_commit_log_entries,
     parse_commit_show_output,

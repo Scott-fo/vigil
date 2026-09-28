@@ -1,22 +1,14 @@
 //! Repository-level git operations.
 //!
-//! This module owns repository initialization, remotes, root resolution, and
-//! raw revision file reads. Product-specific queries live in sibling modules
-//! such as `commit`, `refs`, `status`, and `worktree`.
+//! This module owns repository initialization, root resolution, and raw
+//! revision file reads. Product-specific queries live in sibling modules such
+//! as `branch`, `commit`, `refs`, `status`, and `worktree`.
 
 use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::WrapErr;
 
 use super::command::{git_output, git_output_bytes, git_success};
-
-pub async fn push_to_remote(repo_root: &Path) -> color_eyre::Result<()> {
-    git_success(repo_root, &["push"]).await
-}
-
-pub async fn pull_from_remote(repo_root: &Path) -> color_eyre::Result<()> {
-    git_success(repo_root, &["pull"]).await
-}
 
 pub async fn init_repo(repo_root: &Path) -> color_eyre::Result<()> {
     git_success(repo_root, &["init"]).await

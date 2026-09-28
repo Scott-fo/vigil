@@ -191,3 +191,105 @@ fn hovered_sidebar_row_is_tinted_and_selection_still_wins() {
     );
     assert_ne!(buffer[(10, hover_row)].bg, hover_color());
 }
+
+fn branch_snapshot() -> crate::git::BranchSnapshot {
+    use crate::git::{
+        BranchEntry, BranchLocation, BranchSnapshot, BranchTip, Divergence, HeadState, Upstream,
+    };
+
+    let branch = |name: &str, location: BranchLocation, upstream: Option<Upstream>| BranchEntry {
+        name: name.to_string(),
+        location,
+        is_head: name == "main",
+        upstream,
+        tip: BranchTip {
+            short_hash: "abc1234".to_string(),
+            subject: format!("Latest work on {name}"),
+            committed_at: 1_700_000_000,
+        },
+    };
+    BranchSnapshot {
+        head: HeadState::Branch("main".to_string()),
+        branches: vec![
+            branch(
+                "main",
+                BranchLocation::Local,
+                Some(Upstream {
+                    name: "origin/main".to_string(),
+                    divergence: Divergence::Tracking {
+                        ahead: 2,
+                        behind: 1,
+                    },
+                }),
+            ),
+            branch("feature/login", BranchLocation::Local, None),
+            branch(
+                "origin/review",
+                BranchLocation::Remote {
+                    remote: "origin".to_string(),
+                },
+                None,
+            ),
+        ],
+        previous_branch: Some("feature/login".to_string()),
+        remotes: vec!["origin".to_string()],
+        last_fetch: None,
+        operation: None,
+    }
+}
+
+fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
+    (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn footer_branch_readout_opens_the_branch_panel() {
+    let mut app = build_test_app();
+    app.set_branch_snapshot(branch_snapshot());
+    let (width, height) = (160, 20);
+    let buffer = render_to_buffer(&mut app, width, height);
+    let footer_row = height - 1;
+
+    let start = column_of(&buffer, footer_row, "main ↑2 ↓1")
+        .expect("footer should show the branch and its divergence");
+    assert_eq!(
+        footer_action_at(&app, start, footer_row, width, height),
+        Some(FooterAction::OpenBranches)
+    );
+    assert_eq!(footer_action_at(&app, 1, footer_row, width, height), None);
+}
+
+#[tokio::test]
+async fn branch_panel_shows_sync_state_sections_and_selection() {
+    let mut app = build_test_app();
+    app.set_branch_snapshot(branch_snapshot());
+    // Opening queues a reload that never lands in tests.
+    app.open_branch_panel();
+
+    let text = buffer_text(&render_to_buffer(&mut app, 140, 36));
+    if std::env::var_os("VIGIL_PRINT_UI").is_some() {
+        println!("{text}");
+    }
+
+    assert!(text.contains("Branches"));
+    assert!(text.contains("main  →  origin/main ↑2 ↓1"));
+    assert!(text.contains("Diverged from origin/main: 2 commits to push, 1 to pull."));
+    assert!(text.contains("LOCAL"));
+    assert!(text.contains("REMOTE"));
+    assert!(text.contains("never fetched"));
+    let selected_line = text
+        .lines()
+        .find(|line| line.contains("▎"))
+        .expect("a branch is selected");
+    assert!(
+        selected_line.contains("feature/login"),
+        "previous branch starts selected: {selected_line}"
+    );
+}

@@ -17,6 +17,7 @@ impl App {
             FooterAction::ToggleStage => self.toggle_selected_file_stage().await?,
             FooterAction::FindFile => self.open_file_search_modal().await?,
             FooterAction::SearchDiff => self.open_diff_search_modal(),
+            FooterAction::OpenBranches => self.open_branch_panel(),
         }
         Ok(())
     }

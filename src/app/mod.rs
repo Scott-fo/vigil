@@ -13,6 +13,7 @@ mod background;
 mod blame_modal;
 mod branch_compare;
 mod branch_merge;
+mod branches;
 mod clipboard;
 mod commit_modal;
 mod commit_search;
@@ -38,6 +39,10 @@ mod viewed;
 mod working_tree_actions;
 mod worktree;
 
+use self::branches::BranchStatus;
+pub use self::branches::{
+    BranchPanel, BranchPanelMode, BranchPanelRow, BranchPanelView, BranchSection,
+};
 pub use self::diff::{DiffCacheKey, DiffStatsState, PreparedDiffViewport};
 use self::diff::{
     DiffHighlightJob, DiffPrefetchDirection, DiffViewCache, DiffViewport, PendingChangeLanding,
@@ -127,12 +132,6 @@ pub enum ReviewMode {
     WorkingTree,
     CommitCompare(CommitCompareSelection),
     BranchCompare(BranchCompareSelection),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RemoteSyncDirection {
-    Pull,
-    Push,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,7 +294,9 @@ pub struct App {
     pub commit_message: String,
     pub commit_error: Option<String>,
     pub discard_target: Option<FileEntry>,
-    pub remote_sync: Option<RemoteSyncDirection>,
+    branch_status: BranchStatus,
+    branch_panel: Option<BranchPanel>,
+    branch_operation: Option<git::BranchOperation>,
     pub review_loading: bool,
     pub review_error: Option<String>,
     pub review_report: Option<ReviewReport>,

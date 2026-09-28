@@ -12,7 +12,7 @@ impl App {
         self.abort_background_tasks();
         self.repo_watcher = None;
         self.repo_watcher_loading = false;
-        self.remote_sync = None;
+        self.branch_operation = None;
         self.events.suspend();
         self.running = false;
     }

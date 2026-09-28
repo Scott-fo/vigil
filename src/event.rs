@@ -5,10 +5,10 @@ use crossterm::event::Event as CrosstermEvent;
 use crate::{
     app::DiffCacheKey,
     git::{
-        BlameCommitDetails, BranchCompareRefs, BranchMergeOutcome, CommitSearchEntry,
-        DiffSearchIndex, DiffSearchResults, DiffView, ReviewDiffSnapshot, ReviewDiffStats,
-        ReviewDiffStreamedFile, ReviewDiffTextIndex, SharedHighlightRegistry, WorkingTreeStatus,
-        WorktreeEntry,
+        BlameCommitDetails, BranchCompareRefs, BranchMergeOutcome, BranchOperationError,
+        BranchOperationOutcome, BranchSnapshot, CommitSearchEntry, DiffSearchIndex,
+        DiffSearchResults, DiffView, ReviewDiffSnapshot, ReviewDiffStats, ReviewDiffStreamedFile,
+        ReviewDiffTextIndex, SharedHighlightRegistry, WorkingTreeStatus, WorktreeEntry,
     },
     review::{PersistedReview, ViewedFiles},
     watcher::RepoWatcher,
@@ -97,6 +97,10 @@ pub enum Event {
     ViewedFileSaved(Result<(), String>),
     RepoWatcherReady(PathBuf, Result<RepoWatcher, String>),
     RepoChanged(Vec<PathBuf>),
-    RemoteSyncFinished(Result<String, String>),
+    BranchStatusLoaded {
+        request_id: u64,
+        result: Result<BranchSnapshot, String>,
+    },
+    BranchOperationFinished(Result<BranchOperationOutcome, BranchOperationError>),
     ClearSnackbar(u64),
 }
