@@ -41,7 +41,7 @@ impl App {
             .unwrap_or_else(|| self.default_status_message())
     }
 
-    pub fn shows_review_summary_status(&self) -> bool {
+    pub fn status_message_is_default(&self) -> bool {
         match self.status_message.as_deref() {
             None => true,
             Some(message) => message == self.default_status_message(),

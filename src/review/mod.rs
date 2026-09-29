@@ -1,29 +1,24 @@
-//! Code review sessions, reports, and persisted findings.
+//! Review progress that outlives a session.
 //!
-//! This module owns Vigil's review contract with external agents. Callers build
-//! a repository snapshot, send it to a provider such as the Codex app server,
-//! then persist the structured summary and file comments returned by that
-//! provider. Reviews are tied to a snapshot id so UI code can tell fresh
-//! comments from stale comments after the working tree or compared refs move.
+//! This module owns what Vigil remembers about a review between runs. A review
+//! target is named by a [`ReviewScope`] (the working tree, a commit, or a
+//! branch comparison) and persisted in a local SQLite database through
+//! [`ReviewStore`].
 //!
-//! The module also owns per-file "viewed" marks ([`ViewedFiles`]), which are
-//! tied to each file's diff fingerprint and clear when that diff changes.
+//! Today that state is per-file "viewed" marks ([`ViewedFiles`]), which are
+//! tied to each file's diff fingerprint and clear on their own when that diff
+//! changes. Start with [`ViewedScope::new`] to key marks for a target, then
+//! load and save them with [`ReviewStore::load_viewed_files`] and
+//! [`ReviewStore::set_file_viewed`].
+//!
+//! Every [`ReviewStore`] call is blocking SQLite I/O; interactive callers
+//! should run them off the UI thread. Callers should not rely on the database
+//! layout or the encoding of [`ViewedScope`] keys.
 
-mod annotations;
-mod codex;
-mod report;
-mod snapshot;
+mod scope;
 mod store;
-mod target;
 mod viewed;
 
-pub use self::annotations::{ReviewDisplayComment, comments_for_display_line};
-pub use self::codex::{CodexAppReviewProvider, ProviderReview, ReviewProvider};
-pub use self::report::{
-    ReviewFinding, ReviewFindingState, ReviewReport, ReviewSeverity, ReviewSide, ReviewSummary,
-    ReviewVerdict, parse_review_report, review_report_json_schema,
-};
-pub use self::snapshot::{BuildReviewSnapshotOptions, build_review_snapshot};
-pub use self::store::{PersistedReview, ReviewStore, default_database_path};
-pub use self::target::{ReviewScope, ReviewSnapshot, ReviewTarget};
+pub use self::scope::ReviewScope;
+pub use self::store::ReviewStore;
 pub use self::viewed::{ViewedFiles, ViewedScope};

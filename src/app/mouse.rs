@@ -47,7 +47,6 @@ impl App {
             || self.discard_target.is_some()
             || self.diff_stats_modal_open
             || self.help_modal_open
-            || self.review_summary_modal_open
             || self.theme_modal_open
             || self.commit_search_modal_open
             || self.branch_compare_modal_open

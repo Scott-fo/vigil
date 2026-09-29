@@ -17,6 +17,8 @@ use crate::git::DiffFingerprint;
 
 /// Identifies what is being reviewed: a repository plus the working tree, a
 /// commit, or a branch comparison.
+///
+/// The key encoding is persisted; changing it orphans existing marks.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ViewedScope(String);
 
@@ -25,13 +27,12 @@ impl ViewedScope {
         let root = repo_root.display();
         Self(match scope {
             ReviewScope::WorkingTree => format!("{root}\0working-tree"),
-            ReviewScope::CommitCompare { commit_hash, .. } => {
+            ReviewScope::CommitCompare { commit_hash } => {
                 format!("{root}\0commit\0{commit_hash}")
             }
             ReviewScope::BranchCompare {
                 source_ref,
                 destination_ref,
-                ..
             } => format!("{root}\0branch\0{source_ref}\0{destination_ref}"),
         })
     }
@@ -153,10 +154,7 @@ mod tests {
             root,
             &ReviewScope::BranchCompare {
                 source_ref: "main".to_string(),
-                source_sha: None,
                 destination_ref: "feature".to_string(),
-                destination_sha: None,
-                merge_base: None,
             },
         );
 

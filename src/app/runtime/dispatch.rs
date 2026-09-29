@@ -117,16 +117,6 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
-            Event::ReviewFinished { request_id, result } => {
-                if self.handle_review_finished(request_id, result) {
-                    self.redraw_if_running(terminal)?;
-                }
-            }
-            Event::ReviewLoaded { request_id, result } => {
-                if self.handle_review_loaded(request_id, result) {
-                    self.redraw_if_running(terminal)?;
-                }
-            }
             Event::ViewedFilesLoaded { request_id, result } => {
                 if self.handle_viewed_files_loaded(request_id, result) {
                     self.redraw_if_running(terminal)?;
@@ -180,7 +170,6 @@ impl App {
             crossterm::event::Event::Mouse(mouse_event) => {
                 self.handle_mouse_event(mouse_event).await
             }
-            crossterm::event::Event::Paste(text) => Ok(self.handle_review_context_paste(&text)),
             crossterm::event::Event::Resize(_, _) => Ok(true),
             _ => Ok(false),
         }

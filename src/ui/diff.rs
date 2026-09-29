@@ -6,18 +6,15 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{ActivePane, App},
     git,
-    review::{ReviewDisplayComment, ReviewSeverity},
 };
 
 use super::{
-    error_color, highlight_line, highlight_line_range, layout::DiffLayout,
-    status::line_change_spans, surface_color, text_color, text_faint_color, text_subtle_color,
-    warning_color,
+    highlight_line, highlight_line_range, layout::DiffLayout, status::line_change_spans,
+    surface_color, text_color, text_faint_color, text_subtle_color,
 };
 
 /// Thin scrollbar: a faint thumb on an invisible track.
@@ -135,7 +132,7 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let diff_focused = app.active_pane == ActivePane::Diff;
     let mode = app.diff_view_mode;
     let line_wrap = app.diff_line_wrap_mode;
-    if app.diff_text_selection.is_none() && app.review_report.is_none() {
+    if app.diff_text_selection.is_none() {
         render_diff_body_windowed(frame, app, area, mode, diff_focused);
         return;
     }
@@ -313,138 +310,9 @@ fn augmented_diff_lines(
         }
 
         lines.push(rendered_line);
-        let comments = app.review_comments_for_display_index(display_index, width);
-        lines.extend(
-            comments
-                .iter()
-                .flat_map(|comment| render_review_comment(comment, width)),
-        );
     }
 
     lines
-}
-
-fn render_review_comment(comment: &ReviewDisplayComment, width: usize) -> Vec<Line<'static>> {
-    let style = match comment.severity {
-        ReviewSeverity::Critical | ReviewSeverity::High => Style::new().fg(error_color()),
-        ReviewSeverity::Medium => Style::new().fg(warning_color()),
-        ReviewSeverity::Low | ReviewSeverity::Info => Style::new().fg(text_subtle_color()),
-    };
-    let heading_prefix = "  ╭─ ";
-    let body_prefix = "  │  ";
-    let end_prefix = "  ╰─";
-    let text_width = width
-        .saturating_sub(UnicodeWidthStr::width(body_prefix))
-        .saturating_sub(2)
-        .max(16);
-    let mut lines = Vec::new();
-
-    let heading = format!("{} · {}", severity_label(comment.severity), comment.title);
-    for (index, segment) in wrap_text(&heading, text_width).into_iter().enumerate() {
-        if index == 0 {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    heading_prefix.to_string(),
-                    Style::new().fg(text_subtle_color()),
-                ),
-                Span::styled(segment, style.add_modifier(Modifier::BOLD)),
-            ]));
-        } else {
-            lines.push(comment_line(body_prefix, segment, style));
-        }
-    }
-
-    for segment in wrap_text(&comment.body, text_width) {
-        lines.push(comment_line(
-            body_prefix,
-            segment,
-            Style::new().fg(text_subtle_color()),
-        ));
-    }
-    lines.push(Line::from(Span::styled(
-        end_prefix.to_string(),
-        Style::new().fg(text_subtle_color()),
-    )));
-
-    lines
-}
-
-fn comment_line(prefix: &str, text: String, style: Style) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(prefix.to_string(), Style::new().fg(text_subtle_color())),
-        Span::styled(text, style),
-    ])
-}
-
-fn severity_label(severity: ReviewSeverity) -> &'static str {
-    match severity {
-        ReviewSeverity::Critical => "critical",
-        ReviewSeverity::High => "high",
-        ReviewSeverity::Medium => "medium",
-        ReviewSeverity::Low => "low",
-        ReviewSeverity::Info => "info",
-    }
-}
-
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0;
-
-    for word in text.split_whitespace() {
-        let word_width = UnicodeWidthStr::width(word);
-        if word_width > width {
-            if !current.is_empty() {
-                lines.push(std::mem::take(&mut current));
-                current_width = 0;
-            }
-            push_wrapped_word(word, width, &mut lines);
-            continue;
-        }
-
-        if current.is_empty() {
-            current.push_str(word);
-            current_width = word_width;
-        } else if current_width + 1 + word_width <= width {
-            current.push(' ');
-            current.push_str(word);
-            current_width += 1 + word_width;
-        } else {
-            lines.push(std::mem::take(&mut current));
-            current.push_str(word);
-            current_width = word_width;
-        }
-    }
-
-    if !current.is_empty() {
-        lines.push(current);
-    }
-
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-
-    lines
-}
-
-fn push_wrapped_word(word: &str, width: usize, lines: &mut Vec<String>) {
-    let mut current = String::new();
-    let mut current_width = 0;
-
-    for ch in word.chars() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if current_width > 0 && current_width + ch_width > width {
-            lines.push(std::mem::take(&mut current));
-            current_width = 0;
-        }
-        current.push(ch);
-        current_width += ch_width;
-    }
-
-    if !current.is_empty() {
-        lines.push(current);
-    }
 }
 
 #[cfg(test)]

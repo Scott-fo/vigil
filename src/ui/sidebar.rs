@@ -61,10 +61,6 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, layout: SidebarLa
             width: row_width,
             selection,
             hovered: hovered_row == Some(index),
-            review_comment_count: item
-                .file()
-                .map(|file| app.review_comment_count_for_file(&file.path))
-                .unwrap_or_default(),
             viewed: item
                 .file()
                 .is_some_and(|file| app.is_file_viewed(&file.path)),

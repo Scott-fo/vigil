@@ -122,7 +122,6 @@ impl App {
         previously_selected: Option<String>,
         files: Vec<git::FileEntry>,
     ) {
-        self.invalidate_review_snapshot();
         self.clear_review_diff_snapshot();
         self.clear_review_diff_stats();
         self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
@@ -138,7 +137,6 @@ impl App {
         self.queue_diff_search_index_load();
         self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
-        self.queue_review_restore_for_current_snapshot();
         self.queue_viewed_files_load();
         self.queue_branch_status_load();
     }
@@ -146,7 +144,6 @@ impl App {
     /// Drops every diff-derived cache and reloads the review for the current
     /// file list. Used when a setting that changes diff content changes.
     pub(in crate::app) fn reload_review_diffs(&mut self, previously_selected: Option<&str>) {
-        self.invalidate_review_snapshot();
         self.clear_review_diff_snapshot();
         self.clear_review_diff_stats();
         self.diff_cache_generation = self.diff_cache_generation.saturating_add(1);
@@ -159,7 +156,6 @@ impl App {
         self.queue_diff_search_index_load();
         self.queue_selected_diff_load(true, true);
         self.status_message = Some(self.current_status_message());
-        self.queue_review_restore_for_current_snapshot();
     }
 
     fn apply_working_tree_status_root(&mut self, resolved_root: std::path::PathBuf) {
@@ -176,7 +172,6 @@ impl App {
     }
 
     fn enter_repo_error_state(&mut self, error: String) -> color_eyre::Result<()> {
-        self.invalidate_review_snapshot();
         self.clear_review_diff_snapshot();
         self.clear_review_diff_stats();
         self.repo_error = Some(error);

@@ -75,7 +75,7 @@ impl FooterModel {
         left.extend(review_target_segments(app));
         left.push(FooterSegment::plain("   "));
         left.push(FooterSegment::spans(change_summary_spans(app)));
-        if !app.shows_review_summary_status()
+        if !app.status_message_is_default()
             && let Some(message) = app.status_message.as_deref()
         {
             left.push(FooterSegment::plain("   "));
