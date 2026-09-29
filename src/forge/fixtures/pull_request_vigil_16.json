@@ -1,0 +1,100 @@
+{
+ "data": {
+  "viewer": {
+   "login": "Scott-fo"
+  },
+  "repository": {
+   "mergeCommitAllowed": true,
+   "squashMergeAllowed": true,
+   "rebaseMergeAllowed": true,
+   "autoMergeAllowed": false,
+   "deleteBranchOnMerge": false,
+   "viewerDefaultMergeMethod": "MERGE",
+   "pullRequest": {
+    "number": 16,
+    "title": "Copy diff selection to clipboard on mouse release",
+    "url": "https://github.com/Scott-fo/vigil/pull/16",
+    "state": "MERGED",
+    "isDraft": false,
+    "reviewDecision": null,
+    "author": {
+     "login": "Scott-fo"
+    },
+    "headRefName": "diff/copy-on-release",
+    "baseRefName": "master",
+    "headRefOid": "3d0fefcdd837fe69d2dfd45f7c1712ee6275692f",
+    "baseRefOid": "46bdce060b261a5b1065010a5ee0bfdad493cea4",
+    "additions": 9,
+    "deletions": 4,
+    "changedFiles": 3,
+    "updatedAt": "2026-09-29T09:44:48Z",
+    "isCrossRepository": false,
+    "checkRollup": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": null
+       }
+      }
+     ]
+    },
+    "id": "PR_kwDORcsq_M8AAAABFq0Y9g",
+    "body": "## Summary\n- Releasing the mouse after dragging a selection in the diff pane now copies it to the clipboard (OSC 52) immediately — no Ctrl-C needed.\n- A plain click (no drag) still only moves the cursor; the selection stays highlighted after copying and Esc clears it.\n- Ctrl-C still re-copies the selection (or quits when there is none).\n- Help modal entry updated to \"select and copy code text\".\n\n## Test plan\n- [x] `cargo test`\n- [ ] Manually drag-select in the diff pane and paste\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "createdAt": "2026-09-29T09:43:46Z",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "viewerDidAuthor": true,
+    "viewerCanUpdate": true,
+    "viewerCanClose": true,
+    "viewerCanReopen": false,
+    "viewerCanEnableAutoMerge": false,
+    "viewerCanDisableAutoMerge": false,
+    "viewerCanDeleteHeadRef": false,
+    "commitCount": {
+     "totalCount": 1
+    },
+    "autoMergeRequest": null,
+    "reviewRequests": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": []
+    },
+    "latestReviews": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": []
+    },
+    "viewerPendingReviews": {
+     "nodes": []
+    },
+    "comments": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": []
+    },
+    "reviewThreads": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": []
+    },
+    "checks": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": null
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

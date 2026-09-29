@@ -1,0 +1,501 @@
+{
+ "data": {
+  "viewer": {
+   "login": "Scott-fo"
+  },
+  "repository": {
+   "mergeCommitAllowed": false,
+   "squashMergeAllowed": true,
+   "rebaseMergeAllowed": true,
+   "autoMergeAllowed": true,
+   "deleteBranchOnMerge": true,
+   "viewerDefaultMergeMethod": "SQUASH",
+   "pullRequest": {
+    "number": 7696,
+    "title": "fs: support io_uring with `tokio::fs::read`",
+    "url": "https://github.com/tokio-rs/tokio/pull/7696",
+    "state": "MERGED",
+    "isDraft": false,
+    "reviewDecision": "APPROVED",
+    "author": {
+     "login": "Daksh14"
+    },
+    "headRefName": "fs_read_io_uring",
+    "baseRefName": "master",
+    "headRefOid": "fb23b82deb5fff564cd43ecc590ffece60cf3286",
+    "baseRefOid": "c8116ecd7bba1dae71bfac25600420ec73fbc2b1",
+    "additions": 435,
+    "deletions": 3,
+    "changedFiles": 7,
+    "updatedAt": "2025-12-29T10:06:20Z",
+    "isCrossRepository": true,
+    "checkRollup": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "state": "SUCCESS",
+         "contexts": {
+          "checkRunCountsByState": [
+           {
+            "state": "ACTION_REQUIRED",
+            "count": 0
+           },
+           {
+            "state": "CANCELLED",
+            "count": 0
+           },
+           {
+            "state": "COMPLETED",
+            "count": 0
+           },
+           {
+            "state": "FAILURE",
+            "count": 0
+           },
+           {
+            "state": "IN_PROGRESS",
+            "count": 0
+           },
+           {
+            "state": "NEUTRAL",
+            "count": 2
+           },
+           {
+            "state": "PENDING",
+            "count": 0
+           },
+           {
+            "state": "QUEUED",
+            "count": 0
+           },
+           {
+            "state": "SKIPPED",
+            "count": 10
+           },
+           {
+            "state": "STALE",
+            "count": 0
+           },
+           {
+            "state": "STARTUP_FAILURE",
+            "count": 0
+           },
+           {
+            "state": "SUCCESS",
+            "count": 80
+           },
+           {
+            "state": "TIMED_OUT",
+            "count": 0
+           },
+           {
+            "state": "WAITING",
+            "count": 0
+           }
+          ],
+          "statusContextCountsByState": [
+           {
+            "state": "EXPECTED",
+            "count": 0
+           },
+           {
+            "state": "ERROR",
+            "count": 0
+           },
+           {
+            "state": "FAILURE",
+            "count": 0
+           },
+           {
+            "state": "PENDING",
+            "count": 0
+           },
+           {
+            "state": "SUCCESS",
+            "count": 1
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    },
+    "id": "PR_kwDOBAsbdc6ufzH1",
+    "body": "<!--\r\nThank you for your Pull Request. Please provide a description above and review\r\nthe requirements below.\r\n\r\nBug fixes and new features should include tests.\r\n\r\nContributors guide: https://github.com/tokio-rs/tokio/blob/master/CONTRIBUTING.md\r\n\r\nThe contributors guide includes instructions for r…",
+    "createdAt": "2025-10-19T08:56:00Z",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "viewerDidAuthor": false,
+    "viewerCanUpdate": false,
+    "viewerCanClose": false,
+    "viewerCanReopen": false,
+    "viewerCanEnableAutoMerge": false,
+    "viewerCanDisableAutoMerge": false,
+    "viewerCanDeleteHeadRef": false,
+    "commitCount": {
+     "totalCount": 7
+    },
+    "autoMergeRequest": null,
+    "reviewRequests": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": "Y3Vyc29yOnYyOpHOmaQTiw=="
+     },
+     "nodes": [
+      {
+       "requestedReviewer": {
+        "__typename": "User",
+        "login": "martin-augment"
+       }
+      },
+      {
+       "requestedReviewer": {
+        "__typename": "User",
+        "login": "mox692"
+       }
+      }
+     ]
+    },
+    "latestReviews": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": "NA"
+     },
+     "nodes": [
+      {
+       "id": "PRR_kwDOBAsbdc7TMfDK",
+       "author": {
+        "login": "paolobarbolini"
+       },
+       "state": "COMMENTED",
+       "body": "",
+       "submittedAt": "2025-12-05T06:14:21Z",
+       "url": "https://github.com/tokio-rs/tokio/pull/7696#pullrequestreview-3543265482"
+      },
+      {
+       "id": "PRR_kwDOBAsbdc7TM-jR",
+       "author": {
+        "login": "martin-g"
+       },
+       "state": "APPROVED",
+       "body": "",
+       "submittedAt": "2025-12-05T07:12:34Z",
+       "url": "https://github.com/tokio-rs/tokio/pull/7696#pullrequestreview-3543394513"
+      },
+      {
+       "id": "PRR_kwDOBAsbdc7TC6-O",
+       "author": {
+        "login": "Darksonn"
+       },
+       "state": "APPROVED",
+       "body": "",
+       "submittedAt": "2025-12-04T16:01:34Z",
+       "url": "https://github.com/tokio-rs/tokio/pull/7696#pullrequestreview-3540758414"
+      },
+      {
+       "id": "PRR_kwDOBAsbdc7TNZ0U",
+       "author": {
+        "login": "ADD-SP"
+       },
+       "state": "APPROVED",
+       "body": "Thanks!",
+       "submittedAt": "2025-12-05T07:54:54Z",
+       "url": "https://github.com/tokio-rs/tokio/pull/7696#pullrequestreview-3543506196"
+      }
+     ]
+    },
+    "viewerPendingReviews": {
+     "nodes": []
+    },
+    "comments": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": []
+    },
+    "reviewThreads": {
+     "pageInfo": {
+      "hasNextPage": true,
+      "endCursor": "Y3Vyc29yOnYyOpK0MjAyNS0xMS0xN1QxNDoyNDozNFrOYle0EQ=="
+     },
+     "nodes": [
+      {
+       "id": "PRRT_kwDOBAsbdc5eg0jk",
+       "path": "tokio/src/io/uring/read.rs",
+       "diffSide": "RIGHT",
+       "line": 11,
+       "startLine": 8,
+       "startDiffSide": "RIGHT",
+       "originalLine": 11,
+       "originalStartLine": 8,
+       "subjectType": "LINE",
+       "isResolved": true,
+       "isOutdated": true,
+       "resolvedBy": {
+        "login": "Daksh14"
+       },
+       "viewerCanResolve": false,
+       "viewerCanUnresolve": false,
+       "viewerCanReply": true,
+       "comments": {
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpK0MjAyNS0xMC0xOVQxMDozODozOFrOkaD0Mg=="
+        },
+        "nodes": [
+         {
+          "id": "PRRC_kwDOBAsbdc6RoPQy",
+          "author": {
+           "login": "Darksonn"
+          },
+          "body": "You must transfer ownership of the buffer to the `Read` operation. Passing a `&mut Vec<u8>` is not enough.",
+          "createdAt": "2025-10-19T10:38:38Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2443244594",
+          "state": "SUBMITTED",
+          "diffHunk": "+#[derive(Debug)]\n+pub(crate) struct Read {\n+    fd: OwnedFd,\n+}"
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDOBAsbdc5eg0wV",
+       "path": "tokio/src/fs/read.rs",
+       "diffSide": "RIGHT",
+       "line": null,
+       "startLine": null,
+       "startDiffSide": "RIGHT",
+       "originalLine": 85,
+       "originalStartLine": 80,
+       "subjectType": "LINE",
+       "isResolved": true,
+       "isOutdated": true,
+       "resolvedBy": {
+        "login": "Daksh14"
+       },
+       "viewerCanResolve": false,
+       "viewerCanUnresolve": false,
+       "viewerCanReply": true,
+       "comments": {
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpK0MjAyNS0xMC0yMlQxMjozMDowM1rOkiVltQ=="
+        },
+        "nodes": [
+         {
+          "id": "PRRC_kwDOBAsbdc6RoPfV",
+          "author": {
+           "login": "Darksonn"
+          },
+          "body": "What does the stdlib `std::read` do in this scenario?",
+          "createdAt": "2025-10-19T10:41:05Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2443245525",
+          "state": "SUBMITTED",
+          "diffHunk": "+        .await\n+        .map(|m| m.len() as usize)\n+        .ok()\n+        .unwrap_or(0);"
+         },
+         {
+          "id": "PRRC_kwDOBAsbdc6SJWW1",
+          "author": {
+           "login": "martin-augment"
+          },
+          "body": "I agree that falling back to 0 seems wrong here - ` while size_read < size` won't enter at all.\r\nIIRC special files like `/dev/stdin`, `/proc/**`, pipes, socket…",
+          "createdAt": "2025-10-22T12:30:03Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2451924405",
+          "state": "SUBMITTED",
+          "diffHunk": "+        .await\n+        .map(|m| m.len() as usize)\n+        .ok()\n+        .unwrap_or(0);"
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDOBAsbdc5e4SPf",
+       "path": "tokio/src/fs/read.rs",
+       "diffSide": "RIGHT",
+       "line": null,
+       "startLine": null,
+       "startDiffSide": null,
+       "originalLine": 98,
+       "originalStartLine": null,
+       "subjectType": "LINE",
+       "isResolved": false,
+       "isOutdated": true,
+       "resolvedBy": null,
+       "viewerCanResolve": false,
+       "viewerCanUnresolve": false,
+       "viewerCanReply": true,
+       "comments": {
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpK0MjAyNS0xMS0wMVQxNzozMjowM1rOlAvrog=="
+        },
+        "nodes": [
+         {
+          "id": "PRRC_kwDOBAsbdc6SJOqr",
+          "author": {
+           "login": "martin-augment"
+          },
+          "body": "```suggestion\r\n        let left_to_read = u32::try_from(size - size_read).unwrap_or(u32::MAX);\r\n```\r\nTo properly support files bigger than 4GB.",
+          "createdAt": "2025-10-22T12:18:15Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2451892907",
+          "state": "SUBMITTED",
+          "diffHunk": "+    let mut offset = 0;\n+\n+    while size_read < size {\n+        let left_to_read = (size - size_read) as u32;"
+         },
+         {
+          "id": "PRRC_kwDOBAsbdc6UC9QX",
+          "author": {
+           "login": "Daksh14"
+          },
+          "body": "max read size at a time is u32::MAX, we read the rest in other next iterations",
+          "createdAt": "2025-11-01T17:13:57Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2483803159",
+          "state": "SUBMITTED",
+          "diffHunk": "+    let mut offset = 0;\n+\n+    while size_read < size {\n+        let left_to_read = (size - size_read) as u32;"
+         },
+         {
+          "id": "PRRC_kwDOBAsbdc6UC-ui",
+          "author": {
+           "login": "Daksh14"
+          },
+          "body": "In the future, if we know we're reading more than u32::MAX then we can batch 2 read requests to avoid extra syscalls ",
+          "createdAt": "2025-11-01T17:32:03Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2483809186",
+          "state": "SUBMITTED",
+          "diffHunk": "+    let mut offset = 0;\n+\n+    while size_read < size {\n+        let left_to_read = (size - size_read) as u32;"
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDOBAsbdc5gLmNF",
+       "path": "tokio/src/io/uring/read.rs",
+       "diffSide": "RIGHT",
+       "line": 49,
+       "startLine": 44,
+       "startDiffSide": "RIGHT",
+       "originalLine": 41,
+       "originalStartLine": 36,
+       "subjectType": "LINE",
+       "isResolved": true,
+       "isOutdated": false,
+       "resolvedBy": {
+        "login": "Daksh14"
+       },
+       "viewerCanResolve": false,
+       "viewerCanUnresolve": false,
+       "viewerCanReply": true,
+       "comments": {
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpK0MjAyNS0xMS0wOFQxMjoxOToxNlrOlWv9IQ=="
+        },
+        "nodes": [
+         {
+          "id": "PRRC_kwDOBAsbdc6UAi30",
+          "author": {
+           "login": "mox692"
+          },
+          "body": "This function should be marked as `unsafe` if the caller needs to follow this.",
+          "createdAt": "2025-11-01T07:10:11Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2483170804",
+          "state": "SUBMITTED",
+          "diffHunk": "+    //\n+    // If `len` read is higher than vector capacity then setting its length by\n+    // the caller in terms of size_read can be unsound.\n+    pub(crate) fn read(fd: OwnedFd, mut buf: Vec<u8>, len: u32, offset: u64) -> Self {"
+         },
+         {
+          "id": "PRRC_kwDOBAsbdc6UCgUH",
+          "author": {
+           "login": "Daksh14"
+          },
+          "body": "I would agree but there's nothing inherently unsafe in calling this function nor it is unsound.\r\nThe safety comment is there since this function writes in unini…",
+          "createdAt": "2025-11-01T11:54:08Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2483684615",
+          "state": "SUBMITTED",
+          "diffHunk": "+    //\n+    // If `len` read is higher than vector capacity then setting its length by\n+    // the caller in terms of size_read can be unsound.\n+    pub(crate) fn read(fd: OwnedFd, mut buf: Vec<u8>, len: u32, offset: u64) -> Self {"
+         },
+         {
+          "id": "PRRC_kwDOBAsbdc6Va_0h",
+          "author": {
+           "login": "Daksh14"
+          },
+          "body": "Added an assert in the function",
+          "createdAt": "2025-11-08T12:19:16Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2506882337",
+          "state": "SUBMITTED",
+          "diffHunk": "+    //\n+    // If `len` read is higher than vector capacity then setting its length by\n+    // the caller in terms of size_read can be unsound.\n+    pub(crate) fn read(fd: OwnedFd, mut buf: Vec<u8>, len: u32, offset: u64) -> Self {"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "checks": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "contexts": {
+          "pageInfo": {
+           "hasNextPage": false,
+           "endCursor": "OTM"
+          },
+          "nodes": [
+           {
+            "__typename": "CheckRun",
+            "name": "loom tokio::sync",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "detailsUrl": "https://github.com/tokio-rs/tokio/actions/runs/19956052908/job/57225302418",
+            "title": null,
+            "isRequired": false,
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Loom"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "loom tokio::sync",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "detailsUrl": "https://github.com/tokio-rs/tokio/actions/runs/20570246995/job/59075889778",
+            "title": null,
+            "isRequired": false,
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Loom"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "minrust",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/tokio-rs/tokio/actions/runs/19956052994/job/57225302443",
+            "title": null,
+            "isRequired": true,
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "CI"
+              }
+             }
+            }
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

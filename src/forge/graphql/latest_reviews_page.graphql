@@ -1,0 +1,10 @@
+query LatestReviewsPage($owner: String!, $name: String!, $number: Int!, $after: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      latestReviews(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { ...ReviewFields }
+      }
+    }
+  }
+}

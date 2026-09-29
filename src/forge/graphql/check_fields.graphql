@@ -1,0 +1,20 @@
+
+fragment CheckFields on StatusCheckRollupContext {
+  __typename
+  ... on CheckRun {
+    name
+    status
+    conclusion
+    detailsUrl
+    title
+    isRequired(pullRequestNumber: $number)
+    checkSuite { workflowRun { workflow { name } } }
+  }
+  ... on StatusContext {
+    context
+    state
+    targetUrl
+    description
+    isRequired(pullRequestNumber: $number)
+  }
+}

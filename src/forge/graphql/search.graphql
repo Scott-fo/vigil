@@ -1,0 +1,10 @@
+query SearchPullRequests($query: String!, $after: String) {
+  search(query: $query, type: ISSUE, first: 50, after: $after) {
+    issueCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      __typename
+      ... on PullRequest { ...SummaryFields }
+    }
+  }
+}

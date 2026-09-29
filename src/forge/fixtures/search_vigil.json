@@ -1,0 +1,103 @@
+{
+ "data": {
+  "search": {
+   "issueCount": 17,
+   "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": "Y3Vyc29yOjE3"
+   },
+   "nodes": [
+    {
+     "__typename": "PullRequest",
+     "number": 17,
+     "title": "Remove Codex review integration",
+     "url": "https://github.com/Scott-fo/vigil/pull/17",
+     "state": "MERGED",
+     "isDraft": false,
+     "reviewDecision": null,
+     "author": {
+      "login": "Scott-fo"
+     },
+     "headRefName": "review/remove-codex",
+     "baseRefName": "master",
+     "headRefOid": "f076e8b7b9fc5ccdf10f7f2af9ca76d7298e8807",
+     "baseRefOid": "fbc257f166313abf0b2a1399995bdba3806054d4",
+     "additions": 211,
+     "deletions": 3143,
+     "changedFiles": 32,
+     "updatedAt": "2026-09-29T15:56:25Z",
+     "isCrossRepository": false,
+     "checkRollup": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": null
+        }
+       }
+      ]
+     }
+    },
+    {
+     "__typename": "PullRequest",
+     "number": 16,
+     "title": "Copy diff selection to clipboard on mouse release",
+     "url": "https://github.com/Scott-fo/vigil/pull/16",
+     "state": "MERGED",
+     "isDraft": false,
+     "reviewDecision": null,
+     "author": {
+      "login": "Scott-fo"
+     },
+     "headRefName": "diff/copy-on-release",
+     "baseRefName": "master",
+     "headRefOid": "3d0fefcdd837fe69d2dfd45f7c1712ee6275692f",
+     "baseRefOid": "46bdce060b261a5b1065010a5ee0bfdad493cea4",
+     "additions": 9,
+     "deletions": 4,
+     "changedFiles": 3,
+     "updatedAt": "2026-09-29T09:44:48Z",
+     "isCrossRepository": false,
+     "checkRollup": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": null
+        }
+       }
+      ]
+     }
+    },
+    {
+     "__typename": "PullRequest",
+     "number": 15,
+     "title": "Add branch panel for switching, managing, and syncing branches",
+     "url": "https://github.com/Scott-fo/vigil/pull/15",
+     "state": "MERGED",
+     "isDraft": false,
+     "reviewDecision": null,
+     "author": {
+      "login": "Scott-fo"
+     },
+     "headRefName": "git/branch-panel",
+     "baseRefName": "master",
+     "headRefOid": "9591fcdf3296c9f97ac0dea449bddbf3559e5e69",
+     "baseRefOid": "aaa14a4f40a6bdff42bf8bfc1a4c6035c8cc3e20",
+     "additions": 3122,
+     "deletions": 154,
+     "changedFiles": 37,
+     "updatedAt": "2026-09-28T19:18:57Z",
+     "isCrossRepository": false,
+     "checkRollup": {
+      "nodes": [
+       {
+        "commit": {
+         "statusCheckRollup": null
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+}

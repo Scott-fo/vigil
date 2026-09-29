@@ -1,0 +1,8 @@
+
+fragment ConversationCommentFields on IssueComment {
+  id
+  author { login }
+  body
+  createdAt
+  url
+}

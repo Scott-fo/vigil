@@ -1,0 +1,14 @@
+query ChecksPage($owner: String!, $name: String!, $number: Int!, $oid: GitObjectID!, $after: String!) {
+  repository(owner: $owner, name: $name) {
+    object(oid: $oid) {
+      ... on Commit {
+        statusCheckRollup {
+          contexts(first: 100, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { ...CheckFields }
+          }
+        }
+      }
+    }
+  }
+}

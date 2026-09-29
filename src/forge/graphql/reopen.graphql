@@ -1,0 +1,5 @@
+mutation ReopenPullRequest($input: ReopenPullRequestInput!) {
+  reopenPullRequest(input: $input) {
+    pullRequest { state }
+  }
+}

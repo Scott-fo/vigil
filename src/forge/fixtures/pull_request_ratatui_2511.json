@@ -1,0 +1,352 @@
+{
+ "data": {
+  "viewer": {
+   "login": "Scott-fo"
+  },
+  "repository": {
+   "mergeCommitAllowed": true,
+   "squashMergeAllowed": true,
+   "rebaseMergeAllowed": false,
+   "autoMergeAllowed": true,
+   "deleteBranchOnMerge": true,
+   "viewerDefaultMergeMethod": "MERGE",
+   "pullRequest": {
+    "number": 2511,
+    "title": "feat(table): add scroll_padding to Table widget",
+    "url": "https://github.com/ratatui/ratatui/pull/2511",
+    "state": "MERGED",
+    "isDraft": false,
+    "reviewDecision": "APPROVED",
+    "author": {
+     "login": "pierluigilenoci"
+    },
+    "headRefName": "feat/table-scroll-padding",
+    "baseRefName": "main",
+    "headRefOid": "4696b9d09644c6bd6075b426043fe4b09f2ab48f",
+    "baseRefOid": "a0189ae4af65f85affef2a4b52bc53551cf50a1d",
+    "additions": 332,
+    "deletions": 2,
+    "changedFiles": 1,
+    "updatedAt": "2026-09-06T21:34:42Z",
+    "isCrossRepository": true,
+    "checkRollup": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "state": "SUCCESS",
+         "contexts": {
+          "checkRunCountsByState": [
+           {
+            "state": "ACTION_REQUIRED",
+            "count": 0
+           },
+           {
+            "state": "CANCELLED",
+            "count": 0
+           },
+           {
+            "state": "COMPLETED",
+            "count": 0
+           },
+           {
+            "state": "FAILURE",
+            "count": 0
+           },
+           {
+            "state": "IN_PROGRESS",
+            "count": 0
+           },
+           {
+            "state": "NEUTRAL",
+            "count": 0
+           },
+           {
+            "state": "PENDING",
+            "count": 0
+           },
+           {
+            "state": "QUEUED",
+            "count": 0
+           },
+           {
+            "state": "SKIPPED",
+            "count": 1
+           },
+           {
+            "state": "STALE",
+            "count": 0
+           },
+           {
+            "state": "STARTUP_FAILURE",
+            "count": 0
+           },
+           {
+            "state": "SUCCESS",
+            "count": 41
+           },
+           {
+            "state": "TIMED_OUT",
+            "count": 0
+           },
+           {
+            "state": "WAITING",
+            "count": 0
+           }
+          ],
+          "statusContextCountsByState": [
+           {
+            "state": "EXPECTED",
+            "count": 0
+           },
+           {
+            "state": "ERROR",
+            "count": 0
+           },
+           {
+            "state": "FAILURE",
+            "count": 0
+           },
+           {
+            "state": "PENDING",
+            "count": 0
+           },
+           {
+            "state": "SUCCESS",
+            "count": 0
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    },
+    "id": "PR_kwDOI9DLB87VYehm",
+    "body": "## Summary\n\nAdd a `scroll_padding` option to the `Table` widget that keeps a configurable number of rows visible before and after the selected row when scrolling. This mirrors the existing `List::scroll_padding()` feature (added in ratatui/ratatui#958) and is similar to the `scrolloff` option in Vim…",
+    "createdAt": "2026-04-24T15:22:38Z",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "viewerDidAuthor": false,
+    "viewerCanUpdate": false,
+    "viewerCanClose": false,
+    "viewerCanReopen": false,
+    "viewerCanEnableAutoMerge": false,
+    "viewerCanDisableAutoMerge": false,
+    "viewerCanDeleteHeadRef": false,
+    "commitCount": {
+     "totalCount": 5
+    },
+    "autoMergeRequest": null,
+    "reviewRequests": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": []
+    },
+    "latestReviews": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": "Mg"
+     },
+     "nodes": [
+      {
+       "id": "PRR_kwDOI9DLB88AAAABAHJSmA",
+       "author": {
+        "login": "JayanAXHF"
+       },
+       "state": "COMMENTED",
+       "body": "",
+       "submittedAt": "2026-05-16T02:02:48Z",
+       "url": "https://github.com/ratatui/ratatui/pull/2511#pullrequestreview-4302459544"
+      },
+      {
+       "id": "PRR_kwDOI9DLB88AAAABMZKh9g",
+       "author": {
+        "login": "orhun"
+       },
+       "state": "APPROVED",
+       "body": "LGTM, thanks!",
+       "submittedAt": "2026-09-06T21:26:56Z",
+       "url": "https://github.com/ratatui/ratatui/pull/2511#pullrequestreview-5126660598"
+      }
+     ]
+    },
+    "viewerPendingReviews": {
+     "nodes": []
+    },
+    "comments": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": "Y3Vyc29yOnYyOpHPAAAAAUk82AA="
+     },
+     "nodes": [
+      {
+       "id": "IC_kwDOI9DLB88AAAABASba9w",
+       "author": {
+        "login": "codecov"
+       },
+       "body": "## [Codecov](https://app.codecov.io/gh/ratatui/ratatui/pull/2511?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_ca…",
+       "createdAt": "2026-04-24T15:24:35Z",
+       "url": "https://github.com/ratatui/ratatui/pull/2511#issuecomment-4314290935"
+      },
+      {
+       "id": "IC_kwDOI9DLB88AAAABAUj1uw",
+       "author": {
+        "login": "orhun"
+       },
+       "body": "Interesting one, let me know when this is ready for review!",
+       "createdAt": "2026-04-24T21:31:36Z",
+       "url": "https://github.com/ratatui/ratatui/pull/2511#issuecomment-4316526011"
+      },
+      {
+       "id": "IC_kwDOI9DLB88AAAABAoqFHQ",
+       "author": {
+        "login": "pierluigilenoci"
+       },
+       "body": "Hi @orhun — this is ready for review! The fix prevents a panic when the Table area width is zero by adding a bounds check before the subtraction. Happy to adjus…",
+       "createdAt": "2026-04-28T17:16:59Z",
+       "url": "https://github.com/ratatui/ratatui/pull/2511#issuecomment-4337599773"
+      }
+     ]
+    },
+    "reviewThreads": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0wNS0xNlQwMjowMjo0OFrOgoO4NA=="
+     },
+     "nodes": [
+      {
+       "id": "PRRT_kwDOI9DLB86Cg7g0",
+       "path": "ratatui-widgets/src/table.rs",
+       "diffSide": "RIGHT",
+       "line": 275,
+       "startLine": 275,
+       "startDiffSide": null,
+       "originalLine": 275,
+       "originalStartLine": null,
+       "subjectType": "LINE",
+       "isResolved": true,
+       "isOutdated": false,
+       "resolvedBy": {
+        "login": "orhun"
+       },
+       "viewerCanResolve": false,
+       "viewerCanUnresolve": false,
+       "viewerCanReply": true,
+       "comments": {
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0wNS0yMlQwNzo0MDo1NFrOw-eeDw=="
+        },
+        "nodes": [
+         {
+          "id": "PRRC_kwDOI9DLB87B0tr8",
+          "author": {
+           "login": "JayanAXHF"
+          },
+          "body": "Is scroll padding always supposed to be same for up and down?",
+          "createdAt": "2026-05-16T02:02:48Z",
+          "url": "https://github.com/ratatui/ratatui/pull/2511#discussion_r3251821308",
+          "state": "SUBMITTED",
+          "diffHunk": "     /// Controls how to distribute extra space among the columns\n     flex: Flex,\n+\n+    /// How many rows to try to keep visible before and after the selected row"
+         },
+         {
+          "id": "PRRC_kwDOI9DLB87D554P",
+          "author": {
+           "login": "pierluigilenoci"
+          },
+          "body": "Yes — I kept it symmetric to match the existing `List::scroll_padding` API in ratatui-widgets/src/list.rs ([upstream link](https://github.com/ratatui/ratatui/bl…",
+          "createdAt": "2026-05-22T07:40:54Z",
+          "url": "https://github.com/ratatui/ratatui/pull/2511#discussion_r3286736399",
+          "state": "SUBMITTED",
+          "diffHunk": "     /// Controls how to distribute extra space among the columns\n     flex: Flex,\n+\n+    /// How many rows to try to keep visible before and after the selected row"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "checks": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "contexts": {
+          "pageInfo": {
+           "hasNextPage": false,
+           "endCursor": "NDI"
+          },
+          "nodes": [
+           {
+            "__typename": "CheckRun",
+            "name": "check-title",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/ratatui/ratatui/actions/runs/34061114065/job/101561702489",
+            "title": null,
+            "isRequired": false,
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Check Pull Requests"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "Prevent Merging",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "detailsUrl": "https://github.com/ratatui/ratatui/actions/runs/34061114065/job/101561703334",
+            "title": null,
+            "isRequired": false,
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Check Pull Requests"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "required",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/ratatui/ratatui/actions/runs/34061114480/job/101562187484",
+            "title": null,
+            "isRequired": true,
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Continuous Integration"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "codecov/patch",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://app.codecov.io/gh/ratatui/ratatui/pull/2511",
+            "title": "100.0% of diff hit (target 92.7%)",
+            "isRequired": false,
+            "checkSuite": {
+             "workflowRun": null
+            }
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}
