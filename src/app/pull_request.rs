@@ -23,16 +23,19 @@
 //!   per tab, filtered by typed text, and reloaded every 60 seconds while on
 //!   screen. Enter opens the selected row; a query such as `#17` opens that
 //!   pull request by number even when it is closed or merged.
-//! - **Reviewing it.** Draft comments (`c`) are local and persisted in the
-//!   review database until a review (`S`) sends them; replies (`R`),
-//!   resolving (`T`), and conversation comments (`C`) write to GitHub at
-//!   once. Each write is a typed [`ForgeMutation`](gateway::ForgeMutation)
-//!   run through one gateway, one at a time, and reloads what it changed.
+//! - **Reviewing and acting on it.** Draft comments (`c`) are local and
+//!   persisted in the review database until a review (`S`) sends them;
+//!   replies (`R`), resolving (`T`), conversation comments (`C`), merging
+//!   (`M`), and state changes (`A`) write to GitHub at once, after
+//!   confirmation where a mistake is costly. Each write is a typed
+//!   [`ForgeMutation`](gateway::ForgeMutation) run through one gateway, one
+//!   at a time, and reloads what it changed.
 //!
 //! Every request is matched by id: a response to a superseded request is
 //! dropped, and dropping the state aborts its reads (and their `gh`
 //! processes). Writes are never aborted once started.
 
+mod actions;
 mod composer;
 mod connect;
 mod current_branch;
@@ -42,6 +45,7 @@ mod event;
 mod gateway;
 mod list;
 mod list_screen;
+mod merge;
 mod modal;
 mod open;
 mod selection;
@@ -51,12 +55,14 @@ mod task;
 mod threads;
 mod view;
 
+pub use self::actions::{ActionsMenu, PullRequestAction};
 pub use self::composer::{Composer, ComposerStatus, ComposerTarget};
 pub use self::draft_list::DraftList;
 pub use self::event::{PullRequestEvent, PullRequestTimer};
 pub use self::gateway::MutationOutcome;
 pub use self::list::{PULL_REQUEST_LIST_FILTERS, QueryInput};
 pub use self::list_screen::{PullRequestListStatus, PullRequestListView};
+pub use self::merge::{AutoMergeChoice, MergeBlocker, MergeForm, MergeStep, MergeWhen};
 pub use self::modal::{DraftEntry, PullRequestModalView};
 pub use self::selection::PullRequestSelection;
 pub use self::state::PullRequestPage;

@@ -1,9 +1,11 @@
-//! Review-action modals: the comment composer, submit review, and the
-//! drafts list. Each draws a prepared [`PullRequestModalView`]; nothing here
-//! decides what is allowed.
+//! Review-action modals: the comment composer, submit review, merge, the
+//! actions menu, and the drafts list. Each draws a prepared
+//! [`PullRequestModalView`]; nothing here decides what is allowed.
 
+mod actions;
 mod composer;
 mod drafts;
+mod merge;
 mod submit;
 mod text;
 
@@ -34,6 +36,31 @@ pub(super) fn render_pull_request_modal(frame: &mut Frame, view: PullRequestModa
                 submitting,
             },
         ),
+        PullRequestModalView::Merge {
+            form,
+            detail,
+            blockers,
+            auto_merge,
+            head_oid,
+            has_new_commits,
+            merging,
+        } => merge::render_merge(
+            frame,
+            merge::MergeModal {
+                form,
+                detail,
+                blockers: &blockers,
+                auto_merge,
+                head_oid,
+                has_new_commits,
+                merging,
+            },
+        ),
+        PullRequestModalView::Actions {
+            menu,
+            number,
+            updating,
+        } => actions::render_actions(frame, menu, number, updating),
         PullRequestModalView::Drafts { list, drafts } => {
             drafts::render_drafts(frame, list, &drafts)
         }

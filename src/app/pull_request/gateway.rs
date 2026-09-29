@@ -12,13 +12,14 @@ use tokio::task;
 
 use crate::{
     event::Event,
-    forge::{ForgeError, GitHub, SubmitReview, ThreadId},
+    forge::{ForgeError, GitHub, MergeOptions, MergeOutcome, SubmitReview, ThreadId},
     review::DraftId,
 };
 
 use super::{
     super::{App, SnackbarVariant},
     PullRequestEvent,
+    actions::PullRequestAction,
 };
 
 /// A write to GitHub on behalf of the reviewer.
@@ -43,6 +44,17 @@ pub(in crate::app) enum ForgeMutation {
         number: u64,
         body: String,
     },
+    Merge {
+        number: u64,
+        options: MergeOptions,
+    },
+    DisableAutoMerge {
+        number: u64,
+    },
+    UpdateState {
+        number: u64,
+        action: PullRequestAction,
+    },
 }
 
 /// What a finished [`ForgeMutation`] did.
@@ -52,6 +64,9 @@ pub enum MutationOutcome {
     Replied,
     ThreadResolved { resolved: bool },
     Commented,
+    Merged(MergeOutcome),
+    AutoMergeDisabled,
+    StateUpdated(PullRequestAction),
 }
 
 impl ForgeMutation {
@@ -77,6 +92,25 @@ impl ForgeMutation {
                 .add_conversation_comment(number, &body)
                 .await
                 .map(|_| MutationOutcome::Commented),
+            Self::Merge { number, options } => github
+                .merge_pull_request(number, &options)
+                .await
+                .map(MutationOutcome::Merged),
+            Self::DisableAutoMerge { number } => github
+                .disable_auto_merge(number)
+                .await
+                .map(|_| MutationOutcome::AutoMergeDisabled),
+            Self::UpdateState { number, action } => {
+                match action {
+                    PullRequestAction::Close => github.close_pull_request(number).await?,
+                    PullRequestAction::Reopen => github.reopen_pull_request(number).await?,
+                    PullRequestAction::MarkReadyForReview => {
+                        github.mark_ready_for_review(number).await?
+                    }
+                    PullRequestAction::ConvertToDraft => github.convert_to_draft(number).await?,
+                }
+                Ok(MutationOutcome::StateUpdated(action))
+            }
         }
     }
 }

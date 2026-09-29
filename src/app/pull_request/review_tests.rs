@@ -1,21 +1,22 @@
-//! State-transition tests for reviewing a pull request: the composer,
-//! drafts, submit, and thread actions. Every write goes through the
-//! recording gateway; nothing here reaches GitHub or the user's review
-//! database.
+//! State-transition tests for reviewing and acting on a pull request: the
+//! composer, drafts, submit, thread actions, merge, the actions menu, and
+//! Esc back to the list. Every write goes through the recording gateway;
+//! nothing here reaches GitHub or the user's review database.
 
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    ComposerTarget, MutationOutcome, fixtures,
+    ComposerTarget, MutationOutcome, PullRequestAction, fixtures,
     gateway::{ForgeCall, ForgeMutation},
     modal::PullRequestModal,
 };
 use crate::{
     app::{App, DiffTextSelection},
     forge::{
-        DiffPosition, DiffSide, ForgeError, PendingReview, PullRequest, ReviewEvent, ReviewThread,
+        DiffPosition, DiffSide, ForgeError, HeadBranchAction, HeadBranchOutcome, MergeMethod,
+        MergeOutcome, MergeTiming, PendingReview, PullRequest, ReviewEvent, ReviewThread,
         Timestamp,
     },
     git::{DiffSelectionPane, DiffSelectionPoint, WhitespaceMode},
@@ -521,6 +522,150 @@ async fn only_one_write_runs_at_a_time() {
 
     assert_eq!(mutations(&app).len(), 1);
     assert!(snackbar(&app).contains("still running"));
+}
+
+fn mergeable_detail() -> PullRequest {
+    let mut detail = fixtures::pull_request(18, Vec::new());
+    detail.mergeable = crate::forge::Mergeability::Mergeable;
+    detail.merge_state = crate::forge::MergeStateStatus::Clean;
+    detail
+}
+
+#[tokio::test]
+async fn merging_takes_a_confirmation_and_pins_the_shown_head() {
+    let mut app = review_app(mergeable_detail());
+
+    keys(&mut app, [press(KeyCode::Char('M')), press(KeyCode::Enter)]).await;
+    assert!(
+        mutations(&app).is_empty(),
+        "the first enter asks to confirm"
+    );
+    keys(&mut app, [press(KeyCode::Enter)]).await;
+
+    let recorded = mutations(&app);
+    let [ForgeMutation::Merge { number, options }] = recorded.as_slice() else {
+        panic!("one merge: {:?}", mutations(&app));
+    };
+    assert_eq!(*number, 18);
+    assert_eq!(options.method, MergeMethod::Squash);
+    assert_eq!(options.expected_head_oid, HEAD);
+    assert_eq!(
+        options.timing,
+        MergeTiming::Now {
+            head_branch: HeadBranchAction::Delete
+        }
+    );
+
+    app.finish_recorded_mutation(Ok(MutationOutcome::Merged(MergeOutcome::Merged {
+        head_branch: HeadBranchOutcome::DeleteFailed {
+            message: "protected".to_string(),
+        },
+    })));
+    assert!(modal(&app).is_none());
+    assert!(snackbar(&app).contains("merged #18"));
+    assert!(snackbar(&app).contains("could not be deleted: protected"));
+    let calls = app.recorded_forge_calls();
+    assert!(calls.contains(&ForgeCall::ReloadDetail));
+    assert!(calls.contains(&ForgeCall::RefreshCurrentBranch));
+}
+
+#[tokio::test]
+async fn merge_options_follow_the_form() {
+    let mut detail = mergeable_detail();
+    detail.merge_settings.allowed_methods = vec![MergeMethod::Merge, MergeMethod::Squash];
+    detail.merge_settings.delete_branch_on_merge = false;
+    let mut app = review_app(detail);
+
+    keys(
+        &mut app,
+        [
+            press(KeyCode::Char('M')),
+            press(KeyCode::Left),
+            press(KeyCode::Char('d')),
+            press(KeyCode::Enter),
+            press(KeyCode::Enter),
+        ],
+    )
+    .await;
+
+    let recorded = mutations(&app);
+    let [ForgeMutation::Merge { options, .. }] = recorded.as_slice() else {
+        panic!("one merge");
+    };
+    assert_eq!(options.method, MergeMethod::Merge);
+    assert_eq!(
+        options.timing,
+        MergeTiming::Now {
+            head_branch: HeadBranchAction::Delete
+        }
+    );
+}
+
+#[tokio::test]
+async fn closed_pull_requests_cannot_merge() {
+    let mut detail = mergeable_detail();
+    detail.summary.state = crate::forge::PullRequestState::Closed;
+    let mut app = review_app(detail);
+
+    keys(
+        &mut app,
+        [
+            press(KeyCode::Char('M')),
+            press(KeyCode::Enter),
+            press(KeyCode::Enter),
+        ],
+    )
+    .await;
+
+    assert!(mutations(&app).is_empty());
+    let Some(PullRequestModal::Merge(form)) = modal(&app) else {
+        panic!("the form stays open");
+    };
+    assert_eq!(form.error(), Some("the pull request is closed"));
+}
+
+#[tokio::test]
+async fn the_actions_menu_lists_what_the_viewer_may_do_and_confirms_closing() {
+    let mut detail = fixtures::pull_request(18, Vec::new());
+    detail.viewer.can_update = true;
+    detail.viewer.can_close = true;
+    let mut app = review_app(detail);
+
+    keys(&mut app, [press(KeyCode::Char('A'))]).await;
+    let Some(PullRequestModal::Actions(menu)) = modal(&app) else {
+        panic!("A opens the actions menu");
+    };
+    assert_eq!(
+        menu.actions(),
+        [PullRequestAction::ConvertToDraft, PullRequestAction::Close]
+    );
+
+    keys(&mut app, [press(KeyCode::Char('j')), press(KeyCode::Enter)]).await;
+    assert!(mutations(&app).is_empty(), "closing asks first");
+    keys(&mut app, [press(KeyCode::Enter)]).await;
+    assert_eq!(
+        mutations(&app),
+        vec![ForgeMutation::UpdateState {
+            number: 18,
+            action: PullRequestAction::Close
+        }]
+    );
+    app.finish_recorded_mutation(Ok(MutationOutcome::StateUpdated(PullRequestAction::Close)));
+    assert!(snackbar(&app).contains("closed #18"));
+    assert!(
+        app.recorded_forge_calls()
+            .contains(&ForgeCall::RefreshCurrentBranch)
+    );
+}
+
+#[tokio::test]
+async fn the_actions_menu_stays_shut_without_capabilities() {
+    let mut app = review_app(fixtures::pull_request(18, Vec::new()));
+
+    keys(&mut app, [press(KeyCode::Char('A'))]).await;
+
+    assert!(modal(&app).is_none());
+    assert!(snackbar(&app).contains("no state changes"));
 }
 
 #[test]

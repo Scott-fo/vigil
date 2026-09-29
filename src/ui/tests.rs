@@ -546,7 +546,7 @@ mod pull_requests {
         let text = buffer_text(&render_to_buffer(&mut app, 140, 50));
         print(&text);
 
-        assert!(text.contains("c comment · S submit review · D drafts"));
+        assert!(text.contains("c comment · S submit review · M merge · A actions · D drafts"));
         assert!(text.contains("YOUR DRAFTS  1 pending · S submits · D edits"));
         assert!(text.contains("src/app.rs · line 2 · ◌ pending"));
         assert!(text.contains("Guard the empty case."));
@@ -590,6 +590,23 @@ mod pull_requests {
         assert!(text.contains("Sends 1 draft comment."));
         assert!(text.contains("tab verdict"));
         assert!(text.contains("ctrl-s submit"));
+    }
+
+    #[test]
+    fn the_merge_form_shows_settings_blockers_and_the_pinned_head() {
+        let mut app = pull_request_app(Vec::new());
+        app.open_merge_form_for_test();
+
+        let text = buffer_text(&render_to_buffer(&mut app, 120, 34));
+        print(&text);
+
+        assert!(text.contains("Merge #17"));
+        assert!(text.contains("master ← review/remove-codex  ·  pinned to f076e8b"));
+        assert!(text.contains("‹ squash ›"));
+        assert!(text.contains("allowed: squash"));
+        assert!(text.contains("delete review/remove-codex on GitHub after merging"));
+        assert!(text.contains("GitHub is still computing mergeability"));
+        assert!(text.contains("⏎ merge"));
     }
 
     #[test]

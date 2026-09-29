@@ -157,6 +157,8 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                     ("T", "resolve / reopen that thread"),
                     ("D", "drafts: edit or delete"),
                     ("S", "submit review"),
+                    ("M", "merge, or merge when ready"),
+                    ("A", "close / reopen, draft / ready"),
                     ("composer: ctrl-s", "save the draft, or post"),
                     ("composer: ⏎", "new line"),
                     ("composer: ctrl-e", "write in $EDITOR"),

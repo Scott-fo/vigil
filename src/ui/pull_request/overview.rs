@@ -179,13 +179,19 @@ pub(in crate::ui) fn overview_lines(
     lines
 }
 
-/// `c comment · S submit review · D drafts`.
+/// `c comment · S submit review · M merge · A actions · D drafts`.
 fn action_hints_line() -> Line<'static> {
     let key = Style::new().fg(text_color()).add_modifier(Modifier::BOLD);
     let mut spans = vec![Span::raw(INDENT)];
-    for (index, (keys, label)) in [("c", "comment"), ("S", "submit review"), ("D", "drafts")]
-        .into_iter()
-        .enumerate()
+    for (index, (keys, label)) in [
+        ("c", "comment"),
+        ("S", "submit review"),
+        ("M", "merge"),
+        ("A", "actions"),
+        ("D", "drafts"),
+    ]
+    .into_iter()
+    .enumerate()
     {
         if index > 0 {
             spans.push(faint(" · "));

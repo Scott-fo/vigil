@@ -270,6 +270,10 @@ impl App {
         self.open_submit_review();
     }
 
+    pub(crate) fn open_merge_form_for_test(&mut self) {
+        self.open_merge_form();
+    }
+
     /// Types `text` into the open review modal's text field.
     pub(crate) fn type_in_pull_request_modal_for_test(&mut self, text: &str) {
         if let Some(area) = self.pull_request_modal_text() {
