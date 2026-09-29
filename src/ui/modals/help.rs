@@ -148,6 +148,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                     ("O", "review this branch's pull request"),
                     ("r", "refetch the pull request under review"),
                     ("y", "copy the pull request's branch name"),
+                    ("K", "check out the pull request's branch"),
                     ("] on overview", "step into the first file"),
                     ("Ctrl-d/u", "scroll the overview"),
                     ("Ctrl-L", "leave pull request review"),

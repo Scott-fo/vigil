@@ -179,7 +179,7 @@ pub(in crate::ui) fn overview_lines(
     lines
 }
 
-/// `c comment · S submit review · M merge · A actions · D drafts`.
+/// `c comment · S submit review · M merge · A actions · D drafts · K check out`.
 fn action_hints_line() -> Line<'static> {
     let key = Style::new().fg(text_color()).add_modifier(Modifier::BOLD);
     let mut spans = vec![Span::raw(INDENT)];
@@ -189,6 +189,7 @@ fn action_hints_line() -> Line<'static> {
         ("M", "merge"),
         ("A", "actions"),
         ("D", "drafts"),
+        ("K", "check out"),
     ]
     .into_iter()
     .enumerate()

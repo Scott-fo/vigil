@@ -2,7 +2,7 @@ use tokio::task;
 
 use crate::{
     event::Event,
-    git::{self, BranchOperation, BranchOperationError, BranchOperationOutcome},
+    git::{self, BranchOperation, BranchOperationError, BranchOperationOutcome, CheckoutUpdate},
 };
 
 use super::super::{App, SnackbarVariant};
@@ -45,6 +45,7 @@ impl App {
                     outcome,
                     BranchOperationOutcome::Switched { .. }
                         | BranchOperationOutcome::Created { .. }
+                        | BranchOperationOutcome::CheckedOutPullRequest { .. }
                 ) {
                     self.close_branch_panel();
                 }
@@ -90,5 +91,19 @@ fn outcome_message(outcome: &BranchOperationOutcome) -> String {
         BranchOperationOutcome::Created { branch } => format!("Created and switched to {branch}"),
         BranchOperationOutcome::Renamed { from, to } => format!("Renamed {from} to {to}"),
         BranchOperationOutcome::Deleted { branch } => format!("Deleted {branch}"),
+        BranchOperationOutcome::CheckedOutPullRequest {
+            number,
+            branch,
+            update,
+        } => match update {
+            CheckoutUpdate::Created => format!("Checked out #{number} as {branch}"),
+            CheckoutUpdate::FastForwarded => {
+                format!("Checked out #{number}: {branch} fast-forwarded")
+            }
+            CheckoutUpdate::UpToDate => format!("Checked out #{number} on {branch}"),
+            CheckoutUpdate::Diverged => format!(
+                "Switched to {branch}, which has commits #{number} does not; left as it was"
+            ),
+        },
     }
 }

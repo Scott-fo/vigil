@@ -18,8 +18,8 @@ mod worktree;
 
 pub use branch::{
     BranchEntry, BranchLocation, BranchOperation, BranchOperationError, BranchOperationOutcome,
-    BranchSnapshot, BranchTip, Divergence, HeadState, RepoOperation, Upstream,
-    load_branch_snapshot, run_branch_operation,
+    BranchSnapshot, BranchTip, CheckoutUpdate, Divergence, HeadState, PullRequestCheckout,
+    RemoteBranch, RepoOperation, Upstream, load_branch_snapshot, run_branch_operation,
 };
 pub use command::git_output;
 pub use commit::{
