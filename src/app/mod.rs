@@ -31,7 +31,6 @@ mod modal_lookup;
 mod mouse;
 mod navigation;
 mod repo_state;
-mod review;
 mod runtime;
 mod sidebar_state;
 mod theme_modal;
@@ -59,7 +58,7 @@ use crate::{
         DiffView, FileEntry, ReviewDiffPartialTextIndex, ReviewDiffSnapshot, ReviewDiffTextIndex,
         SharedHighlightRegistry, WorktreeEntry,
     },
-    review::{ReviewReport, ViewedFiles, ViewedScope},
+    review::{ViewedFiles, ViewedScope},
     sidebar::{DirectoryKey, SidebarItem, SidebarSection},
     theme::ThemeMode,
     watcher::RepoWatcher,
@@ -297,17 +296,6 @@ pub struct App {
     branch_status: BranchStatus,
     branch_panel: Option<BranchPanel>,
     branch_operation: Option<git::BranchOperation>,
-    pub review_loading: bool,
-    pub review_error: Option<String>,
-    pub review_report: Option<ReviewReport>,
-    pub review_snapshot_id: Option<String>,
-    pub review_provider_session_id: Option<String>,
-    pub review_context_modal_open: bool,
-    pub review_extra_context: String,
-    pub review_summary_modal_open: bool,
-    pub review_summary_scroll: u16,
-    review_request_id: u64,
-    review_task: Option<task::JoinHandle<()>>,
     viewed_files: ViewedFiles,
     viewed_scope: Option<ViewedScope>,
     viewed_request_id: u64,

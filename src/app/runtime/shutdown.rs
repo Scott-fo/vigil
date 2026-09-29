@@ -8,7 +8,6 @@ impl App {
         self.cancel_inflight_review_diff_snapshot();
         self.cancel_inflight_review_diff_stats();
         self.cancel_diff_search_tasks();
-        self.cancel_inflight_review();
         self.abort_background_tasks();
         self.repo_watcher = None;
         self.repo_watcher_loading = false;

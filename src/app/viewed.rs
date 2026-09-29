@@ -9,11 +9,11 @@
 
 use tokio::task;
 
-use super::{App, review::review_scope_from_mode};
+use super::{App, ReviewMode};
 use crate::{
     event::Event,
     git::DiffFingerprint,
-    review::{ReviewStore, ViewedFiles, ViewedScope},
+    review::{ReviewScope, ReviewStore, ViewedFiles, ViewedScope},
 };
 
 impl App {
@@ -39,8 +39,10 @@ impl App {
     /// Loads marks for the current review target if it differs from the one
     /// already loaded. Refreshes within the same target keep in-memory marks.
     pub(in crate::app) fn queue_viewed_files_load(&mut self) {
-        let scope = review_scope_from_mode(&self.review_mode)
-            .map(|scope| ViewedScope::new(&self.repo_root, &scope));
+        let scope = Some(ViewedScope::new(
+            &self.repo_root,
+            &review_scope_from_mode(&self.review_mode),
+        ));
         if scope == self.viewed_scope {
             return;
         }
@@ -165,6 +167,19 @@ impl App {
     }
 }
 
+fn review_scope_from_mode(mode: &ReviewMode) -> ReviewScope {
+    match mode {
+        ReviewMode::WorkingTree => ReviewScope::WorkingTree,
+        ReviewMode::CommitCompare(selection) => ReviewScope::CommitCompare {
+            commit_hash: selection.commit_hash.clone(),
+        },
+        ReviewMode::BranchCompare(selection) => ReviewScope::BranchCompare {
+            source_ref: selection.source_ref.clone(),
+            destination_ref: selection.destination_ref.clone(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{path::PathBuf, sync::Arc};
@@ -193,10 +208,7 @@ mod tests {
             filetype: Some("rust"),
         }];
         app.review_diff_snapshot = Some(snapshot(body));
-        app.viewed_scope = Some(ViewedScope::new(
-            &app.repo_root,
-            &crate::review::ReviewScope::WorkingTree,
-        ));
+        app.viewed_scope = Some(ViewedScope::new(&app.repo_root, &ReviewScope::WorkingTree));
         app
     }
 

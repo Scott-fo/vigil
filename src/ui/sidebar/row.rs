@@ -13,7 +13,7 @@ use crate::{
 use super::{
     super::{
         chip_color, hover_color, primary_color, selection_color, success_color, text_color,
-        text_faint_color, text_subtle_color, warning_color,
+        text_faint_color, text_subtle_color,
     },
     text::{devicon_for_path, display_width, truncate_middle},
 };
@@ -39,7 +39,6 @@ pub(super) struct RowContext {
     pub(super) selection: RowSelection,
     /// The mouse is over this row. Selection tints take precedence.
     pub(super) hovered: bool,
-    pub(super) review_comment_count: usize,
     /// Marked viewed at its current diff; the row dims and shows a check.
     pub(super) viewed: bool,
 }
@@ -163,11 +162,6 @@ fn file_spans(
     let (icon, icon_color) = devicon_for_path(&file.path)
         .map(|(icon, color)| (format!("{icon} "), color))
         .unwrap_or_else(|| ("· ".to_string(), text_faint_color()));
-    let review_marker = if context.review_comment_count > 0 {
-        "● "
-    } else {
-        ""
-    };
     let viewed_marker = if context.viewed { "✓ " } else { "" };
     let stage_marker = if partially_staged { "◐" } else { "" };
 
@@ -175,7 +169,6 @@ fn file_spans(
     let fixed_width = 1
         + display_width(&indent)
         + display_width(&icon)
-        + display_width(review_marker)
         + display_width(viewed_marker)
         + display_width(stage_marker)
         + STATUS_SLOT_WIDTH;
@@ -216,12 +209,6 @@ fn file_spans(
         Span::styled(display_label, label_style),
         Span::raw(" ".repeat(gap)),
     ];
-    if !review_marker.is_empty() {
-        spans.push(Span::styled(
-            review_marker,
-            Style::new().fg(warning_color()),
-        ));
-    }
     if !viewed_marker.is_empty() {
         spans.push(Span::styled(
             viewed_marker,
@@ -271,24 +258,16 @@ mod tests {
             width,
             selection: RowSelection::None,
             hovered: false,
-            review_comment_count: 0,
             viewed: false,
         }
     }
 
     #[test]
     fn file_rows_fill_the_row_width_exactly() {
-        for (width, review_comment_count, viewed) in [
-            (24, 0, false),
-            (24, 2, false),
-            (40, 0, false),
-            (24, 0, true),
-            (24, 2, true),
-        ] {
+        for (width, viewed) in [(24, false), (40, false), (24, true)] {
             let line = row_line(
                 &file_item("src/ui/JavaScriptSyntaxHighlighter.tsx", " M", 2),
                 RowContext {
-                    review_comment_count,
                     viewed,
                     ..context(width)
                 },

@@ -2,8 +2,6 @@ use super::super::{
     ActivePane, App, DiffLineWrapMode, DiffViewMode,
     navigation::{scroll_u16, scroll_usize},
 };
-use crate::review::ReviewSeverity;
-use unicode_width::UnicodeWidthStr;
 
 const FALLBACK_DIFF_DISPLAY_WIDTH: usize = 120;
 
@@ -79,7 +77,7 @@ impl App {
             return None;
         }
 
-        let visual_map = self.diff_visual_line_map(mode, width, display_line_count);
+        let visual_map = Self::diff_visual_line_map(display_line_count);
         let visual_line_count = visual_map.len();
         let max_scroll = visual_line_count
             .saturating_sub(viewport_height)
@@ -144,37 +142,11 @@ impl App {
         })
     }
 
-    fn diff_visual_line_map(
-        &mut self,
-        mode: DiffViewMode,
-        width: usize,
-        display_line_count: usize,
-    ) -> Vec<Option<usize>> {
-        let mut map = Vec::with_capacity(display_line_count);
-        for display_index in 0..display_line_count {
-            map.push(Some(display_index));
-            let comment_lines = self.review_comment_visual_line_count(mode, width, display_index);
-            map.extend(std::iter::repeat_n(None, comment_lines));
-        }
-        map
-    }
-
-    fn review_comment_visual_line_count(
-        &mut self,
-        mode: DiffViewMode,
-        width: usize,
-        display_index: usize,
-    ) -> usize {
-        self.review_comments_for_display_index_in_mode(mode, display_index, width)
-            .iter()
-            .map(|comment| {
-                let text_width = review_comment_text_width(width);
-                let heading = format!("{} · {}", severity_label(comment.severity), comment.title);
-                wrapped_line_count(&heading, text_width)
-                    + wrapped_line_count(&comment.body, text_width)
-                    + 1
-            })
-            .sum()
+    /// Maps each visual row of the diff pane to the display line it shows.
+    /// `None` marks a row that belongs to no diff line; every row is currently
+    /// a diff line, so the map is the identity.
+    fn diff_visual_line_map(display_line_count: usize) -> Vec<Option<usize>> {
+        (0..display_line_count).map(Some).collect()
     }
 
     pub(crate) fn page_diff(&mut self, delta: i32) {
@@ -194,49 +166,5 @@ impl App {
             ActivePane::Diff => self.page_diff(delta),
             ActivePane::Sidebar => self.scroll_diff(delta),
         }
-    }
-}
-
-fn review_comment_text_width(width: usize) -> usize {
-    width.saturating_sub(5).saturating_sub(2).max(16)
-}
-
-fn wrapped_line_count(text: &str, width: usize) -> usize {
-    let width = width.max(1);
-    let mut count = 0usize;
-    let mut current_width = 0usize;
-
-    for word in text.split_whitespace() {
-        let word_width = UnicodeWidthStr::width(word);
-        if word_width > width {
-            if current_width > 0 {
-                count = count.saturating_add(1);
-                current_width = 0;
-            }
-            count = count.saturating_add(word_width.div_ceil(width));
-        } else if current_width == 0 {
-            current_width = word_width;
-        } else if current_width + 1 + word_width <= width {
-            current_width += 1 + word_width;
-        } else {
-            count = count.saturating_add(1);
-            current_width = word_width;
-        }
-    }
-
-    if current_width > 0 {
-        count = count.saturating_add(1);
-    }
-
-    count.max(1)
-}
-
-fn severity_label(severity: ReviewSeverity) -> &'static str {
-    match severity {
-        ReviewSeverity::Critical => "critical",
-        ReviewSeverity::High => "high",
-        ReviewSeverity::Medium => "medium",
-        ReviewSeverity::Low => "low",
-        ReviewSeverity::Info => "info",
     }
 }
