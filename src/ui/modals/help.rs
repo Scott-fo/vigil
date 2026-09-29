@@ -115,7 +115,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                     ("] / [", "next / previous change"),
                     ("Ctrl-D / Ctrl-U", "page diff"),
                     ("mouse wheel", "scroll hovered pane"),
-                    ("drag in diff", "select code text"),
+                    ("drag in diff", "select and copy code text"),
                 ],
             },
             Section {

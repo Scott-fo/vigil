@@ -34,7 +34,7 @@ impl App {
                 self.handle_mouse_left_drag(mouse_event)?;
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                self.handle_mouse_left_up();
+                self.handle_mouse_left_up()?;
             }
             _ => return Ok(false),
         }
