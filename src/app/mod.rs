@@ -56,9 +56,10 @@ use self::pull_request::PullRequests;
 #[cfg(test)]
 pub(crate) use self::pull_request::fixtures as pull_request_fixtures;
 pub use self::pull_request::{
-    Composer, ComposerStatus, ComposerTarget, DraftEntry, DraftList, PULL_REQUEST_LIST_FILTERS,
-    PullRequestEvent, PullRequestListStatus, PullRequestListView, PullRequestModalView,
-    PullRequestOverview, PullRequestPage, PullRequestSelection, PullRequestTimer, QueryInput,
+    Composer, ComposerStatus, ComposerTarget, DraftEntry, DraftList, MutationOutcome,
+    PULL_REQUEST_LIST_FILTERS, PullRequestEvent, PullRequestListStatus, PullRequestListView,
+    PullRequestModalView, PullRequestOverview, PullRequestPage, PullRequestSelection,
+    PullRequestTimer, QueryInput, REVIEW_EVENTS, SubmitForm, SubmitWarning, event_allowed,
 };
 pub use self::text_area::TextArea;
 use crate::{

@@ -532,7 +532,10 @@ mod pull_requests {
             text.contains("●1"),
             "drafts count toward the sidebar marker"
         );
-        assert!(text.contains(" 1 pending "), "the footer counts drafts");
+        assert!(
+            text.contains("1 pending · S submit"),
+            "the footer counts drafts"
+        );
     }
 
     #[test]
@@ -543,8 +546,8 @@ mod pull_requests {
         let text = buffer_text(&render_to_buffer(&mut app, 140, 50));
         print(&text);
 
-        assert!(text.contains("c comment · D drafts"));
-        assert!(text.contains("YOUR DRAFTS  1 pending · D edits"));
+        assert!(text.contains("c comment · S submit review · D drafts"));
+        assert!(text.contains("YOUR DRAFTS  1 pending · S submits · D edits"));
         assert!(text.contains("src/app.rs · line 2 · ◌ pending"));
         assert!(text.contains("Guard the empty case."));
     }
@@ -561,12 +564,32 @@ mod pull_requests {
 
         assert!(text.contains("New comment"));
         assert!(text.contains("src/app.rs · line 2"));
-        assert!(text.contains("a draft, kept on this machine"));
+        assert!(text.contains("draft, sent with your review"));
         assert!(text.contains("Could this be"));
         assert!(text.contains("simpler?▏"), "the caret follows the text");
         assert!(text.contains("ctrl-s save draft"));
         assert!(text.contains("ctrl-e $EDITOR"));
         assert!(text.contains("ctrl-g suggestion"));
+    }
+
+    #[test]
+    fn the_submit_form_counts_drafts_and_limits_authors() {
+        let mut detail = fixtures::pull_request(17, Vec::new());
+        detail.viewer.is_author = true;
+        let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-ui-tests"));
+        app.open_pull_request_for_test(detail, vec![fixtures::file("src/app.rs")]);
+        app.save_draft_for_test(draft_on_two("Nit."));
+        app.open_submit_review_for_test();
+
+        let text = buffer_text(&render_to_buffer(&mut app, 120, 30));
+        print(&text);
+
+        assert!(text.contains("Submit review · #17"));
+        assert!(text.contains("● Comment"));
+        assert!(text.contains("your pull request: comment only"));
+        assert!(text.contains("Sends 1 draft comment."));
+        assert!(text.contains("tab verdict"));
+        assert!(text.contains("ctrl-s submit"));
     }
 
     #[test]

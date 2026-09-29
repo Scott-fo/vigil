@@ -3,16 +3,19 @@
 //! One [`PullRequestModal`] shows at a time, owned by the pull request
 //! state so leaving the review closes it. The renderer reads a
 //! [`PullRequestModalView`], which carries the modal and everything it
-//! needs to draw; it decides nothing itself.
+//! needs to draw (counts, warnings, whether a write is running); it decides
+//! nothing itself.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::review::DraftComment;
+use crate::{forge::ForgeError, review::DraftComment};
 
 use super::{
     super::{App, keyboard::KeyOutcome, text_area::TextArea},
     composer::Composer,
     draft_list::DraftList,
+    gateway::{ForgeMutation, MutationOutcome},
+    submit::{SubmitForm, SubmitWarning},
 };
 
 /// A review-action modal.
@@ -20,6 +23,7 @@ use super::{
 pub enum PullRequestModal {
     /// Boxed: it is far larger than the other modals.
     Composer(Box<Composer>),
+    Submit(SubmitForm),
     Drafts(DraftList),
 }
 
@@ -28,6 +32,7 @@ impl PullRequestModal {
     pub(in crate::app) fn text_mut(&mut self) -> Option<&mut TextArea> {
         match self {
             Self::Composer(composer) => Some(composer.text_mut()),
+            Self::Submit(form) => Some(form.body_mut()),
             Self::Drafts(_) => None,
         }
     }
@@ -38,7 +43,7 @@ impl PullRequestModal {
 pub struct DraftEntry<'a> {
     pub draft: &'a DraftComment,
     /// Whether its lines are at the reviewed head; detached drafts need
-    /// attention.
+    /// attention and are not sent.
     pub attached: bool,
 }
 
@@ -47,6 +52,17 @@ pub struct DraftEntry<'a> {
 pub enum PullRequestModalView<'a> {
     Composer {
         composer: &'a Composer,
+        /// A reply or comment is being posted.
+        posting: bool,
+    },
+    Submit {
+        form: &'a SubmitForm,
+        number: u64,
+        /// Drafts the review will send.
+        draft_count: usize,
+        is_author: bool,
+        warnings: Vec<SubmitWarning>,
+        submitting: bool,
     },
     Drafts {
         list: &'a DraftList,
@@ -57,10 +73,20 @@ pub enum PullRequestModalView<'a> {
 impl App {
     /// The review-action modal on screen, prepared for drawing.
     pub fn pull_request_modal(&self) -> Option<PullRequestModalView<'_>> {
-        self.pull_requests.open()?;
-        Some(match self.pull_requests.modal()? {
+        let open = self.pull_requests.open()?;
+        let modal = self.pull_requests.modal()?;
+        Some(match modal {
             PullRequestModal::Composer(composer) => PullRequestModalView::Composer {
                 composer: composer.as_ref(),
+                posting: self.composer_is_posting(),
+            },
+            PullRequestModal::Submit(form) => PullRequestModalView::Submit {
+                form,
+                number: open.summary().number,
+                draft_count: open.drafts().attached(open.reviewed_head()).count(),
+                is_author: open.detail().is_some_and(|detail| detail.viewer.is_author),
+                warnings: self.submit_warnings(),
+                submitting: self.submitting_review(),
             },
             PullRequestModal::Drafts(list) => PullRequestModalView::Drafts {
                 list,
@@ -101,6 +127,7 @@ impl App {
     ) -> Option<KeyOutcome> {
         match self.pull_requests.modal()? {
             PullRequestModal::Composer(_) => self.handle_composer_key(key_event),
+            PullRequestModal::Submit(_) => self.handle_submit_key(key_event),
             PullRequestModal::Drafts(_) => self.handle_draft_list_key(key_event),
         }
         .or(Some(KeyOutcome::Handled))
@@ -121,9 +148,34 @@ impl App {
         }
         match key_event.code {
             KeyCode::Char('c') => self.start_inline_comment(),
+            KeyCode::Char('C') => self.start_conversation_comment(),
+            KeyCode::Char('R') => self.start_thread_reply(),
+            KeyCode::Char('T') => self.toggle_thread_resolved(),
+            KeyCode::Char('S') => self.open_submit_review(),
             KeyCode::Char('D') => self.open_draft_list(),
             _ => return Ok(None),
         }
         Ok(Some(KeyOutcome::Handled))
+    }
+
+    /// Dispatches a finished write to the feature that started it.
+    pub(super) fn handle_mutation_finished(
+        &mut self,
+        request_id: u64,
+        result: Result<MutationOutcome, ForgeError>,
+    ) -> bool {
+        let Some(mutation) = self.pull_requests.finish_mutation(request_id) else {
+            return false;
+        };
+        match mutation {
+            ForgeMutation::SubmitReview { number, drafts, .. } => {
+                self.finish_submit_review(number, drafts, result)
+            }
+            ForgeMutation::ReplyToThread { .. } | ForgeMutation::AddConversationComment { .. } => {
+                self.finish_comment_post(result)
+            }
+            ForgeMutation::SetThreadResolved { .. } => self.finish_thread_resolve(result),
+        }
+        true
     }
 }

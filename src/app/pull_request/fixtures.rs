@@ -266,6 +266,10 @@ impl App {
         self.start_inline_comment();
     }
 
+    pub(crate) fn open_submit_review_for_test(&mut self) {
+        self.open_submit_review();
+    }
+
     /// Types `text` into the open review modal's text field.
     pub(crate) fn type_in_pull_request_modal_for_test(&mut self, text: &str) {
         if let Some(area) = self.pull_request_modal_text() {

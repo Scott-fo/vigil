@@ -1,9 +1,10 @@
-//! The comment composer: a multi-line editor for the reviewer's draft
-//! comments on a pull request.
+//! The comment composer: one multi-line editor for every comment the
+//! reviewer writes on a pull request.
 //!
-//! A [`Composer`] knows what its text is for ([`ComposerTarget`]): a new
-//! draft on the selected lines, or an existing draft's body. Saving stores
-//! the draft locally; nothing is sent to GitHub.
+//! A [`Composer`] knows what its text is for ([`ComposerTarget`]). Saving a
+//! draft stays local; saving a reply or a conversation comment posts it to
+//! GitHub at once, and the composer stays open showing "posting…" until
+//! GitHub answers, keeping the text if it fails.
 //!
 //! Inline comments come from the diff cursor, or from a drag selection
 //! spanning lines. Only lines GitHub will accept qualify (see
@@ -13,6 +14,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
+    forge::ThreadId,
     git::{DiffSelectionPane, PatchLine, WhitespaceMode},
     review::{DraftAnchor, DraftId, suggestion_block, suggestion_source},
 };
@@ -22,6 +24,7 @@ use super::{
         ActivePane, App, SnackbarVariant, editor::AppCommand, keyboard::KeyOutcome,
         text_area::TextArea,
     },
+    gateway::{ForgeMutation, MutationOutcome},
     modal::PullRequestModal,
 };
 
@@ -40,6 +43,21 @@ pub enum ComposerTarget {
         path: String,
         anchor: DraftAnchor,
     },
+    /// A reply posted to a GitHub review thread.
+    Reply {
+        thread: ThreadId,
+        path: String,
+        line: Option<u32>,
+    },
+    /// A comment posted on the pull request's conversation.
+    Conversation,
+}
+
+impl ComposerTarget {
+    /// Whether saving posts to GitHub rather than storing a draft.
+    pub fn posts_immediately(&self) -> bool {
+        matches!(self, Self::Reply { .. } | Self::Conversation)
+    }
 }
 
 /// Whether Esc asked to throw away edits.
@@ -98,6 +116,10 @@ impl Composer {
         self.error.as_deref()
     }
 
+    pub(super) fn set_error(&mut self, error: impl Into<String>) {
+        self.error = Some(error.into());
+    }
+
     fn is_dirty(&self) -> bool {
         self.text.text() != self.original
     }
@@ -122,13 +144,11 @@ impl Composer {
 }
 
 impl App {
-    /// `c` in pull request review: a draft on the selected lines.
+    /// `c` in pull request review: a draft on the selected lines, or on the
+    /// overview a conversation comment.
     pub(in crate::app) fn start_inline_comment(&mut self) {
         if self.pull_request_overview_visible() {
-            self.show_snackbar(
-                "open a file and pick a line to comment on".to_string(),
-                SnackbarVariant::Info,
-            );
+            self.start_conversation_comment();
             return;
         }
         let Some(path) = self.selected_file().map(|file| file.path.clone()) else {
@@ -175,6 +195,15 @@ impl App {
             }
             Err(refusal) => self.show_snackbar(refusal.to_string(), SnackbarVariant::Info),
         }
+    }
+
+    /// A comment on the pull request's conversation (`C`, or `c` on the
+    /// overview).
+    pub(in crate::app) fn start_conversation_comment(&mut self) {
+        if self.pull_requests.open().is_none() {
+            return;
+        }
+        self.open_composer(Composer::new(ComposerTarget::Conversation, "", None));
     }
 
     /// Opens a draft in the composer to change its text.
@@ -235,7 +264,23 @@ impl App {
         rows
     }
 
+    /// Whether the composer's post to GitHub is running.
+    pub(in crate::app) fn composer_is_posting(&self) -> bool {
+        matches!(
+            self.pull_requests.in_flight_mutation(),
+            Some(
+                ForgeMutation::ReplyToThread { .. } | ForgeMutation::AddConversationComment { .. }
+            )
+        ) && matches!(
+            self.pull_requests.modal(),
+            Some(PullRequestModal::Composer(_))
+        )
+    }
+
     pub(super) fn handle_composer_key(&mut self, key_event: KeyEvent) -> Option<KeyOutcome> {
+        if self.composer_is_posting() {
+            return Some(KeyOutcome::Handled);
+        }
         let control = key_event.modifiers.contains(KeyModifiers::CONTROL);
         let Some(PullRequestModal::Composer(composer)) = self.pull_requests.modal_mut() else {
             return None;
@@ -269,7 +314,7 @@ impl App {
         Some(KeyOutcome::Handled)
     }
 
-    /// Ctrl-S: stores the draft.
+    /// Ctrl-S: stores a draft, or posts a reply or conversation comment.
     fn save_composer(&mut self) {
         let Some(PullRequestModal::Composer(composer)) = self.pull_requests.modal_mut() else {
             return;
@@ -287,7 +332,10 @@ impl App {
                 self.save_draft(draft);
                 self.pull_requests.set_modal(None);
                 self.clear_diff_text_selection();
-                self.show_snackbar("draft saved".to_string(), SnackbarVariant::Info);
+                self.show_snackbar(
+                    "draft saved · S submits your review".to_string(),
+                    SnackbarVariant::Info,
+                );
             }
             ComposerTarget::EditDraft { id, .. } => {
                 let draft = self
@@ -301,6 +349,45 @@ impl App {
                     self.save_draft(draft);
                     self.show_snackbar("draft updated".to_string(), SnackbarVariant::Info);
                 }
+            }
+            ComposerTarget::Reply { thread, .. } => {
+                self.start_forge_mutation(ForgeMutation::ReplyToThread { thread, body });
+            }
+            ComposerTarget::Conversation => {
+                let Some(number) = self.pull_requests.open_number() else {
+                    return;
+                };
+                self.start_forge_mutation(ForgeMutation::AddConversationComment { number, body });
+            }
+        }
+    }
+
+    /// A reply or conversation comment finished posting.
+    pub(super) fn finish_comment_post(
+        &mut self,
+        result: Result<MutationOutcome, crate::forge::ForgeError>,
+    ) {
+        match result {
+            Ok(outcome) => {
+                if matches!(
+                    self.pull_requests.modal(),
+                    Some(PullRequestModal::Composer(_))
+                ) {
+                    self.pull_requests.set_modal(None);
+                }
+                let message = match outcome {
+                    MutationOutcome::Replied => "reply posted",
+                    _ => "comment posted",
+                };
+                self.show_snackbar(message.to_string(), SnackbarVariant::Info);
+                self.reload_after_mutation(false);
+            }
+            Err(error) => {
+                let message = format!("GitHub rejected the comment: {error}");
+                if let Some(PullRequestModal::Composer(composer)) = self.pull_requests.modal_mut() {
+                    composer.set_error(message.clone());
+                }
+                self.show_snackbar(message, SnackbarVariant::Error);
             }
         }
     }

@@ -16,11 +16,19 @@ use crate::{
 use super::super::{frame::render_modal_frame, hints::render_hint_footer};
 use super::text::render_text_area;
 
-pub(super) fn render_composer(frame: &mut Frame, composer: &Composer) {
+pub(super) fn render_composer(frame: &mut Frame, composer: &Composer, posting: bool) {
     let target = composer.target();
     let (title, place) = match target {
         ComposerTarget::NewDraft { path, anchor } => ("New comment", place(path, anchor)),
         ComposerTarget::EditDraft { path, anchor, .. } => ("Edit draft", place(path, anchor)),
+        ComposerTarget::Reply { path, line, .. } => (
+            "Reply",
+            match line {
+                Some(line) => format!("{path}:{line}"),
+                None => path.clone(),
+            },
+        ),
+        ComposerTarget::Conversation => ("Comment", "on the conversation".to_string()),
     };
     let inner = render_modal_frame(frame, 84, 18, title);
     let [header, _, body, status, _, footer] = Layout::default()
@@ -40,7 +48,11 @@ pub(super) fn render_composer(frame: &mut Frame, composer: &Composer) {
         Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
     )];
     header_spans.push(Span::styled(
-        "  ·  a draft, kept on this machine",
+        if target.posts_immediately() {
+            "  ·  posts to GitHub now"
+        } else {
+            "  ·  draft, sent with your review"
+        },
         Style::new().fg(text_faint_color()),
     ));
     frame.render_widget(
@@ -54,10 +66,12 @@ pub(super) fn render_composer(frame: &mut Frame, composer: &Composer) {
         body,
         composer.text(),
         "Write Markdown. ⏎ starts a new line.",
-        true,
+        !posting,
     );
 
-    let status_line = if let Some(error) = composer.error() {
+    let status_line = if posting {
+        Some(Span::styled("posting…", Style::new().fg(warning_color())))
+    } else if let Some(error) = composer.error() {
         Some(Span::styled(
             error.to_string(),
             Style::new().fg(error_color()),
@@ -77,7 +91,12 @@ pub(super) fn render_composer(frame: &mut Frame, composer: &Composer) {
         );
     }
 
-    let mut hints = vec![("ctrl-s", "save draft"), ("ctrl-e", "$EDITOR")];
+    let save = match target {
+        ComposerTarget::NewDraft { .. } | ComposerTarget::EditDraft { .. } => "save draft",
+        ComposerTarget::Reply { .. } => "post reply",
+        ComposerTarget::Conversation => "post comment",
+    };
+    let mut hints = vec![("ctrl-s", save), ("ctrl-e", "$EDITOR")];
     if composer.can_suggest() {
         hints.push(("ctrl-g", "suggestion"));
     }

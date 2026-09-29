@@ -6,6 +6,8 @@ use crate::{
     review::DraftComment,
 };
 
+use super::gateway::MutationOutcome;
+
 /// Results of background pull request work, delivered through the app's event
 /// loop. Each carries the id of the request that produced it so superseded
 /// responses can be dropped.
@@ -49,6 +51,11 @@ pub enum PullRequestEvent {
     /// A background draft write failed; the drafts on screen are newer than
     /// the database.
     DraftWriteFailed(String),
+    /// A write to GitHub finished.
+    MutationFinished {
+        request_id: u64,
+        result: Result<MutationOutcome, ForgeError>,
+    },
     Tick(PullRequestTimer),
 }
 

@@ -179,11 +179,14 @@ pub(in crate::ui) fn overview_lines(
     lines
 }
 
-/// `c comment · D drafts`.
+/// `c comment · S submit review · D drafts`.
 fn action_hints_line() -> Line<'static> {
     let key = Style::new().fg(text_color()).add_modifier(Modifier::BOLD);
     let mut spans = vec![Span::raw(INDENT)];
-    for (index, (keys, label)) in [("c", "comment"), ("D", "drafts")].into_iter().enumerate() {
+    for (index, (keys, label)) in [("c", "comment"), ("S", "submit review"), ("D", "drafts")]
+        .into_iter()
+        .enumerate()
+    {
         if index > 0 {
             spans.push(faint(" · "));
         }
@@ -205,7 +208,7 @@ fn push_drafts(lines: &mut Vec<Line<'static>>, drafts: &[DraftEntry<'_>], width:
         extra.push(faint(" · "));
         extra.push(colored(format!("{stale} need attention"), warning_color()));
     }
-    extra.push(faint(" · D edits"));
+    extra.push(faint(" · S submits · D edits"));
     section(lines, "Your drafts", extra);
     for entry in drafts {
         let draft = entry.draft;

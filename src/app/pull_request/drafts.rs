@@ -341,6 +341,16 @@ impl App {
         }
     }
 
+    /// Deletes drafts a submitted review sent, from the open pull request if
+    /// it is still the one reviewed, and from the database either way.
+    pub(in crate::app) fn delete_submitted_drafts(&mut self, number: u64, ids: Vec<DraftId>) {
+        if self.pull_requests.open_number() == Some(number) {
+            self.delete_drafts(ids);
+        } else {
+            self.write_drafts(DraftWriteRequest::Delete(ids));
+        }
+    }
+
     /// Builds a new draft on the reviewed head.
     pub(in crate::app) fn new_draft(
         &self,

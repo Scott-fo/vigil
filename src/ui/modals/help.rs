@@ -151,9 +151,13 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
             Section {
                 title: "Reviewing a pull request",
                 keys: vec![
-                    ("c", "draft a comment on line or selection"),
+                    ("c", "comment on line or selection"),
+                    ("c on overview / C", "comment on the conversation"),
+                    ("R", "reply to the thread on this line"),
+                    ("T", "resolve / reopen that thread"),
                     ("D", "drafts: edit or delete"),
-                    ("composer: ctrl-s", "save the draft"),
+                    ("S", "submit review"),
+                    ("composer: ctrl-s", "save the draft, or post"),
                     ("composer: ⏎", "new line"),
                     ("composer: ctrl-e", "write in $EDITOR"),
                     ("composer: ctrl-g", "insert a suggestion block"),

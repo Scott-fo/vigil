@@ -220,7 +220,7 @@ impl App {
 
     /// Reloads reviews, comments, and checks for the pull request under
     /// review, leaving its diff alone.
-    fn reload_open_pull_request_detail(&mut self) {
+    pub(in crate::app) fn reload_open_pull_request_detail(&mut self) {
         let Some(github) = self.pull_requests.github().cloned() else {
             return;
         };

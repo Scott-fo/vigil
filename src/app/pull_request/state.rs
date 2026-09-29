@@ -10,6 +10,7 @@ use crate::{
 
 use super::{
     drafts::{DraftBook, DraftPersistence, DraftWriter},
+    gateway::{ForgeGateway, ForgeMutation},
     list::PullRequestListState,
     modal::PullRequestModal,
     task::{OwnedTask, RequestSlot},
@@ -163,6 +164,11 @@ impl OpenPullRequest {
         self.drafts_load.complete(id)
     }
 
+    #[cfg(test)]
+    pub(in crate::app) fn set_newer_head_for_test(&mut self, head: &str) {
+        self.newer_head = Some(head.to_string());
+    }
+
     /// Redraws the thread model from GitHub's threads and the drafts.
     pub(in crate::app) fn rebuild_threads(&mut self) {
         let review_threads = self
@@ -245,6 +251,10 @@ pub(in crate::app) struct PullRequests {
     lookup: RequestSlot,
     /// The review-action modal on screen, if any.
     modal: Option<PullRequestModal>,
+    /// The write to GitHub in flight; at most one runs at a time.
+    mutation: RequestSlot,
+    in_flight: Option<ForgeMutation>,
+    gateway: ForgeGateway,
     draft_persistence: DraftPersistence,
     draft_writer: Option<DraftWriter>,
 }
@@ -264,6 +274,9 @@ impl PullRequests {
     fn with_connection(connection: ForgeConnection, draft_persistence: DraftPersistence) -> Self {
         Self {
             modal: None,
+            mutation: RequestSlot::default(),
+            in_flight: None,
+            gateway: ForgeGateway::default(),
             draft_persistence,
             draft_writer: None,
             connection,
@@ -580,7 +593,9 @@ impl PullRequests {
     }
 
     /// Ends the review of the open pull request, cancelling its loads and
-    /// polling and closing its modals.
+    /// polling and closing its modals. A write to GitHub already in flight
+    /// still finishes and reports, so a submitted review's drafts are
+    /// deleted even after the review screen moved on.
     pub(in crate::app) fn close(&mut self) {
         if self.open.take().is_some() {
             self.detail.cancel();
@@ -602,6 +617,47 @@ impl PullRequests {
 
     pub(in crate::app) fn set_modal(&mut self, modal: Option<PullRequestModal>) {
         self.modal = modal;
+    }
+
+    pub(in crate::app) fn mutation_in_flight(&self) -> bool {
+        self.in_flight.is_some()
+    }
+
+    pub(in crate::app) fn in_flight_mutation(&self) -> Option<&ForgeMutation> {
+        self.in_flight.as_ref()
+    }
+
+    pub(in crate::app) fn begin_mutation(&mut self, mutation: ForgeMutation) -> u64 {
+        self.in_flight = Some(mutation);
+        self.mutation.begin()
+    }
+
+    /// Keeps the task of a running mutation. Unlike reads, it is not aborted
+    /// when superseded: a write is never cancelled midway.
+    pub(in crate::app) fn attach_mutation(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {
+        self.mutation.attach_detached(id, handle);
+    }
+
+    /// The mutation `id` finished; returns it unless it is stale.
+    pub(in crate::app) fn finish_mutation(&mut self, id: u64) -> Option<ForgeMutation> {
+        if !self.mutation.complete(id) {
+            return None;
+        }
+        self.in_flight.take()
+    }
+
+    #[cfg(test)]
+    pub(in crate::app) fn mutation_request_id(&self) -> u64 {
+        self.mutation.current_id()
+    }
+
+    #[cfg(test)]
+    pub(in crate::app) fn gateway(&self) -> &ForgeGateway {
+        &self.gateway
+    }
+
+    pub(in crate::app) fn gateway_mut(&mut self) -> &mut ForgeGateway {
+        &mut self.gateway
     }
 
     pub(in crate::app) fn draft_persistence(&self) -> DraftPersistence {

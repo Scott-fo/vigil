@@ -80,7 +80,7 @@ pub(super) fn render_drafts(frame: &mut Frame, list: &DraftList, drafts: &[Draft
         )
     } else {
         Span::styled(
-            "Drafts stay on this machine until you submit a review.",
+            "Drafts stay on this machine until S submits them.",
             Style::new().fg(text_faint_color()),
         )
     };
