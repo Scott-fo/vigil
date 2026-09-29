@@ -80,7 +80,7 @@ pub struct BlameCommitDetails {
     pub compare_selection: Option<CommitCompareSelection>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchCompareSelection {
     pub source_ref: String,
     pub destination_ref: String,

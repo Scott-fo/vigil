@@ -30,6 +30,7 @@ mod launch;
 mod modal_lookup;
 mod mouse;
 mod navigation;
+mod pull_request;
 mod repo_state;
 mod runtime;
 mod sidebar_state;
@@ -50,6 +51,13 @@ use self::diff_search::{DiffSearchIndexReadiness, DiffSearchNavigationTarget};
 use self::file_filter::ExcludeSuffixes;
 pub use self::launch::AppLaunchOptions;
 use self::modal_lookup::ModalLookupIndex;
+use self::pull_request::PullRequests;
+#[cfg(test)]
+pub(crate) use self::pull_request::fixtures as pull_request_fixtures;
+pub use self::pull_request::{
+    PULL_REQUEST_LIST_FILTERS, PullRequestEvent, PullRequestListStatus, PullRequestListView,
+    PullRequestOverview, PullRequestPage, PullRequestSelection, PullRequestTimer, QueryInput,
+};
 use crate::{
     event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{
@@ -131,6 +139,21 @@ pub enum ReviewMode {
     WorkingTree,
     CommitCompare(CommitCompareSelection),
     BranchCompare(BranchCompareSelection),
+    /// A GitHub pull request. Diffs run through the branch-compare path with
+    /// the selection's `compare` endpoints.
+    PullRequest(PullRequestSelection),
+}
+
+/// Which full-screen view fills the terminal. Modals and notices draw over
+/// either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Screen {
+    /// Sidebar, diff pane, and footer (or the splash when there is nothing
+    /// to review).
+    #[default]
+    Review,
+    /// GitHub pull requests to pick one to review.
+    PullRequestList,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,6 +322,8 @@ pub struct App {
     viewed_files: ViewedFiles,
     viewed_scope: Option<ViewedScope>,
     viewed_request_id: u64,
+    screen: Screen,
+    pull_requests: PullRequests,
     pub snackbar_notice: Option<SnackbarNotice>,
     pub snackbar_generation: u64,
     pub status_message: Option<String>,

@@ -22,7 +22,9 @@ impl App {
         if let Some(snapshot) = self.review_diff_snapshot.as_ref() {
             return DiffStatsState::Ready(match self.review_mode {
                 ReviewMode::WorkingTree => snapshot.stats_for_working_tree(&self.files),
-                ReviewMode::CommitCompare(_) | ReviewMode::BranchCompare(_) => snapshot.stats(),
+                ReviewMode::CommitCompare(_)
+                | ReviewMode::BranchCompare(_)
+                | ReviewMode::PullRequest(_) => snapshot.stats(),
             });
         }
 
@@ -162,7 +164,10 @@ async fn load_review_diff_stats(
         ReviewMode::CommitCompare(selection) => {
             git::load_review_diff_stats_for_commit_compare(repo_root, selection, diff_options).await
         }
-        ReviewMode::BranchCompare(selection) => {
+        ReviewMode::BranchCompare(selection)
+        | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+            compare: selection, ..
+        }) => {
             git::load_review_diff_stats_for_branch_compare(repo_root, selection, diff_options).await
         }
     }

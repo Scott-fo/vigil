@@ -5,7 +5,7 @@ mod modal;
 mod open;
 mod pane;
 
-use super::{App, editor::AppCommand};
+use super::{App, Screen, editor::AppCommand};
 
 pub(super) enum KeyOutcome {
     Handled,
@@ -31,6 +31,11 @@ impl App {
         key_event: KeyEvent,
     ) -> color_eyre::Result<Option<AppCommand>> {
         if self.handle_modal_key(key_event).await? {
+            return Ok(None);
+        }
+
+        if self.screen == Screen::PullRequestList {
+            self.handle_pull_request_list_key(key_event);
             return Ok(None);
         }
 

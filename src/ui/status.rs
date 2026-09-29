@@ -17,6 +17,7 @@ use crate::git::{
 use crate::sidebar::SidebarSection;
 
 use super::layout::top_right_rect;
+use super::pull_request::pull_request_chip_spans;
 use super::{
     NOTICE_WIDTH, chip_color, error_color, panel_color, primary_color, success_color,
     surface_color, text_color, text_faint_color, text_subtle_color, warning_color,
@@ -39,6 +40,10 @@ pub enum FooterAction {
     FindFile,
     SearchDiff,
     OpenBranches,
+    /// The current branch's pull request chip.
+    OpenPullRequest,
+    /// The "new commits" notice while reviewing a pull request.
+    ReloadPullRequest,
 }
 
 /// A run of right-hand footer text, optionally clickable.
@@ -222,7 +227,7 @@ fn review_target_segments(app: &App) -> Vec<FooterSegment> {
                 Some(snapshot) => branch_readout_spans(snapshot),
                 None => vec![Span::styled("working tree", faint)],
             };
-            vec![
+            let mut segments = vec![
                 FooterSegment::spans(vec![
                     Span::styled(repo_name, subtle),
                     Span::styled(" · ", faint),
@@ -231,7 +236,29 @@ fn review_target_segments(app: &App) -> Vec<FooterSegment> {
                     spans: branch,
                     action: Some(FooterAction::OpenBranches),
                 },
-            ]
+            ];
+            if let Some(summary) = app.current_branch_pull_request() {
+                segments.push(FooterSegment::plain(" "));
+                segments.push(FooterSegment {
+                    spans: pull_request_chip_spans(summary),
+                    action: Some(FooterAction::OpenPullRequest),
+                });
+            }
+            segments
+        }
+        mode @ ReviewMode::PullRequest(_) => {
+            let mut segments = vec![FooterSegment::spans(compare_target_spans(mode))];
+            if app.pull_request_has_newer_head() {
+                segments.push(FooterSegment::plain(" "));
+                segments.push(FooterSegment {
+                    spans: vec![Span::styled(
+                        " new commits · r reload ",
+                        Style::new().fg(warning_color()).bg(chip_color()),
+                    )],
+                    action: Some(FooterAction::ReloadPullRequest),
+                });
+            }
+            segments
         }
         mode => vec![FooterSegment::spans(compare_target_spans(mode))],
     }
@@ -252,6 +279,13 @@ fn compare_target_spans(mode: &ReviewMode) -> Vec<Span<'static>> {
             Span::styled(selection.source_ref.clone(), subtle),
             Span::styled(" → ", faint),
             Span::styled(selection.destination_ref.clone(), subtle),
+        ],
+        ReviewMode::PullRequest(selection) => vec![
+            Span::styled(format!("#{}", selection.number), subtle),
+            Span::styled("  ", faint),
+            Span::styled(selection.base_ref_name.clone(), subtle),
+            Span::styled(" ← ", faint),
+            Span::styled(selection.head_ref_name.clone(), subtle),
         ],
     }
 }

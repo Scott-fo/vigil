@@ -43,11 +43,14 @@ impl App {
     pub fn new_for_benchmarks(repo_root: PathBuf) -> Self {
         let preference = LaunchPreference::for_benchmarks();
         theme::set_active_theme(&preference.theme_name, preference.theme_mode);
-        Self::build_base_app(
+        let mut app = Self::build_base_app(
             repo_root,
             None,
             EventHandler::without_event_task(),
             preference,
-        )
+        );
+        // Benchmarks and tests never reach GitHub.
+        app.pull_requests = super::pull_request::PullRequests::disabled();
+        app
     }
 }

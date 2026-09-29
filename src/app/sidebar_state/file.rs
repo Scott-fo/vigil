@@ -32,6 +32,7 @@ impl App {
     }
 
     pub(in crate::app) async fn select_file_at(&mut self, index: usize) -> color_eyre::Result<()> {
+        self.show_pull_request_files();
         if self.files.is_empty() {
             self.selected_file_index = 0;
             self.sync_sidebar_state();

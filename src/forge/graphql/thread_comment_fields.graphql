@@ -1,0 +1,10 @@
+
+fragment ThreadCommentFields on PullRequestReviewComment {
+  id
+  author { login }
+  body
+  createdAt
+  url
+  state
+  diffHunk
+}

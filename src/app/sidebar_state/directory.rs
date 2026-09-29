@@ -26,7 +26,7 @@ impl App {
                 self.focus_sidebar_path_or_nearest(key.section, &key.path);
                 true
             }
-            Some(SidebarItem::File { .. }) | None => false,
+            Some(SidebarItem::Overview | SidebarItem::File { .. }) | None => false,
         }
     }
 
@@ -47,7 +47,7 @@ impl App {
                     self.focus_sidebar_path_or_nearest(key.section, &key.path);
                 }
             }
-            Some(SidebarItem::File { .. }) | None => {}
+            Some(SidebarItem::Overview | SidebarItem::File { .. }) | None => {}
         }
     }
 
@@ -57,6 +57,7 @@ impl App {
         };
 
         match item {
+            SidebarItem::Overview => {}
             SidebarItem::Section { section, .. } => {
                 if self.collapsed_sections.insert(section) {
                     self.rebuild_sidebar_items();

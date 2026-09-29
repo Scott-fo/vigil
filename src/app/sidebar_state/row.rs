@@ -18,6 +18,12 @@ impl App {
         self.sidebar_state.select(Some(bounded_index));
         self.ensure_selected_sidebar_item_visible(Some(bounded_index));
 
+        match self.sidebar_items.get(bounded_index) {
+            Some(SidebarItem::Overview) => self.show_pull_request_overview(),
+            Some(SidebarItem::File { .. }) => self.show_pull_request_files(),
+            Some(SidebarItem::Section { .. } | SidebarItem::Header { .. }) | None => {}
+        }
+
         let selected_file_path = self
             .sidebar_items
             .get(bounded_index)

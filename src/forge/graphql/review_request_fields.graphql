@@ -1,0 +1,10 @@
+
+fragment ReviewRequestFields on ReviewRequest {
+  requestedReviewer {
+    __typename
+    ... on User { login }
+    ... on Bot { login }
+    ... on Mannequin { login }
+    ... on Team { slug name }
+  }
+}

@@ -46,7 +46,19 @@ impl App {
                 handled()
             }
             KeyCode::Char('r') => {
-                self.refresh().await?;
+                if self.pull_request_selection().is_some() {
+                    self.reload_open_pull_request();
+                } else {
+                    self.refresh().await?;
+                }
+                handled()
+            }
+            KeyCode::Char('O') => {
+                self.open_current_branch_pull_request();
+                handled()
+            }
+            KeyCode::Char('L') => {
+                self.open_pull_request_list();
                 handled()
             }
             KeyCode::Char('i') => {

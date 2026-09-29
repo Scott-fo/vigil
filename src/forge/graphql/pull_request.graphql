@@ -1,0 +1,68 @@
+query PullRequest($owner: String!, $name: String!, $number: Int!) {
+  viewer { login }
+  repository(owner: $owner, name: $name) {
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
+    autoMergeAllowed
+    deleteBranchOnMerge
+    viewerDefaultMergeMethod
+    pullRequest(number: $number) {
+      ...SummaryFields
+      id
+      body
+      createdAt
+      mergeable
+      mergeStateStatus
+      viewerDidAuthor
+      viewerCanUpdate
+      viewerCanClose
+      viewerCanReopen
+      viewerCanEnableAutoMerge
+      viewerCanDisableAutoMerge
+      viewerCanDeleteHeadRef
+      commitCount: commits { totalCount }
+      autoMergeRequest {
+        mergeMethod
+        enabledAt
+        enabledBy { login }
+      }
+      reviewRequests(first: 100) {
+        pageInfo { hasNextPage endCursor }
+        nodes { ...ReviewRequestFields }
+      }
+      latestReviews(first: 100) {
+        pageInfo { hasNextPage endCursor }
+        nodes { ...ReviewFields }
+      }
+      viewerPendingReviews: reviews(first: 1, states: [PENDING]) {
+        nodes {
+          id
+          createdAt
+          body
+          comments { totalCount }
+        }
+      }
+      comments(first: 100) {
+        pageInfo { hasNextPage endCursor }
+        nodes { ...ConversationCommentFields }
+      }
+      reviewThreads(first: 50) {
+        pageInfo { hasNextPage endCursor }
+        nodes { ...ThreadFields }
+      }
+      checks: commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: 100) {
+                pageInfo { hasNextPage endCursor }
+                nodes { ...CheckFields }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

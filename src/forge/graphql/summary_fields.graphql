@@ -1,0 +1,32 @@
+
+fragment SummaryFields on PullRequest {
+  number
+  title
+  url
+  state
+  isDraft
+  reviewDecision
+  author { login }
+  headRefName
+  baseRefName
+  headRefOid
+  baseRefOid
+  additions
+  deletions
+  changedFiles
+  updatedAt
+  isCrossRepository
+  checkRollup: commits(last: 1) {
+    nodes {
+      commit {
+        statusCheckRollup {
+          state
+          contexts(first: 1) {
+            checkRunCountsByState { state count }
+            statusContextCountsByState { state count }
+          }
+        }
+      }
+    }
+  }
+}

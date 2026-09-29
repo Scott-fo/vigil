@@ -1,0 +1,22 @@
+
+fragment ThreadFields on PullRequestReviewThread {
+  id
+  path
+  diffSide
+  line
+  startLine
+  startDiffSide
+  originalLine
+  originalStartLine
+  subjectType
+  isResolved
+  isOutdated
+  resolvedBy { login }
+  viewerCanResolve
+  viewerCanUnresolve
+  viewerCanReply
+  comments(first: 50) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ...ThreadCommentFields }
+  }
+}

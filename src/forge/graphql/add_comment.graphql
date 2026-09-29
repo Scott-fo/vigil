@@ -1,0 +1,5 @@
+mutation AddConversationComment($input: AddCommentInput!) {
+  addComment(input: $input) {
+    commentEdge { node { ...ConversationCommentFields } }
+  }
+}

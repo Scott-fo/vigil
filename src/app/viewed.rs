@@ -97,6 +97,9 @@ impl App {
     }
 
     pub(in crate::app) fn toggle_selected_file_viewed(&mut self) {
+        if self.pull_request_overview_visible() {
+            return;
+        }
         let Some(path) = self.selected_file().map(|file| file.path.clone()) else {
             return;
         };
@@ -107,6 +110,9 @@ impl App {
     /// Marks the selected file viewed, then selects the next unviewed file in
     /// sidebar order, wrapping around.
     pub(in crate::app) async fn mark_viewed_and_select_next(&mut self) -> color_eyre::Result<()> {
+        if self.pull_request_overview_visible() {
+            return Ok(());
+        }
         let Some(path) = self.selected_file().map(|file| file.path.clone()) else {
             return Ok(());
         };
@@ -176,6 +182,11 @@ fn review_scope_from_mode(mode: &ReviewMode) -> ReviewScope {
         ReviewMode::BranchCompare(selection) => ReviewScope::BranchCompare {
             source_ref: selection.source_ref.clone(),
             destination_ref: selection.destination_ref.clone(),
+        },
+        // Keyed by number, not commits: marks survive new pushes and clear
+        // per file only when that file's diff changes.
+        ReviewMode::PullRequest(selection) => ReviewScope::PullRequest {
+            number: selection.number,
         },
     }
 }

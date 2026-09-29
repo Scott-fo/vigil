@@ -15,6 +15,9 @@ impl App {
         self.mouse_position = Some(Position::new(mouse_event.column, mouse_event.row));
         match ui::hovered_pane_at(self, mouse_event.column, mouse_event.row, width, height) {
             Some(ActivePane::Sidebar) => self.scroll_sidebar(delta),
+            Some(ActivePane::Diff) if self.pull_request_overview_visible() => {
+                self.scroll_pull_request_overview(delta);
+            }
             Some(ActivePane::Diff) => {
                 self.clear_diff_text_selection();
                 self.page_or_scroll_diff(delta);

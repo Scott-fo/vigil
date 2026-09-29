@@ -13,4 +13,6 @@ pub enum ReviewScope {
         source_ref: String,
         destination_ref: String,
     },
+    /// A GitHub pull request, whatever its head and base currently are.
+    PullRequest { number: u64 },
 }

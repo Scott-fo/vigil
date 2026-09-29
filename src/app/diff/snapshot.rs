@@ -212,7 +212,9 @@ impl App {
             Ok(snapshot) => {
                 self.review_diff_stats = Some(match self.review_mode {
                     ReviewMode::WorkingTree => snapshot.stats_for_working_tree(&self.files),
-                    ReviewMode::CommitCompare(_) | ReviewMode::BranchCompare(_) => snapshot.stats(),
+                    ReviewMode::CommitCompare(_)
+                    | ReviewMode::BranchCompare(_)
+                    | ReviewMode::PullRequest(_) => snapshot.stats(),
                 });
                 self.review_diff_stats_error = None;
                 self.review_diff_snapshot = Some(Arc::new(snapshot));
@@ -302,7 +304,10 @@ async fn load_review_diff_text_index(
             )
             .await
         }
-        ReviewMode::BranchCompare(selection) => {
+        ReviewMode::BranchCompare(selection)
+        | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+            compare: selection, ..
+        }) => {
             git::load_review_diff_text_index_for_branch_compare_streaming(
                 repo_root,
                 selection,
@@ -330,5 +335,6 @@ fn review_diff_snapshot_cache_key_prefix(review_mode: &ReviewMode) -> &'static s
         ReviewMode::WorkingTree => "working-tree",
         ReviewMode::CommitCompare(_) => "commit",
         ReviewMode::BranchCompare(_) => "branch",
+        ReviewMode::PullRequest(_) => "pull-request",
     }
 }

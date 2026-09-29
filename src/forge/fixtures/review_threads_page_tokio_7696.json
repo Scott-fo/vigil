@@ -1,0 +1,103 @@
+{
+ "data": {
+  "repository": {
+   "pullRequest": {
+    "reviewThreads": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": "Y3Vyc29yOnYyOpK0MjAyNS0xMi0wNVQwNjoyMDoxNFrOZNVXPA=="
+     },
+     "nodes": [
+      {
+       "id": "PRRT_kwDOBAsbdc5ifa4E",
+       "path": "tokio/src/fs/read.rs",
+       "diffSide": "RIGHT",
+       "line": 65,
+       "startLine": 65,
+       "startDiffSide": null,
+       "originalLine": 65,
+       "originalStartLine": null,
+       "subjectType": "LINE",
+       "isResolved": true,
+       "isOutdated": false,
+       "resolvedBy": {
+        "login": "mox692"
+       },
+       "viewerCanResolve": false,
+       "viewerCanUnresolve": false,
+       "viewerCanReply": true,
+       "comments": {
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpK0MjAyNS0xMS0xOFQxMzoyMDoxOFrOl0oCkA=="
+        },
+        "nodes": [
+         {
+          "id": "PRRC_kwDOBAsbdc6XQgUr",
+          "author": {
+           "login": "martin-g"
+          },
+          "body": "Any reason why `cfg_io_uring! {` is not used here ?",
+          "createdAt": "2025-11-18T11:26:24Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2537686315",
+          "state": "SUBMITTED",
+          "diffHunk": "+        feature = \"rt\",\n+        feature = \"fs\",\n+        target_os = \"linux\"\n+    ))]"
+         },
+         {
+          "id": "PRRC_kwDOBAsbdc6XSgKQ",
+          "author": {
+           "login": "Daksh14"
+          },
+          "body": "@martin-augment its following the currently used code block macro  here in `tokio/src/fs/open_options.rs`, I can change those in a different \"refactor\" PR https…",
+          "createdAt": "2025-11-18T13:20:18Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2538209936",
+          "state": "SUBMITTED",
+          "diffHunk": "+        feature = \"rt\",\n+        feature = \"fs\",\n+        target_os = \"linux\"\n+    ))]"
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDOBAsbdc5ifkcT",
+       "path": "tokio/src/io/uring/read.rs",
+       "diffSide": "RIGHT",
+       "line": null,
+       "startLine": null,
+       "startDiffSide": null,
+       "originalLine": 41,
+       "originalStartLine": null,
+       "subjectType": "LINE",
+       "isResolved": true,
+       "isOutdated": true,
+       "resolvedBy": {
+        "login": "Daksh14"
+       },
+       "viewerCanResolve": false,
+       "viewerCanUnresolve": false,
+       "viewerCanReply": true,
+       "comments": {
+        "pageInfo": {
+         "hasNextPage": false,
+         "endCursor": "Y3Vyc29yOnYyOpK0MjAyNS0xMS0xOFQxMTozNzozMVrOl0Lf3w=="
+        },
+        "nodes": [
+         {
+          "id": "PRRC_kwDOBAsbdc6XQt_f",
+          "author": {
+           "login": "martin-g"
+          },
+          "body": "```suggestion\n    // dynamic buffer with uninitialized memory. The read happens on uninitialized\n```",
+          "createdAt": "2025-11-18T11:37:31Z",
+          "url": "https://github.com/tokio-rs/tokio/pull/7696#discussion_r2537742303",
+          "state": "SUBMITTED",
+          "diffHunk": "+\n+impl Op<Read> {\n+    // Submit a request to read a FD at given length and offset into a\n+    // dynamic buffer with uinitialized memory. The read happens on unitialized"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

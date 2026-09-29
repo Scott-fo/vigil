@@ -478,6 +478,10 @@ impl DiffView {
             })
     }
 
+    /// The old and new line numbers a display row shows, reported only on the
+    /// last display row of a soft-wrapped line. Annotations drawn under a
+    /// line (such as review comments) anchor here so they never split a
+    /// wrapped line. Gap, header, and marker rows have no anchor.
     pub fn display_line_anchor(
         &mut self,
         mode: DiffViewMode,
@@ -488,11 +492,10 @@ impl DiffView {
         self.ensure_display_cache(mode, width, line_wrap);
         let row_refs = self.display_cache.entry(mode).row_refs.as_slice();
         let anchor = self.anchor_for_display_refs(*row_refs.get(display_index)?)?;
-        if display_index > 0
-            && row_refs
-                .get(display_index - 1)
-                .and_then(|previous| self.anchor_for_display_refs(*previous))
-                == Some(anchor)
+        if row_refs
+            .get(display_index + 1)
+            .and_then(|next| self.anchor_for_display_refs(*next))
+            == Some(anchor)
         {
             return None;
         }

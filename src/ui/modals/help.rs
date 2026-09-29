@@ -91,7 +91,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
         ("B", "branches: switch, create, sync"),
         ("w", "open worktree picker"),
         ("t", "open theme picker"),
-        ("Ctrl-L", "reset compare mode"),
+        ("Ctrl-L", "back to working tree"),
         ("p / P", "pull / push current branch"),
         ("q", "quit"),
     ];
@@ -100,10 +100,25 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
     }
 
     [
-        vec![Section {
-            title: "Global",
-            keys: global,
-        }],
+        vec![
+            Section {
+                title: "Global",
+                keys: global,
+            },
+            Section {
+                title: "Pull requests",
+                keys: vec![
+                    ("L", "pull request list"),
+                    ("O", "review this branch's pull request"),
+                    ("r", "refetch the pull request under review"),
+                    ("] on overview", "step into the first file"),
+                    ("Ctrl-L", "leave pull request review"),
+                    ("list: tab / 1-3", "switch tab"),
+                    ("list: / then #17", "filter, or open any number"),
+                    ("list: ⏎ / esc", "open / back"),
+                ],
+            },
+        ],
         vec![
             Section {
                 title: "Navigation",

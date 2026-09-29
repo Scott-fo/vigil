@@ -88,6 +88,7 @@ impl App {
         ) {
             panel.seed_selection(snapshot);
         }
+        self.refresh_current_branch_pull_request(false);
         true
     }
 }

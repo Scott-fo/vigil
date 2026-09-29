@@ -1,6 +1,7 @@
 pub mod app;
 pub mod cli;
 pub mod event;
+pub mod forge;
 pub mod git;
 pub mod review;
 pub mod sidebar;

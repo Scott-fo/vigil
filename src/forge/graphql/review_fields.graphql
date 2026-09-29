@@ -1,0 +1,9 @@
+
+fragment ReviewFields on PullRequestReview {
+  id
+  author { login }
+  state
+  body
+  submittedAt
+  url
+}

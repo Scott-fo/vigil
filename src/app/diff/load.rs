@@ -29,6 +29,12 @@ impl App {
                 "branch:{}:{}",
                 selection.source_ref, selection.destination_ref
             ),
+            // Commit ids, not refs: a reload that fetches new commits must
+            // not reuse diffs cached for the old head.
+            ReviewMode::PullRequest(selection) => format!(
+                "pull-request:{}:{}:{}",
+                selection.number, selection.head_oid, selection.base_oid
+            ),
         };
 
         DiffCacheKey {
@@ -187,7 +193,11 @@ impl App {
                         )
                         .await
                     }
-                    ReviewMode::BranchCompare(selection) => {
+                    ReviewMode::BranchCompare(selection)
+                    | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+                        compare: selection,
+                        ..
+                    }) => {
                         git::load_diff_preview_for_branch_compare(
                             &repo_root,
                             &file,
@@ -546,7 +556,9 @@ impl App {
         {
             let can_keep_current_review_diff = matches!(
                 self.review_mode,
-                ReviewMode::CommitCompare(_) | ReviewMode::BranchCompare(_)
+                ReviewMode::CommitCompare(_)
+                    | ReviewMode::BranchCompare(_)
+                    | ReviewMode::PullRequest(_)
             ) && previously_pending_cache_key.as_ref()
                 == Some(&cache_key)
                 && self.diff_view.has_diff_rows();
@@ -593,7 +605,11 @@ impl App {
                     )
                     .await
                 }
-                ReviewMode::BranchCompare(selection) => {
+                ReviewMode::BranchCompare(selection)
+                | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+                    compare: selection,
+                    ..
+                }) => {
                     git::load_diff_preview_for_branch_compare(
                         &repo_root,
                         &file,
@@ -847,7 +863,11 @@ async fn build_highlight_prefetch_event(
                 )
                 .await
             }
-            ReviewMode::BranchCompare(selection) => {
+            ReviewMode::BranchCompare(selection)
+            | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+                compare: selection,
+                ..
+            }) => {
                 git::load_diff_preview_for_branch_compare(
                     &repo_root,
                     &file,
@@ -881,7 +901,11 @@ async fn build_highlight_prefetch_event(
             ReviewMode::CommitCompare(selection) => {
                 git::load_diff_exact_context_for_commit_compare(&repo_root, &file, selection).await
             }
-            ReviewMode::BranchCompare(selection) => {
+            ReviewMode::BranchCompare(selection)
+            | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+                compare: selection,
+                ..
+            }) => {
                 git::load_diff_exact_context_for_branch_compare(&repo_root, &file, selection).await
             }
         }

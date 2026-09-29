@@ -1,0 +1,5 @@
+mutation ResolveThread($input: ResolveReviewThreadInput!) {
+  resolveReviewThread(input: $input) {
+    thread { isResolved }
+  }
+}

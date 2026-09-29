@@ -110,7 +110,11 @@ impl App {
                                 )
                                 .await
                             }
-                            ReviewMode::BranchCompare(selection) => {
+                            ReviewMode::BranchCompare(selection)
+                            | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+                                compare: selection,
+                                ..
+                            }) => {
                                 git::load_diff_preview_for_branch_compare(
                                     &repo_root,
                                     &file,
@@ -159,7 +163,11 @@ impl App {
                                 )
                                 .await
                             }
-                            ReviewMode::BranchCompare(selection) => {
+                            ReviewMode::BranchCompare(selection)
+                            | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+                                compare: selection,
+                                ..
+                            }) => {
                                 git::load_diff_exact_context_for_branch_compare(
                                     &repo_root, &file, selection,
                                 )
