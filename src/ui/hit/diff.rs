@@ -175,7 +175,7 @@ fn diff_body_state(
     terminal_width: u16,
     terminal_height: u16,
 ) -> Option<(Rect, PreparedDiffViewport)> {
-    if app.show_splash() {
+    if !super::review_panes_visible(app) {
         return None;
     }
 

@@ -100,10 +100,25 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
     }
 
     [
-        vec![Section {
-            title: "Global",
-            keys: global,
-        }],
+        vec![
+            Section {
+                title: "Global",
+                keys: global,
+            },
+            Section {
+                title: "Pull requests",
+                keys: vec![
+                    ("L", "pull request list"),
+                    ("O", "review this branch's pull request"),
+                    ("r", "refetch the pull request under review"),
+                    ("] on overview", "step into the first file"),
+                    ("Ctrl-L", "leave pull request review"),
+                    ("list: tab / 1-3", "switch tab"),
+                    ("list: / then #17", "filter, or open any number"),
+                    ("list: ⏎ / esc", "open / back"),
+                ],
+            },
+        ],
         vec![
             Section {
                 title: "Navigation",
@@ -129,15 +144,6 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                     ("1 / 2 / 3", "resolve conflict: shown sides / both"),
                     ("d", "discard selected file"),
                     ("c", "commit staged changes"),
-                ],
-            },
-            Section {
-                title: "Pull requests",
-                keys: vec![
-                    ("O", "review this branch's pull request"),
-                    ("r", "refetch the pull request under review"),
-                    ("] on overview", "step into the first file"),
-                    ("Ctrl-L", "leave pull request review"),
                 ],
             },
         ],

@@ -436,6 +436,47 @@ mod pull_requests {
     }
 
     #[test]
+    fn pull_request_list_renders_tabs_rows_and_truncation_where_clicks_land() {
+        use crate::{forge::PullRequestListFilter, ui::PullRequestListTarget};
+
+        let mut app = build_test_app();
+        app.show_pull_request_list_for_test(fixtures::pull_request_list(&[5, 17], 120));
+        let (width, height) = (140, 20);
+        let buffer = render_to_buffer(&mut app, width, height);
+        let text = buffer_text(&buffer);
+        print(&text);
+
+        assert!(text.contains("PULL REQUESTS  Scott-fo/vigil"));
+        assert!(text.contains("Needs my review 120"));
+        assert!(text.contains("Showing the 2 most recently updated of 120"));
+        assert!(!text.contains("CHANGES"), "the review screen is not drawn");
+
+        let tab = column_of(&buffer, 1, "Mine").expect("tabs render on row 1");
+        assert_eq!(
+            pull_request_list_target_at(&app, tab, 1, width, height),
+            Some(PullRequestListTarget::Tab(PullRequestListFilter::Mine))
+        );
+        let row = (0..height)
+            .find(|row| column_of(&buffer, *row, "Pull request number 17").is_some())
+            .expect("row renders");
+        assert!(text.lines().nth(row as usize).unwrap().contains("#17"));
+        assert_eq!(
+            pull_request_list_target_at(&app, 10, row, width, height),
+            Some(PullRequestListTarget::Row(1))
+        );
+        assert_eq!(
+            pull_request_list_target_at(&app, 10, row + 1, width, height),
+            None,
+            "below the last row"
+        );
+
+        // Review-screen hit testing is off while the list is up.
+        assert_eq!(footer_action_at(&app, 1, height - 1, width, height), None);
+        assert_eq!(hovered_pane_at(&app, 50, 5, width, height), None);
+        assert_eq!(sidebar_item_index_at(&app, 5, 5, width, height), None);
+    }
+
+    #[test]
     fn pull_request_footer_names_the_branches_under_review() {
         let mut app = pull_request_app(Vec::new());
         let text = buffer_text(&render_to_buffer(&mut app, 160, 20));

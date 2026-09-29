@@ -8,11 +8,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     fixtures,
+    list::{PullRequestListState, QueryInput},
     state::{BranchKey, ConnectOutcome, ConnectReason, PollOutcome, PullRequestPage, PullRequests},
 };
 use crate::{
-    app::{ActivePane, App, DiffViewMode, ReviewMode},
-    forge::{DiffSide, ForgeError, GitHub, RepositoryRef, Timestamp},
+    app::{ActivePane, App, DiffViewMode, ReviewMode, Screen},
+    forge::{DiffSide, ForgeError, GitHub, PullRequestListFilter, RepositoryRef, Timestamp},
     git::{self, FetchedPullRequest},
     sidebar::SidebarItem,
 };
@@ -499,4 +500,143 @@ async fn opening_a_fetched_pull_request_reviews_it_and_ctrl_l_leaves() {
     assert!(!app.pull_request_overview_visible());
 
     app.quit();
+}
+
+fn row_numbers(list: &PullRequestListState) -> Vec<u64> {
+    list.visible_rows().iter().map(|row| row.number).collect()
+}
+
+fn loaded_list(numbers: &[u64]) -> PullRequestListState {
+    let mut list = PullRequestListState::default();
+    let (id, filter) = list.begin_load();
+    list.finish_load(
+        id,
+        filter,
+        Ok(fixtures::pull_request_list(numbers, numbers.len() as u64)),
+    );
+    list
+}
+
+#[test]
+fn list_tabs_keep_their_pages_and_drop_stale_loads() {
+    let mut list = PullRequestListState::default();
+    let (needs_review, filter) = list.begin_load();
+    assert_eq!(filter, PullRequestListFilter::NeedsMyReview);
+
+    assert!(list.set_filter(PullRequestListFilter::Mine));
+    let (mine, filter) = list.begin_load();
+    assert_eq!(filter, PullRequestListFilter::Mine);
+    assert!(
+        !list.finish_load(
+            needs_review,
+            PullRequestListFilter::NeedsMyReview,
+            Ok(fixtures::pull_request_list(&[1], 1)),
+        ),
+        "the superseded load for the old tab is dropped"
+    );
+    assert!(list.finish_load(
+        mine,
+        PullRequestListFilter::Mine,
+        Ok(fixtures::pull_request_list(&[2, 3], 2)),
+    ));
+    assert_eq!(row_numbers(&list), vec![2, 3]);
+
+    assert!(list.set_filter(PullRequestListFilter::NeedsMyReview));
+    assert!(row_numbers(&list).is_empty(), "that tab never loaded");
+    assert!(!list.set_filter(PullRequestListFilter::NeedsMyReview));
+    assert!(list.cycle_filter(1));
+    assert_eq!(list.filter(), PullRequestListFilter::Mine);
+    assert_eq!(row_numbers(&list), vec![2, 3], "cached rows show at once");
+    assert!(list.cycle_filter(-2));
+    assert_eq!(list.filter(), PullRequestListFilter::AllOpen);
+}
+
+#[test]
+fn list_query_filters_rows_and_names_pull_request_numbers() {
+    let mut list = loaded_list(&[5, 17, 42]);
+    list.start_query();
+    assert_eq!(list.query_input(), QueryInput::Editing);
+    for ch in "#42".chars() {
+        list.push_query(ch);
+    }
+    assert_eq!(row_numbers(&list), vec![42]);
+    assert_eq!(list.query_number(), Some(42));
+
+    list.clear_query();
+    assert_eq!(list.query_input(), QueryInput::Off);
+    assert_eq!(row_numbers(&list), vec![5, 17, 42]);
+
+    for ch in "#99".chars() {
+        list.push_query(ch);
+    }
+    assert!(row_numbers(&list).is_empty());
+    assert!(list.selected_summary().is_none());
+    assert_eq!(
+        list.query_number(),
+        Some(99),
+        "Enter looks #99 up by number"
+    );
+}
+
+#[test]
+fn list_selection_follows_its_pull_request_across_reloads() {
+    let mut list = loaded_list(&[5, 17, 42]);
+    list.move_selection(1);
+    assert_eq!(list.selected_summary().map(|row| row.number), Some(17));
+
+    let (id, filter) = list.begin_load();
+    list.finish_load(id, filter, Ok(fixtures::pull_request_list(&[99, 17], 2)));
+    assert_eq!(list.selected_summary().map(|row| row.number), Some(17));
+    assert_eq!(list.selected(), 1);
+}
+
+#[tokio::test]
+async fn the_list_screen_takes_every_key_and_esc_returns_to_the_review() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+
+    app.handle_key_event(press(KeyCode::Char('L'), KeyModifiers::SHIFT))
+        .await
+        .unwrap();
+    assert_eq!(app.screen(), Screen::PullRequestList);
+
+    // Review shortcuts do nothing behind the list.
+    app.handle_key_event(press(KeyCode::Char('c'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert!(!app.commit_modal_open);
+
+    app.handle_key_event(press(KeyCode::Tab, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert_eq!(
+        app.pull_request_list_view().filter,
+        PullRequestListFilter::Mine
+    );
+    app.handle_key_event(press(KeyCode::Char('3'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert_eq!(
+        app.pull_request_list_view().filter,
+        PullRequestListFilter::AllOpen
+    );
+
+    app.handle_key_event(press(KeyCode::Char('/'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    app.handle_key_event(press(KeyCode::Char('q'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert!(app.running, "q is text while filtering");
+    assert_eq!(app.pull_request_list_view().query, "q");
+    app.handle_key_event(press(KeyCode::Esc, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert_eq!(app.pull_request_list_view().query, "");
+    assert_eq!(app.screen(), Screen::PullRequestList);
+
+    app.handle_key_event(press(KeyCode::Esc, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert_eq!(app.screen(), Screen::Review);
+    assert!(app.running);
 }

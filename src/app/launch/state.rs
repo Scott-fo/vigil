@@ -164,6 +164,7 @@ impl App {
             viewed_files: Default::default(),
             viewed_scope: None,
             viewed_request_id: 0,
+            screen: Default::default(),
             pull_requests: Default::default(),
             snackbar_notice: None,
             snackbar_generation: 0,

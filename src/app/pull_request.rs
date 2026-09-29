@@ -17,6 +17,12 @@
 //!   [`PullRequestSelection`]. The sidebar pins an overview page first. While
 //!   open, it is polled every 30 seconds; new commits raise a notice and `r`
 //!   refetches and reloads. Any other review mode ends it.
+//! - **The pull request list screen**
+//!   ([`Screen::PullRequestList`](super::Screen)): open pull requests per
+//!   [`PullRequestListFilter`](crate::forge::PullRequestListFilter) tab, kept
+//!   per tab, filtered by typed text, and reloaded every 60 seconds while on
+//!   screen. Enter opens the selected row; a query such as `#17` opens that
+//!   pull request by number even when it is closed or merged.
 //!
 //! Every request is matched by id: a response to a superseded request is
 //! dropped, and dropping the state aborts its tasks (and their `gh`
@@ -25,6 +31,8 @@
 mod connect;
 mod current_branch;
 mod event;
+mod list;
+mod list_screen;
 mod open;
 mod selection;
 mod state;
@@ -32,6 +40,8 @@ mod task;
 mod view;
 
 pub use self::event::{PullRequestEvent, PullRequestTimer};
+pub use self::list::{PULL_REQUEST_LIST_FILTERS, QueryInput};
+pub use self::list_screen::{PullRequestListStatus, PullRequestListView};
 pub use self::selection::PullRequestSelection;
 pub use self::state::PullRequestPage;
 pub(super) use self::state::PullRequests;
@@ -61,8 +71,19 @@ impl App {
             PullRequestEvent::Polled { request_id, result } => {
                 Ok(self.handle_pull_request_polled(request_id, result))
             }
+            PullRequestEvent::ListLoaded {
+                request_id,
+                filter,
+                result,
+            } => Ok(self.handle_pull_request_list_loaded(request_id, filter, result)),
+            PullRequestEvent::LookedUp { request_id, result } => {
+                Ok(self.handle_pull_request_looked_up(request_id, result))
+            }
             PullRequestEvent::Tick(PullRequestTimer::OpenPullRequest) => {
                 Ok(self.handle_open_pull_request_tick())
+            }
+            PullRequestEvent::Tick(PullRequestTimer::List) => {
+                Ok(self.handle_pull_request_list_tick())
             }
         }
     }

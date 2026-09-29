@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    super::{ActivePane, App, ReviewMode, SnackbarVariant},
+    super::{ActivePane, App, ReviewMode, Screen, SnackbarVariant},
     PullRequestEvent, PullRequestSelection, PullRequestTimer,
     state::{PollOutcome, PullRequestPage},
     task::spawn_ticker,
@@ -124,6 +124,9 @@ impl App {
             }
         }
         self.review_mode = ReviewMode::PullRequest(selection);
+        if self.screen == Screen::PullRequestList {
+            self.close_pull_request_list();
+        }
         if let Err(error) = self.refresh().await {
             self.show_snackbar(
                 format!("could not load the pull request diff: {error}"),

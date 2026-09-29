@@ -8,7 +8,10 @@ use crate::{
     review::ReviewThreads,
 };
 
-use super::task::{OwnedTask, RequestSlot};
+use super::{
+    list::PullRequestListState,
+    task::{OwnedTask, RequestSlot},
+};
 
 /// A current-branch lookup for the same branch and tip is skipped when the
 /// last one finished this recently. Branch snapshots reload on every working
@@ -174,6 +177,9 @@ pub(in crate::app) struct PullRequests {
     /// Detail that arrived while its pull request was still being fetched.
     early_detail: Option<Result<PullRequest, ForgeError>>,
     open: Option<OpenPullRequest>,
+    list: PullRequestListState,
+    /// A pull request looked up by number before it opens.
+    lookup: RequestSlot,
 }
 
 impl Default for PullRequests {
@@ -201,11 +207,20 @@ impl PullRequests {
             detail_number: None,
             early_detail: None,
             open: None,
+            list: PullRequestListState::default(),
+            lookup: RequestSlot::default(),
         }
     }
 
     pub(in crate::app) fn connection(&self) -> &ForgeConnection {
         &self.connection
+    }
+
+    /// Marks GitHub connected without probing it. Tests must not trigger
+    /// loads afterwards: they would run `gh` against the real repository.
+    #[cfg(test)]
+    pub(in crate::app) fn connect_for_test(&mut self, github: GitHub) {
+        self.connection = ForgeConnection::Connected(github);
     }
 
     pub(in crate::app) fn github(&self) -> Option<&GitHub> {
@@ -372,6 +387,33 @@ impl PullRequests {
         self.early_detail = None;
         self.opening = Some(summary);
         (self.fetch.begin(), self.detail.begin())
+    }
+
+    /// The number of the pull request whose commits are being fetched.
+    pub(in crate::app) fn opening_number(&self) -> Option<u64> {
+        self.opening.as_ref().map(|summary| summary.number)
+    }
+
+    pub(in crate::app) fn list(&self) -> &PullRequestListState {
+        &self.list
+    }
+
+    pub(in crate::app) fn list_mut(&mut self) -> &mut PullRequestListState {
+        &mut self.list
+    }
+
+    /// Starts looking up a pull request by number, superseding any earlier
+    /// lookup.
+    pub(in crate::app) fn begin_lookup(&mut self) -> u64 {
+        self.lookup.begin()
+    }
+
+    pub(in crate::app) fn attach_lookup(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {
+        self.lookup.attach(id, handle);
+    }
+
+    pub(in crate::app) fn finish_lookup(&mut self, id: u64) -> bool {
+        self.lookup.complete(id)
     }
 
     pub(in crate::app) fn attach_fetch(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {

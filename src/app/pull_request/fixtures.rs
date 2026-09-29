@@ -4,9 +4,9 @@ use crate::{
     app::{App, ReviewMode},
     forge::{
         Check, CheckCounts, CheckRollup, CheckState, CommentState, ConversationComment, DiffSide,
-        MergeMethod, MergeSettings, MergeStateStatus, Mergeability, PullRequest, PullRequestState,
-        PullRequestSummary, Review, ReviewDecision, ReviewState, ReviewThread, ThreadComment,
-        ThreadId, ThreadSubject, Timestamp, Viewer,
+        MergeMethod, MergeSettings, MergeStateStatus, Mergeability, PullRequest, PullRequestList,
+        PullRequestState, PullRequestSummary, Review, ReviewDecision, ReviewState, ReviewThread,
+        ThreadComment, ThreadId, ThreadSubject, Timestamp, Viewer,
     },
     git::{
         BranchEntry, BranchLocation, BranchSnapshot, BranchTip, FetchedPullRequest, FileEntry,
@@ -167,7 +167,42 @@ pub(crate) fn branch_snapshot(branch: &str) -> BranchSnapshot {
     }
 }
 
+/// A list page of `numbers`, capped from `total_count` matches.
+pub(crate) fn pull_request_list(numbers: &[u64], total_count: u64) -> PullRequestList {
+    PullRequestList {
+        pull_requests: numbers
+            .iter()
+            .map(|number| {
+                let mut row = summary(*number);
+                row.title = format!("Pull request number {number}");
+                row.author = format!("author{number}");
+                row
+            })
+            .collect(),
+        total_count,
+    }
+}
+
 impl App {
+    /// Shows the pull request list with `page` loaded for its first tab, as
+    /// if GitHub had answered. Nothing is spawned; keys that reload must not
+    /// be pressed afterwards.
+    pub(crate) fn show_pull_request_list_for_test(&mut self, page: PullRequestList) {
+        self.pull_requests
+            .connect_for_test(crate::forge::GitHub::new(
+                self.repo_root.clone(),
+                crate::forge::RepositoryRef {
+                    host: "github.com".to_string(),
+                    owner: "Scott-fo".to_string(),
+                    name: "vigil".to_string(),
+                },
+            ));
+        let list = self.pull_requests.list_mut();
+        let (id, filter) = list.begin_load();
+        list.finish_load(id, filter, Ok(page));
+        self.screen = crate::app::Screen::PullRequestList;
+    }
+
     pub(crate) fn select_pull_request_page_for_test(&mut self, page: super::PullRequestPage) {
         self.pull_requests.set_page(page);
         self.sync_sidebar_state();

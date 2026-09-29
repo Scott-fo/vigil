@@ -30,7 +30,7 @@ pub fn sidebar_item_index_at(
     terminal_width: u16,
     terminal_height: u16,
 ) -> Option<usize> {
-    if app.show_splash() || app.sidebar_hidden {
+    if !super::review_panes_visible(app) || app.sidebar_hidden {
         return None;
     }
 
@@ -62,7 +62,7 @@ pub fn hovered_pane_at(
     terminal_width: u16,
     terminal_height: u16,
 ) -> Option<ActivePane> {
-    if app.show_splash() {
+    if !super::review_panes_visible(app) {
         return None;
     }
 

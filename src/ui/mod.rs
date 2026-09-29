@@ -18,7 +18,7 @@ use ratatui::{
 
 #[cfg(test)]
 use crate::app::ActivePane;
-use crate::app::App;
+use crate::app::{App, Screen};
 
 use self::{
     diff::render_diff,
@@ -38,8 +38,9 @@ use self::{
 pub use self::hit::{
     HoverTarget, diff_gap_click_at, diff_selection_drag_point_at, diff_selection_point_at,
     footer_action_at, hover_target_at, hovered_pane_at, prepare_diff_viewport_for_terminal,
-    sidebar_file_at, sidebar_item_index_at,
+    pull_request_list_target_at, sidebar_file_at, sidebar_item_index_at,
 };
+pub use self::pull_request::PullRequestListTarget;
 pub use self::status::FooterAction;
 pub use self::style::{
     added_sign_style, context_sign_style, diff_added_emphasis_style, diff_added_style,
@@ -58,7 +59,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.area(),
     );
 
-    if app.show_splash() {
+    if app.screen() == Screen::PullRequestList {
+        pull_request::render_pull_request_list(frame, app, frame.area());
+    } else if app.show_splash() {
         let branch = app
             .branch_snapshot()
             .filter(|_| app.splash_error().is_none() && !app.repo_loading)
@@ -83,6 +86,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 if pull_request.is_some() {
                     spans.extend(key("O", " review pull request"));
                 }
+                spans.extend(key("L", " pull requests"));
                 Line::from(spans)
             });
         frame.render_widget(

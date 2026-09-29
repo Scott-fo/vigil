@@ -57,6 +57,10 @@ impl App {
                 self.open_current_branch_pull_request();
                 handled()
             }
+            KeyCode::Char('L') => {
+                self.open_pull_request_list();
+                handled()
+            }
             KeyCode::Char('i') => {
                 self.initialize_repo_if_needed().await?;
                 handled()

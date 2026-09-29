@@ -75,6 +75,7 @@ impl App {
                 let user_waiting =
                     self.pull_requests.pending() == Some(PendingAction::OpenCurrentBranch);
                 self.refresh_current_branch_pull_request(user_waiting);
+                self.load_pull_request_list_if_shown();
                 if self.status_message.as_deref() == Some(CONNECTING_MESSAGE) {
                     self.status_message = Some(self.current_status_message());
                 }

@@ -6,7 +6,10 @@ mod footer;
 mod hover;
 mod scroll;
 
-use super::App;
+use color_eyre::eyre::WrapErr;
+use crossterm::terminal;
+
+use super::{App, Screen};
 
 impl App {
     /// Applies a mouse event. Returns whether anything visible changed, so
@@ -17,6 +20,11 @@ impl App {
     ) -> color_eyre::Result<bool> {
         if self.mouse_input_blocked_by_modal() {
             return Ok(false);
+        }
+
+        if self.screen == Screen::PullRequestList {
+            let (width, height) = terminal::size().wrap_err("failed to read terminal size")?;
+            return Ok(self.handle_pull_request_list_mouse(mouse_event, width, height));
         }
 
         match mouse_event.kind {

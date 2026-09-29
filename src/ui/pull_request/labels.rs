@@ -52,6 +52,16 @@ pub(in crate::ui) fn decision_span(decision: ReviewDecision) -> Span<'static> {
     Span::styled(label, Style::new().fg(color))
 }
 
+/// `approved` / `changes` / `review`: decisions for narrow columns.
+pub(in crate::ui) fn short_decision_span(decision: ReviewDecision) -> Span<'static> {
+    let (label, color) = match decision {
+        ReviewDecision::Approved => ("approved", success_color()),
+        ReviewDecision::ChangesRequested => ("changes", error_color()),
+        ReviewDecision::ReviewRequired => ("review", warning_color()),
+    };
+    Span::styled(label, Style::new().fg(color))
+}
+
 pub(in crate::ui) fn review_state_span(state: ReviewState) -> (Span<'static>, Span<'static>) {
     let (glyph, label, color) = match state {
         ReviewState::Approved => ("✓", "approved", success_color()),

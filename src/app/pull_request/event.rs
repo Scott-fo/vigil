@@ -1,5 +1,7 @@
 use crate::{
-    forge::{ForgeError, GitHub, PullRequest, PullRequestSummary},
+    forge::{
+        ForgeError, GitHub, PullRequest, PullRequestList, PullRequestListFilter, PullRequestSummary,
+    },
     git::{FetchedPullRequest, PullRequestFetchError},
 };
 
@@ -28,6 +30,16 @@ pub enum PullRequestEvent {
         request_id: u64,
         result: Result<PullRequestSummary, ForgeError>,
     },
+    ListLoaded {
+        request_id: u64,
+        filter: PullRequestListFilter,
+        result: Result<PullRequestList, ForgeError>,
+    },
+    /// A pull request looked up by number from the list's query.
+    LookedUp {
+        request_id: u64,
+        result: Result<PullRequestSummary, ForgeError>,
+    },
     Tick(PullRequestTimer),
 }
 
@@ -36,4 +48,6 @@ pub enum PullRequestEvent {
 pub enum PullRequestTimer {
     /// Checks the pull request under review for new commits and activity.
     OpenPullRequest,
+    /// Reloads the pull request list while it is on screen.
+    List,
 }

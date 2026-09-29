@@ -75,6 +75,41 @@ impl ScreenLayout {
     }
 }
 
+/// Screen regions for the pull request list. Rendering and hit testing both
+/// resolve rows and tabs through this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PullRequestListLayout {
+    /// Title and repository, with key hints on the right.
+    pub(super) header: Rect,
+    /// The filter tabs.
+    pub(super) tabs: Rect,
+    /// One pull request per row.
+    pub(super) list: Rect,
+    /// Status notes: truncation, refresh, errors, the typed filter.
+    pub(super) footer: Rect,
+}
+
+impl PullRequestListLayout {
+    pub(super) fn new(area: Rect) -> Self {
+        let [header, tabs, _gap, list, footer] = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(0),
+                Constraint::Length(1),
+            ])
+            .areas(area);
+        Self {
+            header,
+            tabs,
+            list,
+            footer,
+        }
+    }
+}
+
 fn split_title_row(area: Rect) -> [Rect; 2] {
     Layout::default()
         .direction(Direction::Vertical)
