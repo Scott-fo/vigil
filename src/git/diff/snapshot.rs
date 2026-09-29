@@ -13,7 +13,7 @@ use color_eyre::eyre::WrapErr;
 use tokio::task;
 
 use super::{
-    DiffOptions, DiffPreviewData, DiffSearchIndex, DiffView, FileDiffMetadata,
+    DiffOptions, DiffPreviewData, DiffSearchIndex, DiffView, FileDiffMetadata, PatchLine,
     build_diff_view_from_file_metadata, parse_patch_files,
     preview::load_diff_preview_for_working_tree, stats::ReviewDiffStats,
 };
@@ -177,6 +177,14 @@ impl ReviewDiffSnapshot {
         self.files
             .get(file.path.as_str())
             .map(build_diff_view_from_file_metadata)
+    }
+
+    /// `path`'s patch lines as git produced them, before any context
+    /// expansion. `None` when the file is not in the snapshot.
+    pub fn patch_lines(&self, path: &str) -> Option<Vec<PatchLine>> {
+        self.files
+            .get(path)
+            .map(|file| build_diff_view_from_file_metadata(file).patch_lines())
     }
 
     pub fn build_search_index(&self) -> DiffSearchIndex {

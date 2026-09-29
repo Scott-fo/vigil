@@ -9,7 +9,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{
     fixtures,
     list::{PullRequestListState, QueryInput},
-    state::{BranchKey, ConnectOutcome, ConnectReason, PollOutcome, PullRequestPage, PullRequests},
+    state::{
+        BranchKey, ConnectOutcome, ConnectReason, PollOutcome, PullRequestPage, PullRequests,
+        ReviewOrigin,
+    },
 };
 use crate::{
     app::{ActivePane, App, DiffViewMode, ReviewMode, Screen},
@@ -158,7 +161,7 @@ fn stale_current_branch_responses_are_dropped() {
 #[test]
 fn detail_that_arrives_before_the_fetch_applies_when_the_review_opens() {
     let mut state = connected();
-    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17));
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17), ReviewOrigin::Elsewhere);
     let threads = vec![fixtures::thread(
         "T1",
         "src/lib.rs",
@@ -180,8 +183,8 @@ fn detail_that_arrives_before_the_fetch_applies_when_the_review_opens() {
 #[test]
 fn stale_fetches_and_details_are_dropped() {
     let mut state = connected();
-    let (old_fetch, old_detail) = state.begin_open(fixtures::summary(1));
-    let (new_fetch, _) = state.begin_open(fixtures::summary(2));
+    let (old_fetch, old_detail) = state.begin_open(fixtures::summary(1), ReviewOrigin::Elsewhere);
+    let (new_fetch, _) = state.begin_open(fixtures::summary(2), ReviewOrigin::Elsewhere);
 
     assert!(state.finish_fetch(old_fetch).is_none());
     assert!(!state.finish_detail(old_detail, Ok(fixtures::pull_request(1, Vec::new()))));
@@ -191,13 +194,13 @@ fn stale_fetches_and_details_are_dropped() {
 #[test]
 fn reloading_the_open_pull_request_keeps_its_page_and_detail() {
     let mut state = connected();
-    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17));
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17), ReviewOrigin::Elsewhere);
     state.finish_detail(detail_id, Ok(fixtures::pull_request(17, Vec::new())));
     let summary = state.finish_fetch(fetch_id).unwrap();
     state.enter(summary, "head-1".to_string());
     state.set_page(PullRequestPage::Files);
 
-    let (fetch_id, _) = state.begin_open(fixtures::summary(17));
+    let (fetch_id, _) = state.begin_open(fixtures::summary(17), ReviewOrigin::Elsewhere);
     let summary = state.finish_fetch(fetch_id).unwrap();
     state.enter(summary, "head-2".to_string());
 
@@ -248,7 +251,7 @@ fn polling_reports_new_commits_once_and_activity_separately() {
 #[test]
 fn polling_reloads_detail_while_github_computes_mergeability() {
     let mut state = connected();
-    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17));
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17), ReviewOrigin::Elsewhere);
     // The fixture reports mergeability as unknown.
     state.finish_detail(detail_id, Ok(fixtures::pull_request(17, Vec::new())));
     let summary = state.finish_fetch(fetch_id).unwrap();
@@ -320,19 +323,79 @@ async fn sidebar_navigation_moves_between_the_overview_and_files() {
         .unwrap();
     assert_eq!(app.viewed_file_count(), 0);
 
-    app.handle_key_event(press(KeyCode::Enter, KeyModifiers::NONE))
-        .await
-        .unwrap();
-    assert_eq!(app.active_pane, ActivePane::Diff);
-    app.handle_key_event(press(KeyCode::Char('j'), KeyModifiers::NONE))
-        .await
-        .unwrap();
-    assert_eq!(app.pull_requests.open().unwrap().overview_scroll(), 1);
-
     app.handle_key_event(press(KeyCode::Char(']'), KeyModifiers::NONE))
         .await
         .unwrap();
     assert!(!app.pull_request_overview_visible());
+    app.cancel_inflight_diff_load();
+    app.abort_background_tasks();
+}
+
+/// Regression: Enter on the overview row used to move focus onto the
+/// overview page with nothing on screen showing it, so the sidebar seemed to
+/// stop responding until a file was clicked.
+#[tokio::test]
+async fn the_overview_never_takes_focus_from_the_sidebar() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.open_pull_request_for_test(
+        fixtures::pull_request(17, Vec::new()),
+        vec![fixtures::file("src/lib.rs")],
+    );
+    app.active_pane = ActivePane::Sidebar;
+    assert!(app.pull_request_overview_visible());
+
+    for code in [KeyCode::Enter, KeyCode::Char('o'), KeyCode::Tab] {
+        app.handle_key_event(press(code, KeyModifiers::NONE))
+            .await
+            .unwrap();
+        assert_eq!(app.active_pane, ActivePane::Sidebar, "{code:?}");
+        assert!(app.pull_request_overview_visible(), "{code:?}");
+    }
+
+    // Ctrl-d/Ctrl-u scroll the page from the sidebar, as they scroll a diff.
+    app.handle_key_event(press(KeyCode::Char('d'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    assert_eq!(app.pull_requests.open().unwrap().overview_scroll(), 12);
+    app.handle_key_event(press(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .await
+        .unwrap();
+    assert_eq!(app.pull_requests.open().unwrap().overview_scroll(), 0);
+
+    // Movement keys keep driving the sidebar.
+    app.handle_key_event(press(KeyCode::Char('j'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert_ne!(app.selected_sidebar_row, 0);
+
+    // With the sidebar hidden the page is all there is, so it takes the keys.
+    app.handle_key_event(press(KeyCode::Home, KeyModifiers::NONE))
+        .await
+        .unwrap();
+    app.toggle_sidebar_hidden();
+    app.handle_key_event(press(KeyCode::Char('j'), KeyModifiers::NONE))
+        .await
+        .unwrap();
+    assert_eq!(app.pull_requests.open().unwrap().overview_scroll(), 1);
+    app.toggle_sidebar_hidden();
+    assert_eq!(app.active_pane, ActivePane::Sidebar);
+
+    app.cancel_inflight_diff_load();
+    app.abort_background_tasks();
+}
+
+#[tokio::test]
+async fn the_branch_in_view_follows_the_screen() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    assert_eq!(app.pull_request_branch_in_view(), None);
+
+    app.open_pull_request_for_test(
+        fixtures::pull_request(17, Vec::new()),
+        vec![fixtures::file("src/lib.rs")],
+    );
+    let reviewed = app.pull_request_selection().unwrap().head_ref_name.clone();
+    assert_eq!(app.pull_request_branch_in_view(), Some(reviewed));
+
     app.cancel_inflight_diff_load();
     app.abort_background_tasks();
 }

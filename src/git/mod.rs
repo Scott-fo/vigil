@@ -41,15 +41,16 @@ pub use diff::{
     MergeConflictActionSlotInput, MergeConflictDiffAction, MergeConflictLineType,
     MergeConflictMarkerLines, MergeConflictMarkerRow, MergeConflictMarkerRowType,
     MergeConflictParseResult, MergeConflictRegion, MergeConflictResolution, ParseDiffOptions,
-    ParseMergeConflictDiffFromFileResult, ParsedLine, ParsedPatch, PreNodeType,
-    PrePropertiesConfig, ProcessFileConflictData, RenderDiffOptions, RenderFileOptions,
-    RenderRange, ReviewDiffPartialTextIndex, ReviewDiffSnapshot, ReviewDiffStats,
-    ReviewDiffStreamedFile, ReviewDiffTextIndex, SelectedLineRange, SelectionSide, ThemeSpec,
-    VirtualFileMetrics, VirtualWindowSpecs, WhitespaceMode, WindowFromScrollPositionOptions,
-    WorkerStats, are_diff_line_annotations_equal, are_diff_render_options_equal,
-    are_diff_targets_equal, are_file_render_options_equal, are_files_equal, are_hunk_data_equal,
-    are_line_annotations_equal, are_merge_conflict_actions_equal, are_objects_equal,
-    are_pre_properties_equal, are_render_ranges_equal, are_selections_equal, are_themes_equal,
+    ParseMergeConflictDiffFromFileResult, ParsedLine, ParsedPatch, PatchLine, PatchLineKind,
+    PreNodeType, PrePropertiesConfig, ProcessFileConflictData, RenderDiffOptions,
+    RenderFileOptions, RenderRange, ReviewDiffPartialTextIndex, ReviewDiffSnapshot,
+    ReviewDiffStats, ReviewDiffStreamedFile, ReviewDiffTextIndex, SelectedLineRange, SelectionSide,
+    ThemeSpec, VirtualFileMetrics, VirtualWindowSpecs, WhitespaceMode,
+    WindowFromScrollPositionOptions, WorkerStats, are_diff_line_annotations_equal,
+    are_diff_render_options_equal, are_diff_targets_equal, are_file_render_options_equal,
+    are_files_equal, are_hunk_data_equal, are_line_annotations_equal,
+    are_merge_conflict_actions_equal, are_objects_equal, are_pre_properties_equal,
+    are_render_ranges_equal, are_selections_equal, are_themes_equal,
     are_virtual_window_specs_equal, are_worker_stats_equal, build_diff_view_from_diff_text,
     build_diff_view_from_diff_text_with_context, build_diff_view_from_file_metadata,
     build_diff_view_from_preview_data, build_merge_conflict_marker_rows, clean_last_newline,
@@ -87,8 +88,8 @@ pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_high
 pub(crate) use highlight::{SyntaxToken, highlight_markdown_line};
 pub use merge::prepare_branch_merge;
 pub use pull_request::{
-    FetchedPullRequest, PullRequestFetch, PullRequestFetchError, fetch_pull_request,
-    pull_request_head_ref,
+    FetchedPullRequest, PullRequestFetch, PullRequestFetchError, delete_pull_request_refs,
+    fetch_pull_request, prune_pull_request_refs, pull_request_head_ref,
 };
 pub use refs::{list_comparable_refs, load_branch_compare_refs, load_files_with_branch_diff};
 pub use repo::{

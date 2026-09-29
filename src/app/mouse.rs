@@ -63,6 +63,7 @@ impl App {
             || self.file_filter_modal_open
             || self.worktree_modal_open
             || self.branch_panel.is_some()
+            || self.pull_request_modal_open()
     }
 
     pub(super) fn clear_diff_text_selection(&mut self) {

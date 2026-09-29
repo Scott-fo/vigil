@@ -3,7 +3,10 @@ use crate::{
         ForgeError, GitHub, PullRequest, PullRequestList, PullRequestListFilter, PullRequestSummary,
     },
     git::{FetchedPullRequest, PullRequestFetchError},
+    review::DraftComment,
 };
+
+use super::gateway::MutationOutcome;
 
 /// Results of background pull request work, delivered through the app's event
 /// loop. Each carries the id of the request that produced it so superseded
@@ -39,6 +42,19 @@ pub enum PullRequestEvent {
     LookedUp {
         request_id: u64,
         result: Result<PullRequestSummary, ForgeError>,
+    },
+    /// The open pull request's drafts, read from the review database.
+    DraftsLoaded {
+        request_id: u64,
+        result: Result<Vec<DraftComment>, String>,
+    },
+    /// A background draft write failed; the drafts on screen are newer than
+    /// the database.
+    DraftWriteFailed(String),
+    /// A write to GitHub finished.
+    MutationFinished {
+        request_id: u64,
+        result: Result<MutationOutcome, ForgeError>,
     },
     Tick(PullRequestTimer),
 }

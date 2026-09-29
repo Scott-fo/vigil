@@ -64,6 +64,8 @@ impl App {
         self.sidebar_hidden = !self.sidebar_hidden;
         if self.sidebar_hidden {
             self.active_pane = ActivePane::Diff;
+        } else {
+            self.keep_overview_focus_in_sidebar();
         }
     }
 }

@@ -503,6 +503,21 @@ impl DiffView {
         Some(anchor)
     }
 
+    /// The old and new line numbers any display row of a line shows, soft
+    /// wrapped or not. Use it to ask "which line is under the cursor";
+    /// [`Self::display_line_anchor`] is for drawing under a line.
+    pub fn line_anchor_at(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        line_wrap: DiffLineWrapMode,
+        display_index: usize,
+    ) -> Option<DiffDisplayLineAnchor> {
+        self.ensure_display_cache(mode, width, line_wrap);
+        let row_refs = *self.display_cache.entry(mode).row_refs.get(display_index)?;
+        self.anchor_for_display_refs(row_refs)
+    }
+
     pub fn selected_gap_index(
         &mut self,
         mode: DiffViewMode,

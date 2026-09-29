@@ -34,6 +34,7 @@ mod pull_request;
 mod repo_state;
 mod runtime;
 mod sidebar_state;
+mod text_area;
 mod theme_modal;
 mod viewed;
 mod working_tree_actions;
@@ -55,9 +56,13 @@ use self::pull_request::PullRequests;
 #[cfg(test)]
 pub(crate) use self::pull_request::fixtures as pull_request_fixtures;
 pub use self::pull_request::{
-    PULL_REQUEST_LIST_FILTERS, PullRequestEvent, PullRequestListStatus, PullRequestListView,
-    PullRequestOverview, PullRequestPage, PullRequestSelection, PullRequestTimer, QueryInput,
+    ActionsMenu, AutoMergeChoice, Composer, ComposerStatus, ComposerTarget, DraftEntry, DraftList,
+    MergeBlocker, MergeForm, MergeStep, MergeWhen, MutationOutcome, PULL_REQUEST_LIST_FILTERS,
+    PullRequestAction, PullRequestEvent, PullRequestListStatus, PullRequestListView,
+    PullRequestModalView, PullRequestOverview, PullRequestPage, PullRequestSelection,
+    PullRequestTimer, QueryInput, REVIEW_EVENTS, SubmitForm, SubmitWarning, event_allowed,
 };
+pub use self::text_area::TextArea;
 use crate::{
     event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{
@@ -248,6 +253,8 @@ pub struct App {
     blame_load_task: Option<task::JoinHandle<()>>,
     pub diff_stats_modal_open: bool,
     pub help_modal_open: bool,
+    /// Rows the help modal is scrolled by; the renderer clamps it.
+    pub help_scroll: usize,
     pub theme_modal_open: bool,
     pub theme_modal_query: String,
     pub theme_modal_selected_index: usize,

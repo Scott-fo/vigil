@@ -4,7 +4,11 @@ use crate::{
     review::{DisplayThread, ThreadRow, UnplacedReason},
 };
 
-use super::{super::App, PullRequestSelection};
+use super::{
+    super::{App, Screen, SnackbarVariant, clipboard::write_osc52_clipboard},
+    PullRequestSelection,
+    modal::DraftEntry,
+};
 
 /// Everything the overview page draws, prepared from the open pull request.
 #[derive(Debug)]
@@ -18,11 +22,46 @@ pub struct PullRequestOverview<'a> {
     pub detail_error: Option<&'a ForgeError>,
     /// Threads the diff cannot show, with why.
     pub unplaced_threads: Vec<(UnplacedReason, &'a DisplayThread)>,
+    /// The reviewer's draft comments, oldest first.
+    pub drafts: Vec<DraftEntry<'a>>,
     /// Rows scrolled off the top.
     pub scroll: usize,
 }
 
 impl App {
+    /// Copies [`Self::pull_request_branch_in_view`] to the clipboard.
+    pub(in crate::app) fn copy_pull_request_branch(&mut self) {
+        let Some(branch) = self.pull_request_branch_in_view() else {
+            self.status_message = Some("no pull request to copy a branch from".to_string());
+            return;
+        };
+        match write_osc52_clipboard(&branch) {
+            Ok(()) => self.show_snackbar(format!("copied {branch}"), SnackbarVariant::Info),
+            Err(error) => self.show_snackbar(
+                format!("could not copy the branch name: {error}"),
+                SnackbarVariant::Error,
+            ),
+        }
+    }
+
+    /// The head branch of the pull request in view: the list's selected row,
+    /// else the pull request under review, else the checked-out branch's
+    /// pull request.
+    pub(in crate::app) fn pull_request_branch_in_view(&self) -> Option<String> {
+        let summary_branch = |summary: &PullRequestSummary| summary.head_ref_name.clone();
+        match self.screen {
+            Screen::PullRequestList => self
+                .pull_requests
+                .list()
+                .selected_summary()
+                .map(summary_branch),
+            Screen::Review => self
+                .pull_request_selection()
+                .map(|selection| selection.head_ref_name.clone())
+                .or_else(|| self.current_branch_pull_request().map(summary_branch)),
+        }
+    }
+
     /// The pull request under review, if the review shows one.
     pub fn pull_request_selection(&self) -> Option<&PullRequestSelection> {
         match &self.review_mode {
@@ -49,6 +88,7 @@ impl App {
             detail: open.detail(),
             detail_error: open.detail_error(),
             unplaced_threads,
+            drafts: self.draft_entries(),
             scroll: open.overview_scroll(),
         })
     }
@@ -88,14 +128,27 @@ impl App {
     }
 
     /// Unresolved threads the overview lists because the diff cannot show
-    /// them, for the overview row's marker.
+    /// them, plus drafts that need attention, for the overview row's marker.
     pub fn unresolved_unplaced_thread_count(&self) -> usize {
         self.pull_requests.open().map_or(0, |open| {
-            open.threads()
+            let threads = open
+                .threads()
                 .unplaced(|path| self.files.iter().any(|file| file.path == path))
                 .into_iter()
                 .filter(|(_, thread)| !thread.is_resolved())
-                .count()
+                .count();
+            threads
+                + open
+                    .drafts()
+                    .needing_attention(open.reviewed_head())
+                    .count()
+        })
+    }
+
+    /// Drafts a review of the shown head would send, for the footer.
+    pub fn pending_draft_count(&self) -> usize {
+        self.pull_requests.open().map_or(0, |open| {
+            open.drafts().attached(open.reviewed_head()).count()
         })
     }
 

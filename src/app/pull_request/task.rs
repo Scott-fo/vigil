@@ -66,6 +66,21 @@ impl RequestSlot {
     pub(super) fn in_flight(&self) -> bool {
         self.in_flight
     }
+
+    /// Like [`Self::attach`], but the task keeps running if the request is
+    /// superseded or the slot is dropped. For writes, which must not stop
+    /// midway.
+    pub(super) fn attach_detached(&mut self, id: u64, handle: JoinHandle<()>) {
+        if id == self.id && self.in_flight {
+            self.task = None;
+        }
+        drop(handle);
+    }
+
+    #[cfg(test)]
+    pub(super) fn current_id(&self) -> u64 {
+        self.id
+    }
 }
 
 /// Sends `event()` every `period`, starting one period from now, until

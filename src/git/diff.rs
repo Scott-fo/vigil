@@ -15,6 +15,7 @@ mod merge_conflict;
 mod model;
 mod options;
 mod patch;
+mod patch_lines;
 mod preview;
 mod rendering;
 mod resolution;
@@ -79,6 +80,7 @@ pub use self::options::{DiffOptions, WhitespaceMode};
 pub use self::patch::{
     get_singular_patch, parse_patch_files, process_file, process_patch, trim_patch_context,
 };
+pub use self::patch_lines::{PatchLine, PatchLineKind};
 pub use self::preview::{
     load_diff_exact_context_for_branch_compare, load_diff_exact_context_for_commit_compare,
     load_diff_exact_context_for_working_tree, load_diff_preview_for_branch_compare,

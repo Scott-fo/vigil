@@ -12,7 +12,7 @@ use super::{
     super::{App, SnackbarVariant},
     PullRequestEvent,
     connect::forge_unavailable_message,
-    state::{BranchKey, ConnectReason, PendingAction},
+    state::{BranchKey, ConnectReason, PendingAction, ReviewOrigin},
 };
 
 impl App {
@@ -79,7 +79,7 @@ impl App {
             return;
         }
         if let Some(summary) = self.current_branch_pull_request().cloned() {
-            self.open_pull_request(summary);
+            self.open_pull_request(summary, ReviewOrigin::Elsewhere);
             return;
         }
         self.pull_requests
@@ -108,7 +108,7 @@ impl App {
         self.pull_requests.take_pending();
         self.status_message = Some(self.current_status_message());
         match result {
-            Ok(Some(summary)) => self.open_pull_request(summary),
+            Ok(Some(summary)) => self.open_pull_request(summary, ReviewOrigin::Elsewhere),
             Ok(None) => {
                 let branch = self
                     .current_branch_key()

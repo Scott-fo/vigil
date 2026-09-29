@@ -20,7 +20,7 @@
 
 use std::{fmt, path::Path};
 
-use super::command::{git_output, git_output_raw};
+use super::command::{git_output, git_output_raw, git_output_with_stdin};
 use crate::forge::RepositoryRef;
 
 /// What to fetch for one pull request.
@@ -137,6 +137,52 @@ pub async fn fetch_pull_request(
         head_oid,
         base_oid,
     })
+}
+
+/// Every vigil-private ref lives under this prefix; cleanup never deletes a
+/// ref outside it.
+const PULL_REQUEST_REFS: &str = "refs/vigil/pr/";
+
+/// Deletes the refs [`fetch_pull_request`] wrote for pull request `number`
+/// (`refs/vigil/pr/<number>/*`), once its review ends. Returns how many were
+/// deleted. The commits stay in the object store until `git gc` finds them
+/// unreachable.
+pub async fn delete_pull_request_refs(repo_root: &Path, number: u64) -> color_eyre::Result<usize> {
+    delete_refs_under(repo_root, &format!("{PULL_REQUEST_REFS}{number}/")).await
+}
+
+/// Deletes every `refs/vigil/pr/*` ref. Meant for startup, before any review
+/// opens, to clear refs a previous session left behind (it quit mid-review
+/// or crashed). Another vigil reviewing a pull request in the same
+/// repository loses its ref too, which only matters if `git gc` runs before
+/// that review ends; its diff is pinned to commit ids, not the ref.
+pub async fn prune_pull_request_refs(repo_root: &Path) -> color_eyre::Result<usize> {
+    delete_refs_under(repo_root, PULL_REQUEST_REFS).await
+}
+
+async fn delete_refs_under(repo_root: &Path, prefix: &str) -> color_eyre::Result<usize> {
+    debug_assert!(prefix.starts_with(PULL_REQUEST_REFS));
+    let listed = git_output(repo_root, &["for-each-ref", "--format=%(refname)", prefix]).await?;
+    let refs = listed
+        .lines()
+        .map(str::trim)
+        .filter(|name| name.starts_with(prefix) && name.starts_with(PULL_REQUEST_REFS))
+        .collect::<Vec<_>>();
+    if refs.is_empty() {
+        return Ok(0);
+    }
+    let commands = refs
+        .iter()
+        .map(|name| format!("delete {name}\n"))
+        .collect::<String>();
+    git_output_with_stdin(
+        repo_root,
+        &["update-ref", "--stdin"],
+        commands.as_bytes(),
+        &[0],
+    )
+    .await?;
+    Ok(refs.len())
 }
 
 async fn fetch_refspec(

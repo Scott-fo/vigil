@@ -90,6 +90,7 @@ impl App {
             blame_load_task: None,
             diff_stats_modal_open: false,
             help_modal_open: false,
+            help_scroll: 0,
             theme_modal_open: false,
             theme_modal_query: String::new(),
             theme_modal_selected_index: 0,

@@ -248,6 +248,14 @@ fn review_target_segments(app: &App) -> Vec<FooterSegment> {
         }
         mode @ ReviewMode::PullRequest(_) => {
             let mut segments = vec![FooterSegment::spans(compare_target_spans(mode))];
+            let pending = app.pending_draft_count();
+            if pending > 0 {
+                segments.push(FooterSegment::plain(" "));
+                segments.push(FooterSegment::spans(vec![Span::styled(
+                    format!(" {pending} pending · S submit "),
+                    Style::new().fg(primary_color()).bg(chip_color()),
+                )]));
+            }
             if app.pull_request_has_newer_head() {
                 segments.push(FooterSegment::plain(" "));
                 segments.push(FooterSegment {
@@ -428,6 +436,14 @@ fn key_hint_segments(app: &App, budget: usize) -> Vec<FooterSegment> {
                 ("v", view_toggle, Some(FooterAction::ToggleDiffViewMode)),
             ]);
         }
+        _ if matches!(app.review_mode, ReviewMode::PullRequest(_)) => hints.extend([
+            ("tab", "files", Some(FooterAction::SwitchPane)),
+            ("c", "comment", None),
+            ("[ ]", "change", None),
+            ("x", "viewed", None),
+            ("fg", "search", Some(FooterAction::SearchDiff)),
+            ("v", view_toggle, Some(FooterAction::ToggleDiffViewMode)),
+        ]),
         _ => hints.extend([
             ("tab", "files", Some(FooterAction::SwitchPane)),
             ("[ ]", "change", None),

@@ -2,7 +2,12 @@
 //!
 //! [`ReviewStore`] opens (creating if needed) a SQLite database under the XDG
 //! data directory and migrates it to the current schema. Feature modules such
-//! as [`super::viewed`] add their own queries on top of [`ReviewStore`].
+//! as [`super::viewed`] and [`super::drafts`] add their own queries on top of
+//! [`ReviewStore`].
+//!
+//! Migrations are additive and idempotent: every table is created if missing,
+//! so opening a database of any earlier version brings it to the current
+//! schema without touching the rows it already holds.
 
 use std::{
     env, fs,
@@ -17,7 +22,8 @@ use rusqlite::Connection;
 /// - 2: `viewed_files`, alongside tables for a since-removed AI review
 ///   provider (`review_runs`, `review_findings`).
 /// - 3: drops the AI review tables; only `viewed_files` remains.
-const SCHEMA_VERSION: i64 = 3;
+/// - 4: adds `review_drafts`, pending pull request review comments.
+const SCHEMA_VERSION: i64 = 4;
 
 /// Handle to the review database. Cheap to clone; each call opens its own
 /// blocking SQLite connection.
@@ -64,6 +70,25 @@ impl ReviewStore {
                 viewed_at_ms integer not null,
                 primary key (scope, path)
             );
+
+            create table if not exists review_drafts (
+                id text primary key,
+                repo_root text not null,
+                pull_request integer not null,
+                head_oid text not null,
+                path text not null,
+                start_side text,
+                start_line integer,
+                start_text text,
+                end_side text not null,
+                end_line integer not null,
+                end_text text not null,
+                body text not null,
+                created_at_ms integer not null,
+                updated_at_ms integer not null
+            );
+            create index if not exists review_drafts_by_pull_request
+                on review_drafts (repo_root, pull_request);
             ",
         )?;
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -198,7 +223,10 @@ mod tests {
         let store = ReviewStore::open(path.clone()).expect("store upgrades");
 
         let connection = store.connection().expect("connection");
-        assert_eq!(table_names(&connection), vec!["viewed_files".to_string()]);
+        assert_eq!(
+            table_names(&connection),
+            vec!["review_drafts".to_string(), "viewed_files".to_string()]
+        );
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("user_version");
@@ -229,6 +257,80 @@ mod tests {
                 "{scope:?} lost its viewed mark"
             );
         }
+
+        let _ = fs::remove_file(path);
+    }
+
+    /// Version 4 adds drafts next to a version 3 database's viewed marks.
+    #[test]
+    fn upgrading_a_version_3_database_adds_drafts_and_keeps_viewed_marks() {
+        use crate::{
+            forge::{DiffPosition, DiffSide},
+            review::{DraftAnchor, DraftComment, DraftLine, DraftScope},
+        };
+
+        let path = temp_database_path("upgrade-v3");
+        fs::create_dir_all(path.parent().unwrap()).expect("create dir");
+        let fingerprint = DiffFingerprint::from_hex("cc").expect("fingerprint");
+        {
+            let connection = Connection::open(&path).expect("open v3 db");
+            connection
+                .execute_batch(
+                    "
+                    create table viewed_files (
+                        scope text not null,
+                        path text not null,
+                        fingerprint text not null,
+                        viewed_at_ms integer not null,
+                        primary key (scope, path)
+                    );
+                    pragma user_version = 3;
+                    ",
+                )
+                .expect("create v3 schema");
+            connection
+                .execute(
+                    "insert into viewed_files values (?1, ?2, ?3, 1)",
+                    params!["/repo\0pr\u{0}18", "src/lib.rs", fingerprint.to_hex()],
+                )
+                .expect("insert viewed mark");
+        }
+
+        let store = ReviewStore::open(path.clone()).expect("store upgrades");
+
+        let connection = store.connection().expect("connection");
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 4);
+        assert!(table_names(&connection).contains(&"review_drafts".to_string()));
+        let viewed = store
+            .load_viewed_files(&ViewedScope::new(
+                Path::new("/repo"),
+                &ReviewScope::PullRequest { number: 18 },
+            ))
+            .expect("load viewed");
+        assert!(viewed.is_viewed("src/lib.rs", Some(fingerprint)));
+
+        let scope = DraftScope::new(Path::new("/repo"), 18);
+        let draft = DraftComment::new(
+            "src/lib.rs".to_string(),
+            DraftAnchor {
+                start: None,
+                end: DraftLine {
+                    position: DiffPosition {
+                        side: DiffSide::Right,
+                        line: 3,
+                    },
+                    text: "fn main() {}".to_string(),
+                },
+            },
+            "Nit.".to_string(),
+            "f".repeat(40),
+        );
+        store.save_draft(&scope, &draft).expect("save draft");
+        let reopened = ReviewStore::open(path.clone()).expect("store reopens");
+        assert_eq!(reopened.load_drafts(&scope).expect("load"), vec![draft]);
 
         let _ = fs::remove_file(path);
     }

@@ -30,6 +30,12 @@ impl App {
         &mut self,
         key_event: KeyEvent,
     ) -> color_eyre::Result<Option<AppCommand>> {
+        if self.screen == Screen::Review
+            && let Some(outcome) = self.handle_pull_request_modal_key(key_event)
+        {
+            return Ok(outcome.into_command());
+        }
+
         if self.handle_modal_key(key_event).await? {
             return Ok(None);
         }

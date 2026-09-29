@@ -6,7 +6,10 @@ use ratatui::{
 use crate::review::ThreadRow;
 
 use super::{
-    super::{success_color, text_color, text_faint_color, text_subtle_color, warning_color},
+    super::{
+        primary_color, success_color, text_color, text_faint_color, text_subtle_color,
+        warning_color,
+    },
     labels::relative_time,
 };
 
@@ -54,6 +57,33 @@ pub(in crate::ui) fn thread_row_line(row: &ThreadRow, now: i64) -> Line<'static>
                 format!(" {}", comment_label(*comment_count)),
                 Style::new().fg(text_subtle_color()),
             ));
+            Line::from(spans)
+        }
+        ThreadRow::DraftHeading {
+            start_line,
+            end_line,
+        } => {
+            let mut spans = vec![
+                Span::styled(HEADING_PREFIX, chrome),
+                Span::styled(
+                    "◌ pending",
+                    Style::new()
+                        .fg(primary_color())
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ];
+            match (start_line, end_line) {
+                (Some(start), Some(end)) => spans.push(Span::styled(
+                    format!(" · lines {start}–{end}"),
+                    Style::new().fg(text_subtle_color()),
+                )),
+                (None, Some(end)) => spans.push(Span::styled(
+                    format!(" · line {end}"),
+                    Style::new().fg(text_subtle_color()),
+                )),
+                _ => {}
+            }
+            spans.push(Span::styled(" · your draft", chrome));
             Line::from(spans)
         }
         ThreadRow::Author {

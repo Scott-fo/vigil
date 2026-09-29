@@ -20,6 +20,7 @@ use std::collections::HashMap;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use super::drafts::{DraftComment, DraftId};
 use crate::{
     forge::{CommentState, DiffSide, ReviewThread, ThreadId, ThreadSubject, Timestamp},
     git::DiffDisplayLineAnchor,
@@ -36,6 +37,8 @@ const MIN_THREAD_TEXT_WIDTH: usize = 16;
 pub enum ThreadSource {
     /// A review thread on the pull request on GitHub.
     PullRequest(ThreadId),
+    /// The reviewer's own unsubmitted comment, stored locally.
+    Draft(DraftId),
 }
 
 /// A line in the diff, numbered in the file on `side`.
@@ -122,6 +125,12 @@ pub enum ThreadRow {
         end_line: Option<u32>,
         comment_count: usize,
     },
+    /// `╭─ ◌ pending · lines 10–14`: the top of the reviewer's own draft,
+    /// which has no author row.
+    DraftHeading {
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+    },
     /// `│  alice · 3h ago`
     Author {
         author: String,
@@ -181,8 +190,52 @@ impl DisplayThread {
         }
     }
 
+    /// The display form of a draft. `attached` is false for a draft whose
+    /// lines could not be found at the reviewed head; it is placed as
+    /// outdated and drawn only in the overview.
+    pub fn from_draft(draft: &DraftComment, attached: bool) -> Self {
+        let end = draft.anchor.end.position;
+        let placement = if attached {
+            ThreadPlacement::Line {
+                end: LineAnchor {
+                    side: end.side,
+                    line: end.line,
+                },
+                start_line: draft.anchor.start_line().filter(|start| *start != end.line),
+            }
+        } else {
+            ThreadPlacement::Outdated {
+                original_line: Some(end.line),
+            }
+        };
+        Self {
+            source: ThreadSource::Draft(draft.id.clone()),
+            path: draft.path.clone(),
+            placement,
+            status: ThreadStatus::Unresolved,
+            comments: vec![DisplayComment {
+                author: String::new(),
+                body: draft.body.clone(),
+                created_at: Timestamp::from_unix_seconds(draft.created_at_ms / 1_000),
+                state: CommentState::Pending,
+            }],
+        }
+    }
+
     pub fn is_resolved(&self) -> bool {
         matches!(self.status, ThreadStatus::Resolved { .. })
+    }
+
+    pub fn is_draft(&self) -> bool {
+        matches!(self.source, ThreadSource::Draft(_))
+    }
+
+    /// The GitHub thread id, for replies and resolving; `None` for drafts.
+    pub fn thread_id(&self) -> Option<&ThreadId> {
+        match &self.source {
+            ThreadSource::PullRequest(id) => Some(id),
+            ThreadSource::Draft(_) => None,
+        }
     }
 
     /// The rows this thread takes under a diff line in a pane `width`
@@ -201,6 +254,21 @@ impl DisplayThread {
             ThreadPlacement::File | ThreadPlacement::Outdated { .. } => (None, None),
         };
         let text_width = thread_text_width(width);
+        if self.is_draft() {
+            let mut rows = vec![ThreadRow::DraftHeading {
+                start_line,
+                end_line,
+            }];
+            for comment in &self.comments {
+                rows.extend(
+                    wrap_comment_text(&comment.body, text_width)
+                        .into_iter()
+                        .map(ThreadRow::Body),
+                );
+            }
+            rows.push(ThreadRow::End);
+            return rows;
+        }
         let mut rows = vec![ThreadRow::Heading {
             start_line,
             end_line,
@@ -246,10 +314,24 @@ impl ReviewThreads {
     }
 
     pub fn from_pull_request(threads: &[ReviewThread]) -> Self {
+        Self::with_drafts(threads, std::iter::empty())
+    }
+
+    /// GitHub's threads followed by the reviewer's drafts, each paired with
+    /// whether its lines are found at the reviewed head.
+    pub fn with_drafts<'a>(
+        threads: &[ReviewThread],
+        drafts: impl IntoIterator<Item = (&'a DraftComment, bool)>,
+    ) -> Self {
         Self::new(
             threads
                 .iter()
                 .map(DisplayThread::from_review_thread)
+                .chain(
+                    drafts
+                        .into_iter()
+                        .map(|(draft, attached)| DisplayThread::from_draft(draft, attached)),
+                )
                 .collect(),
         )
     }
@@ -290,14 +372,16 @@ impl ReviewThreads {
             .count()
     }
 
-    /// Threads the diff cannot show, given which paths are in it, in the
-    /// order GitHub reported them.
+    /// GitHub threads the diff cannot show, given which paths are in it, in
+    /// the order GitHub reported them. Drafts are listed by their own
+    /// section of the overview instead.
     pub fn unplaced(
         &self,
         in_diff: impl Fn(&str) -> bool,
     ) -> Vec<(UnplacedReason, &DisplayThread)> {
         self.threads
             .iter()
+            .filter(|thread| !thread.is_draft())
             .filter_map(|thread| {
                 let reason = match thread.placement {
                     ThreadPlacement::File => UnplacedReason::FileLevel,
@@ -598,6 +682,60 @@ mod tests {
 
         assert_eq!(threads.unresolved_count("src/lib.rs"), 2);
         assert_eq!(threads.unresolved_count("src/main.rs"), 0);
+    }
+
+    fn draft(line: u32, body: &str) -> DraftComment {
+        use crate::review::{DraftAnchor, DraftLine};
+
+        DraftComment::new(
+            "src/lib.rs".to_string(),
+            DraftAnchor {
+                start: None,
+                end: DraftLine {
+                    position: DiffPosition {
+                        side: DiffSide::Right,
+                        line,
+                    },
+                    text: String::new(),
+                },
+            },
+            body.to_string(),
+            "a".repeat(40),
+        )
+    }
+
+    #[test]
+    fn drafts_draw_under_their_line_count_as_unresolved_and_stay_out_of_unplaced() {
+        let attached = draft(3, "Pending thought.");
+        let detached = draft(9, "Lost its line.");
+        let threads = ReviewThreads::with_drafts(
+            &[thread(DiffSide::Right, Some(1))],
+            [(&attached, true), (&detached, false)],
+        );
+
+        let at_three = threads.threads_at("src/lib.rs", anchor(None, Some(3)));
+        assert_eq!(at_three.len(), 1);
+        assert!(at_three[0].is_draft());
+        assert_eq!(at_three[0].thread_id(), None);
+        assert_eq!(
+            at_three[0].rows(80),
+            vec![
+                ThreadRow::DraftHeading {
+                    start_line: None,
+                    end_line: Some(3),
+                },
+                ThreadRow::Body("Pending thought.".to_string()),
+                ThreadRow::End,
+            ]
+        );
+        assert!(
+            threads
+                .threads_at("src/lib.rs", anchor(None, Some(9)))
+                .is_empty(),
+            "a draft whose lines moved is not drawn inline"
+        );
+        assert_eq!(threads.unresolved_count("src/lib.rs"), 3);
+        assert!(threads.unplaced(|_| true).is_empty());
     }
 
     #[test]

@@ -218,6 +218,7 @@ impl App {
                 });
                 self.review_diff_stats_error = None;
                 self.review_diff_snapshot = Some(Arc::new(snapshot));
+                self.reanchor_drafts();
                 if !self.diff_search_index_is_complete() && self.diff_search_load_task.is_none() {
                     self.queue_diff_search_index_load();
                 }

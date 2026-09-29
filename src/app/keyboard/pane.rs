@@ -9,14 +9,10 @@ impl App {
         &mut self,
         key_event: KeyEvent,
     ) -> color_eyre::Result<Option<KeyOutcome>> {
-        if self.pull_request_overview_visible() {
-            let overview_key = matches!(
-                key_event.code,
-                KeyCode::Enter | KeyCode::Char('o' | 'e' | ']' | '[')
-            );
-            if overview_key || self.active_pane == ActivePane::Diff {
-                return self.handle_overview_key(key_event).await;
-            }
+        if self.pull_request_overview_visible()
+            && let Some(outcome) = self.handle_overview_key(key_event).await?
+        {
+            return Ok(Some(outcome));
         }
         match key_event.code {
             KeyCode::Char('d') if key_event.modifiers == KeyModifiers::CONTROL => {
@@ -96,34 +92,36 @@ impl App {
         }
     }
 
-    /// Keys while the diff pane shows the pull request overview: movement
-    /// scrolls the page, `]` steps into the first file, and opening the
-    /// overview row from the sidebar focuses the page.
+    /// Keys while the diff pane shows the pull request overview. The overview
+    /// holds focus only when the sidebar is hidden; otherwise movement keys
+    /// keep driving the sidebar, `Ctrl-d`/`Ctrl-u` scroll the page, and `]`
+    /// steps into the first file. File actions (open, stage, discard) have
+    /// nothing to act on here, so they do nothing.
     async fn handle_overview_key(
         &mut self,
         key_event: KeyEvent,
     ) -> color_eyre::Result<Option<KeyOutcome>> {
         let control = key_event.modifiers == KeyModifiers::CONTROL;
+        let page_focused = self.active_pane == ActivePane::Diff;
         match key_event.code {
-            KeyCode::Down | KeyCode::Char('j') => self.scroll_pull_request_overview(1),
-            KeyCode::Up | KeyCode::Char('k') => self.scroll_pull_request_overview(-1),
             KeyCode::Char('d') if control => self.scroll_pull_request_overview(12),
             KeyCode::Char('u') if control => self.scroll_pull_request_overview(-12),
-            KeyCode::PageDown => self.scroll_pull_request_overview(12),
-            KeyCode::PageUp => self.scroll_pull_request_overview(-12),
-            KeyCode::Home => self.set_pull_request_overview_scroll(0),
-            KeyCode::End => self.set_pull_request_overview_scroll(usize::MAX),
             KeyCode::Char(']') => {
                 if let Some(path) = self.visible_file_paths().into_iter().next() {
                     self.select_file_by_path(&path).await?;
                 }
             }
-            KeyCode::Enter | KeyCode::Char('o' | 'e') => {
-                if !self.sidebar_hidden {
-                    self.active_pane = ActivePane::Diff;
-                }
+            KeyCode::Enter | KeyCode::Char('o' | 'e' | ' ' | '[' | 'd') => {}
+            KeyCode::Down | KeyCode::Char('j') if page_focused => {
+                self.scroll_pull_request_overview(1)
             }
-            KeyCode::Char(' ' | '[' | 'd') => {}
+            KeyCode::Up | KeyCode::Char('k') if page_focused => {
+                self.scroll_pull_request_overview(-1)
+            }
+            KeyCode::PageDown if page_focused => self.scroll_pull_request_overview(12),
+            KeyCode::PageUp if page_focused => self.scroll_pull_request_overview(-12),
+            KeyCode::Home if page_focused => self.set_pull_request_overview_scroll(0),
+            KeyCode::End if page_focused => self.set_pull_request_overview_scroll(usize::MAX),
             _ => return Ok(None),
         }
         handled()

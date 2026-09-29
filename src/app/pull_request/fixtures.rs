@@ -236,6 +236,16 @@ impl App {
         detail: PullRequest,
         files: Vec<FileEntry>,
     ) {
+        self.open_pull_request_from_for_test(detail, files, super::state::ReviewOrigin::Elsewhere);
+    }
+
+    /// Like [`Self::open_pull_request_for_test`], opened from `origin`.
+    pub(in crate::app) fn open_pull_request_from_for_test(
+        &mut self,
+        detail: PullRequest,
+        files: Vec<FileEntry>,
+        origin: super::state::ReviewOrigin,
+    ) {
         let summary = detail.summary.clone();
         let fetched = FetchedPullRequest {
             remote: "origin".to_string(),
@@ -243,7 +253,7 @@ impl App {
             head_oid: summary.head_oid.clone(),
             base_oid: summary.base_oid.clone(),
         };
-        let (_, detail_id) = self.pull_requests.begin_open(summary.clone());
+        let (_, detail_id) = self.pull_requests.begin_open(summary.clone(), origin);
         self.pull_requests.finish_detail(detail_id, Ok(detail));
         self.pull_requests
             .enter(summary.clone(), fetched.head_oid.clone());
@@ -253,5 +263,42 @@ impl App {
         self.selected_file_index = 0;
         self.rebuild_sidebar_items();
         self.sync_sidebar_state();
+        self.load_pull_request_drafts();
+    }
+
+    /// Stores a draft on the open pull request, in memory only.
+    pub(crate) fn save_draft_for_test(&mut self, draft: crate::review::DraftComment) {
+        self.save_draft(draft);
+    }
+
+    /// Presses `c` on the cursor line, as the review key does.
+    pub(crate) fn start_inline_comment_for_test(&mut self) {
+        self.start_inline_comment();
+    }
+
+    pub(crate) fn open_submit_review_for_test(&mut self) {
+        self.open_submit_review();
+    }
+
+    pub(crate) fn open_merge_form_for_test(&mut self) {
+        self.open_merge_form();
+    }
+
+    /// Types `text` into the open review modal's text field.
+    pub(crate) fn type_in_pull_request_modal_for_test(&mut self, text: &str) {
+        if let Some(area) = self.pull_request_modal_text() {
+            area.insert_str(text);
+        }
+    }
+
+    /// Shows `diff` as the selected file's diff with the cursor on display
+    /// row `cursor`, focused, as a reviewer reading the files page would.
+    pub(crate) fn show_pull_request_diff_for_test(&mut self, diff: &str, cursor: usize) {
+        self.select_pull_request_page_for_test(super::PullRequestPage::Files);
+        self.diff_view = crate::git::build_diff_view_from_diff_text(diff, Some("rust"));
+        self.diff_view_mode = crate::app::DiffViewMode::Unified;
+        self.diff_line_wrap_mode = crate::app::DiffLineWrapMode::Wrap;
+        self.active_pane = crate::app::ActivePane::Diff;
+        self.selected_diff_line_index = cursor;
     }
 }
