@@ -229,9 +229,22 @@ impl App {
     }
 
     /// Shows the pull request overview in the diff pane.
+    ///
+    /// The overview is a page to read, not a list of lines, so it never holds
+    /// focus while the sidebar is shown: the sidebar keeps driving navigation
+    /// and `Ctrl-d`/`Ctrl-u` scroll the page, as they scroll a file's diff.
     pub(in crate::app) fn show_pull_request_overview(&mut self) {
         self.pull_requests.set_page(PullRequestPage::Overview);
         self.clear_diff_text_selection();
+        self.keep_overview_focus_in_sidebar();
+    }
+
+    /// Returns focus to the sidebar while the overview shows, unless the
+    /// sidebar is hidden and the page is all there is to focus.
+    pub(in crate::app) fn keep_overview_focus_in_sidebar(&mut self) {
+        if self.pull_request_overview_visible() && !self.sidebar_hidden {
+            self.active_pane = ActivePane::Sidebar;
+        }
     }
 
     /// Shows the selected file's diff instead of the overview.

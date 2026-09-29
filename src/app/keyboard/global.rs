@@ -61,6 +61,10 @@ impl App {
                 self.open_pull_request_list();
                 handled()
             }
+            KeyCode::Char('y') => {
+                self.copy_pull_request_branch();
+                handled()
+            }
             KeyCode::Char('i') => {
                 self.initialize_repo_if_needed().await?;
                 handled()
@@ -179,7 +183,7 @@ impl App {
 
     pub(in crate::app) fn switch_active_pane(&mut self) {
         self.clear_diff_text_selection();
-        if !self.sidebar_hidden {
+        if !self.sidebar_hidden && !self.pull_request_overview_visible() {
             self.active_pane = match self.active_pane {
                 ActivePane::Sidebar => ActivePane::Diff,
                 ActivePane::Diff => ActivePane::Sidebar,

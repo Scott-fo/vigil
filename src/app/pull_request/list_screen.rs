@@ -294,6 +294,7 @@ impl App {
             }
             KeyCode::Char('t') => self.open_theme_modal(),
             KeyCode::Enter => self.open_selected_pull_request(),
+            KeyCode::Char('y') => self.copy_pull_request_branch(),
             _ => {}
         }
     }
