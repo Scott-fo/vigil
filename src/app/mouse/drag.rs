@@ -31,12 +31,17 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn handle_mouse_left_up(&mut self) {
+    /// Finishes a diff text drag. A completed drag copies the selection to
+    /// the clipboard immediately; a plain click just moves the cursor.
+    pub(super) fn handle_mouse_left_up(&mut self) -> color_eyre::Result<()> {
         let Some(anchor) = self.diff_text_selection_anchor.take() else {
-            return;
+            return Ok(());
         };
         if self.diff_text_selection.is_none() {
             self.selected_diff_line_index = anchor.display_index;
+            return Ok(());
         }
+        self.copy_diff_selection_to_clipboard()?;
+        Ok(())
     }
 }
