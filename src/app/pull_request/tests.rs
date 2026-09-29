@@ -400,6 +400,50 @@ async fn the_branch_in_view_follows_the_screen() {
     app.abort_background_tasks();
 }
 
+#[tokio::test]
+async fn k_checks_out_the_reviewed_head_as_a_branch() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.open_pull_request_for_test(
+        fixtures::pull_request(17, Vec::new()),
+        vec![fixtures::file("src/lib.rs")],
+    );
+    let selection = app.pull_request_selection().unwrap().clone();
+    app.handle_key_event(press(KeyCode::Char('K'), KeyModifiers::SHIFT))
+        .await
+        .unwrap();
+    assert_eq!(
+        app.branch_operation(),
+        Some(&git::BranchOperation::CheckoutPullRequest(
+            git::PullRequestCheckout {
+                number: 17,
+                branch: selection.head_ref_name.clone(),
+                head_oid: selection.head_oid.clone(),
+                upstream: Some(git::RemoteBranch {
+                    remote: "origin".to_string(),
+                    branch: selection.head_ref_name.clone(),
+                }),
+            }
+        ))
+    );
+
+    app.cancel_inflight_diff_load();
+    app.abort_background_tasks();
+}
+
+#[test]
+fn a_fork_head_checks_out_under_its_number_without_an_upstream() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    let mut detail = fixtures::pull_request(17, Vec::new());
+    detail.summary.is_cross_repository = true;
+    detail.summary.head_ref_name = "main".to_string();
+    app.open_pull_request_for_test(detail, vec![fixtures::file("src/lib.rs")]);
+
+    let checkout = app.pull_request_selection().unwrap().checkout();
+    assert_eq!(checkout.branch, "pr-17");
+    assert_eq!(checkout.upstream, None);
+    app.abort_background_tasks();
+}
+
 #[test]
 fn inline_threads_add_rows_to_the_diff_viewport() {
     let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));

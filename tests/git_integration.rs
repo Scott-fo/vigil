@@ -1330,3 +1330,173 @@ async fn pull_request_ref_cleanup_touches_only_vigil_pull_request_refs() -> Resu
     }
     Ok(())
 }
+
+fn pull_request_checkout(
+    number: u64,
+    branch: &str,
+    head_oid: &str,
+    upstream: Option<&str>,
+) -> git::BranchOperation {
+    git::BranchOperation::CheckoutPullRequest(git::PullRequestCheckout {
+        number,
+        branch: branch.to_string(),
+        head_oid: head_oid.to_string(),
+        upstream: upstream.map(|branch| git::RemoteBranch {
+            remote: "origin".to_string(),
+            branch: branch.to_string(),
+        }),
+    })
+}
+
+fn checked_out(
+    number: u64,
+    branch: &str,
+    update: git::CheckoutUpdate,
+) -> git::BranchOperationOutcome {
+    git::BranchOperationOutcome::CheckedOutPullRequest {
+        number,
+        branch: branch.to_string(),
+        update,
+    }
+}
+
+#[tokio::test]
+async fn pull_request_checkout_creates_tracks_and_fast_forwards_without_losing_work() -> Result<()>
+{
+    let reviewer = TestRepo::init().await?;
+    reviewer.write("app.txt", "base\n");
+    reviewer.commit_all("Base", "2024-01-01T00:00:00Z");
+    reviewer.rename_branch("main");
+    let (origin, author) = reviewer.with_origin();
+    reviewer.git(&["push", "--quiet", "--set-upstream", "origin", "main"]);
+
+    author.clone_from(&origin);
+    author.checkout_new_branch("feature");
+    author.write("app.txt", "base\nfeature\n");
+    author.commit_all("Feature", "2024-01-02T00:00:00Z");
+    author.git(&[
+        "push",
+        "--quiet",
+        "origin",
+        "feature",
+        "feature:refs/pull/5/head",
+    ]);
+    let first = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    let fetched = git::fetch_pull_request(&reviewer.root, &pull_request_fetch(5, &first))
+        .await
+        .expect("pull request fetches");
+
+    // A missing branch is created at the head and tracks the remote branch.
+    assert_eq!(
+        run_branch_op(
+            &reviewer,
+            pull_request_checkout(5, "feature", &fetched.head_oid, Some("feature"))
+        )
+        .await,
+        Ok(checked_out(5, "feature", git::CheckoutUpdate::Created))
+    );
+    assert_eq!(
+        reviewer.git(&["branch", "--show-current"]).trim(),
+        "feature"
+    );
+    assert_eq!(reviewer.read("app.txt"), "base\nfeature\n");
+    assert_eq!(
+        reviewer
+            .git(&["rev-parse", "--abbrev-ref", "feature@{upstream}"])
+            .trim(),
+        "origin/feature"
+    );
+
+    // Checking out again changes nothing.
+    assert_eq!(
+        run_branch_op(
+            &reviewer,
+            pull_request_checkout(5, "feature", &fetched.head_oid, Some("feature"))
+        )
+        .await,
+        Ok(checked_out(5, "feature", git::CheckoutUpdate::UpToDate))
+    );
+
+    // New commits on the pull request fast-forward the branch, from another
+    // branch or while it is checked out.
+    reviewer.checkout("main");
+    author.append("app.txt", "more\n");
+    author.commit_all("More", "2024-01-03T00:00:00Z");
+    author.git(&[
+        "push",
+        "--quiet",
+        "origin",
+        "feature",
+        "feature:refs/pull/5/head",
+    ]);
+    let fetched = git::fetch_pull_request(&reviewer.root, &pull_request_fetch(5, &first))
+        .await
+        .expect("pull request refetches");
+    assert_eq!(
+        run_branch_op(
+            &reviewer,
+            pull_request_checkout(5, "feature", &fetched.head_oid, Some("feature"))
+        )
+        .await,
+        Ok(checked_out(
+            5,
+            "feature",
+            git::CheckoutUpdate::FastForwarded
+        ))
+    );
+    assert_eq!(
+        reviewer.git(&["rev-parse", "HEAD"]).trim(),
+        fetched.head_oid
+    );
+
+    // Local commits the pull request lacks are never thrown away.
+    reviewer.append("app.txt", "local\n");
+    reviewer.commit_all("Local", "2024-01-04T00:00:00Z");
+    let local = reviewer.git(&["rev-parse", "HEAD"]).trim().to_string();
+    reviewer.checkout("main");
+    assert_eq!(
+        run_branch_op(
+            &reviewer,
+            pull_request_checkout(5, "feature", &fetched.head_oid, Some("feature"))
+        )
+        .await,
+        Ok(checked_out(5, "feature", git::CheckoutUpdate::Diverged))
+    );
+    assert_eq!(reviewer.git(&["rev-parse", "HEAD"]).trim(), local);
+
+    // A switch that would overwrite local changes is refused and moves
+    // nothing.
+    reviewer.checkout("main");
+    reviewer.git(&["branch", "--force", "feature", &first]);
+    reviewer.write("app.txt", "uncommitted\n");
+    let refused = run_branch_op(
+        &reviewer,
+        pull_request_checkout(5, "feature", &fetched.head_oid, Some("feature")),
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(git::BranchOperationError::Git { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(reviewer.git(&["branch", "--show-current"]).trim(), "main");
+    assert_eq!(reviewer.git(&["rev-parse", "feature"]).trim(), first);
+    assert_eq!(reviewer.read("app.txt"), "uncommitted\n");
+    reviewer.git(&["checkout", "--", "app.txt"]);
+
+    // A fork's head gets its own branch with no upstream.
+    assert_eq!(
+        run_branch_op(
+            &reviewer,
+            pull_request_checkout(5, "pr-5", &fetched.head_oid, None)
+        )
+        .await,
+        Ok(checked_out(5, "pr-5", git::CheckoutUpdate::Created))
+    );
+    assert!(
+        !reviewer
+            .try_git(&["rev-parse", "--abbrev-ref", "pr-5@{upstream}"])
+            .status
+            .success()
+    );
+    Ok(())
+}

@@ -197,6 +197,7 @@ impl App {
             KeyCode::Char('M') => self.open_merge_form(),
             KeyCode::Char('A') => self.open_actions_menu(),
             KeyCode::Char('D') => self.open_draft_list(),
+            KeyCode::Char('K') => self.checkout_pull_request_branch(),
             KeyCode::Esc
                 if self.diff_text_selection.is_none()
                     && self.pull_requests.open().map(|open| open.origin())

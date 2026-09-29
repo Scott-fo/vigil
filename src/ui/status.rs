@@ -578,6 +578,9 @@ pub(super) fn operation_progress_label(operation: &BranchOperation) -> String {
         BranchOperation::Create { name, .. } => format!("Creating {name}…"),
         BranchOperation::Rename { from, .. } => format!("Renaming {from}…"),
         BranchOperation::Delete { branch, .. } => format!("Deleting {branch}…"),
+        BranchOperation::CheckoutPullRequest(checkout) => {
+            format!("Checking out #{}…", checkout.number)
+        }
     }
 }
 

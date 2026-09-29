@@ -1,6 +1,7 @@
 use crate::{
     app::{DiffViewMode, ReviewMode},
     forge::{ForgeError, PullRequest, PullRequestSummary},
+    git,
     review::{DisplayThread, ThreadRow, UnplacedReason},
 };
 
@@ -42,6 +43,19 @@ impl App {
                 SnackbarVariant::Error,
             ),
         }
+    }
+
+    /// `K`: checks out the pull request under review as a local branch, at
+    /// the head that was fetched for review. See
+    /// [`PullRequestSelection::checkout`] for the branch it uses.
+    pub(in crate::app) fn checkout_pull_request_branch(&mut self) {
+        let Some(checkout) = self
+            .pull_request_selection()
+            .map(PullRequestSelection::checkout)
+        else {
+            return;
+        };
+        self.start_branch_operation(git::BranchOperation::CheckoutPullRequest(checkout));
     }
 
     /// The head branch of the pull request in view: the list's selected row,

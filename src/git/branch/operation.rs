@@ -38,6 +38,48 @@ pub enum BranchOperation {
         branch: String,
         force: bool,
     },
+    /// Checks out a pull request's head as a local branch, as `gh pr
+    /// checkout` does. See [`PullRequestCheckout`].
+    CheckoutPullRequest(PullRequestCheckout),
+}
+
+/// A pull request head to check out as a local branch.
+///
+/// A missing branch is created at `head_oid`. An existing one is switched to
+/// and fast-forwarded to `head_oid` when it is behind; one with commits the
+/// head lacks is switched to and left alone. Nothing is ever reset or
+/// force-moved, so local work on the branch survives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestCheckout {
+    pub number: u64,
+    /// The local branch to check out.
+    pub branch: String,
+    /// The head commit. It must already be in the object store, as it is
+    /// after [`fetch_pull_request`](crate::git::fetch_pull_request).
+    pub head_oid: String,
+    /// The remote branch a newly created branch tracks, so `p` and `P` pull
+    /// and push the pull request. `None` for a head in a fork.
+    pub upstream: Option<RemoteBranch>,
+}
+
+/// A branch on a remote, such as `origin`'s `feature`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteBranch {
+    pub remote: String,
+    pub branch: String,
+}
+
+/// What checking out a pull request did to its local branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckoutUpdate {
+    /// The branch did not exist and was created at the head.
+    Created,
+    /// The branch was behind the head and was fast-forwarded to it.
+    FastForwarded,
+    /// The branch was already at the head.
+    UpToDate,
+    /// The branch has commits the head does not; it was left as it was.
+    Diverged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +107,11 @@ pub enum BranchOperationOutcome {
     Deleted {
         branch: String,
     },
+    CheckedOutPullRequest {
+        number: u64,
+        branch: String,
+        update: CheckoutUpdate,
+    },
 }
 
 impl BranchOperationOutcome {
@@ -73,7 +120,9 @@ impl BranchOperationOutcome {
     pub fn changes_working_tree(&self) -> bool {
         match self {
             Self::Pulled { up_to_date, .. } => !up_to_date,
-            Self::Switched { .. } | Self::Created { .. } => true,
+            Self::Switched { .. } | Self::Created { .. } | Self::CheckedOutPullRequest { .. } => {
+                true
+            }
             Self::Fetched | Self::Pushed { .. } | Self::Renamed { .. } | Self::Deleted { .. } => {
                 false
             }
@@ -192,6 +241,106 @@ pub async fn run_branch_operation(
                 branch: branch.clone(),
             })
         }
+        BranchOperation::CheckoutPullRequest(checkout) => {
+            checkout_pull_request(repo_root, checkout).await
+        }
+    }
+}
+
+async fn checkout_pull_request(
+    repo_root: &Path,
+    checkout: &PullRequestCheckout,
+) -> OperationResult<BranchOperationOutcome> {
+    let branch = checkout.branch.as_str();
+    let head = checkout.head_oid.as_str();
+    let update = match resolve_commit(repo_root, &format!("refs/heads/{branch}")).await? {
+        None => {
+            run(
+                repo_root,
+                &["switch", "--no-track", "--create", branch, head],
+            )
+            .await
+            .map_err(|error| name_error(error, branch))?;
+            if let Some(upstream) = &checkout.upstream {
+                track_remote_branch(repo_root, branch, upstream).await;
+            }
+            CheckoutUpdate::Created
+        }
+        Some(tip) => {
+            let update = if tip == head {
+                CheckoutUpdate::UpToDate
+            } else if is_ancestor(repo_root, &tip, head).await? {
+                CheckoutUpdate::FastForwarded
+            } else {
+                CheckoutUpdate::Diverged
+            };
+            // Switching first means a refused switch (local changes in the
+            // way, or the branch is checked out in another worktree) leaves
+            // the branch where it was.
+            run(repo_root, &["switch", branch]).await?;
+            if update == CheckoutUpdate::FastForwarded {
+                run(repo_root, &["merge", "--ff-only", "--quiet", head]).await?;
+            }
+            update
+        }
+    };
+    Ok(BranchOperationOutcome::CheckedOutPullRequest {
+        number: checkout.number,
+        branch: branch.to_string(),
+        update,
+    })
+}
+
+/// Makes `branch` track `upstream`, refreshing its remote-tracking ref first.
+/// Best effort: offline, or with the remote branch deleted, the branch is
+/// left without an upstream rather than failing a checkout that worked.
+async fn track_remote_branch(repo_root: &Path, branch: &str, upstream: &RemoteBranch) {
+    let tracking_ref = format!("refs/remotes/{}/{}", upstream.remote, upstream.branch);
+    let refspec = format!("+refs/heads/{}:{tracking_ref}", upstream.branch);
+    let _ = spawn(
+        repo_root,
+        &[
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "--no-recurse-submodules",
+            &upstream.remote,
+            &refspec,
+        ],
+    )
+    .await;
+    if matches!(resolve_commit(repo_root, &tracking_ref).await, Ok(Some(_))) {
+        let _ = spawn(
+            repo_root,
+            &["branch", "--set-upstream-to", &tracking_ref, branch],
+        )
+        .await;
+    }
+}
+
+async fn resolve_commit(repo_root: &Path, revision: &str) -> OperationResult<Option<String>> {
+    let object = format!("{revision}^{{commit}}");
+    let output = spawn(repo_root, &["rev-parse", "--verify", "--quiet", &object]).await?;
+    Ok(output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|oid| !oid.is_empty()))
+}
+
+async fn is_ancestor(repo_root: &Path, ancestor: &str, descendant: &str) -> OperationResult<bool> {
+    let output = spawn(
+        repo_root,
+        &["merge-base", "--is-ancestor", ancestor, descendant],
+    )
+    .await?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(BranchOperationError::Git {
+            message: concise_git_message(&output),
+        }),
     }
 }
 
