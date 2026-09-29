@@ -9,9 +9,20 @@ use crate::{
 };
 
 use super::{
+    drafts::{DraftBook, DraftPersistence, DraftWriter},
     list::PullRequestListState,
+    modal::PullRequestModal,
     task::{OwnedTask, RequestSlot},
 };
+
+/// Whether the open pull request's drafts have loaded from the database.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(in crate::app) enum DraftLoad {
+    #[default]
+    Loading,
+    Loaded,
+    Failed(String),
+}
 
 /// A current-branch lookup for the same branch and tip is skipped when the
 /// last one finished this recently. Branch snapshots reload on every working
@@ -113,9 +124,61 @@ pub(in crate::app) struct OpenPullRequest {
     newer_head: Option<String>,
     poll: RequestSlot,
     ticker: Option<OwnedTask>,
+    drafts: DraftBook,
+    drafts_load: RequestSlot,
 }
 
 impl OpenPullRequest {
+    fn new(summary: PullRequestSummary, reviewed_head: String) -> Self {
+        Self {
+            summary,
+            reviewed_head,
+            detail: None,
+            detail_error: None,
+            threads: ReviewThreads::default(),
+            page: PullRequestPage::Overview,
+            overview_scroll: 0,
+            newer_head: None,
+            poll: RequestSlot::default(),
+            ticker: None,
+            drafts: DraftBook::default(),
+            drafts_load: RequestSlot::default(),
+        }
+    }
+
+    /// The head commit the review's diff shows, which new drafts pin to.
+    pub(in crate::app) fn reviewed_head(&self) -> &str {
+        &self.reviewed_head
+    }
+
+    pub(in crate::app) fn drafts(&self) -> &DraftBook {
+        &self.drafts
+    }
+
+    pub(in crate::app) fn drafts_mut(&mut self) -> &mut DraftBook {
+        &mut self.drafts
+    }
+
+    pub(in crate::app) fn finish_drafts_load(&mut self, id: u64) -> bool {
+        self.drafts_load.complete(id)
+    }
+
+    /// Redraws the thread model from GitHub's threads and the drafts.
+    pub(in crate::app) fn rebuild_threads(&mut self) {
+        let review_threads = self
+            .detail
+            .as_ref()
+            .map_or(&[][..], |detail| detail.review_threads.as_slice());
+        let head = self.reviewed_head.as_str();
+        self.threads = ReviewThreads::with_drafts(
+            review_threads,
+            self.drafts
+                .all()
+                .iter()
+                .map(|draft| (draft, draft.head_oid == head)),
+        );
+    }
+
     pub(in crate::app) fn summary(&self) -> &PullRequestSummary {
         &self.summary
     }
@@ -149,10 +212,10 @@ impl OpenPullRequest {
     }
 
     fn apply_detail(&mut self, detail: PullRequest) {
-        self.threads = ReviewThreads::from_pull_request(&detail.review_threads);
         self.summary = detail.summary.clone();
         self.detail = Some(detail);
         self.detail_error = None;
+        self.rebuild_threads();
     }
 }
 
@@ -180,22 +243,29 @@ pub(in crate::app) struct PullRequests {
     list: PullRequestListState,
     /// A pull request looked up by number before it opens.
     lookup: RequestSlot,
+    /// The review-action modal on screen, if any.
+    modal: Option<PullRequestModal>,
+    draft_persistence: DraftPersistence,
+    draft_writer: Option<DraftWriter>,
 }
 
 impl Default for PullRequests {
     fn default() -> Self {
-        Self::with_connection(ForgeConnection::Idle)
+        Self::with_connection(ForgeConnection::Idle, DraftPersistence::Database)
     }
 }
 
 impl PullRequests {
-    /// State that never spawns `gh`.
+    /// State that never spawns `gh` or touches the review database.
     pub(in crate::app) fn disabled() -> Self {
-        Self::with_connection(ForgeConnection::Disabled)
+        Self::with_connection(ForgeConnection::Disabled, DraftPersistence::Off)
     }
 
-    fn with_connection(connection: ForgeConnection) -> Self {
+    fn with_connection(connection: ForgeConnection, draft_persistence: DraftPersistence) -> Self {
         Self {
+            modal: None,
+            draft_persistence,
+            draft_writer: None,
             connection,
             connect: RequestSlot::default(),
             connect_reason: ConnectReason::Background,
@@ -434,8 +504,8 @@ impl PullRequests {
     }
 
     /// Makes `summary` the pull request under review at `reviewed_head`. A
-    /// reload of the same pull request keeps its page, scroll, and detail;
-    /// a newly opened one starts on the overview.
+    /// reload of the same pull request keeps its page, scroll, detail, and
+    /// drafts; a newly opened one starts on the overview.
     pub(in crate::app) fn enter(&mut self, summary: PullRequestSummary, reviewed_head: String) {
         let early_detail = self.early_detail.take();
         match self.open.as_mut() {
@@ -443,20 +513,11 @@ impl PullRequests {
                 open.summary = summary;
                 open.reviewed_head = reviewed_head;
                 open.newer_head = None;
+                open.rebuild_threads();
             }
             _ => {
-                self.open = Some(OpenPullRequest {
-                    summary,
-                    reviewed_head,
-                    detail: None,
-                    detail_error: None,
-                    threads: ReviewThreads::default(),
-                    page: PullRequestPage::Overview,
-                    overview_scroll: 0,
-                    newer_head: None,
-                    poll: RequestSlot::default(),
-                    ticker: None,
-                });
+                self.modal = None;
+                self.open = Some(OpenPullRequest::new(summary, reviewed_head));
             }
         }
         if let Some(result) = early_detail {
@@ -519,12 +580,54 @@ impl PullRequests {
     }
 
     /// Ends the review of the open pull request, cancelling its loads and
-    /// polling.
+    /// polling and closing its modals.
     pub(in crate::app) fn close(&mut self) {
         if self.open.take().is_some() {
             self.detail.cancel();
             self.detail_number = None;
             self.early_detail = None;
+            self.modal = None;
+        }
+    }
+
+    // Review actions ----------------------------------------------------------
+
+    pub(in crate::app) fn modal(&self) -> Option<&PullRequestModal> {
+        self.modal.as_ref()
+    }
+
+    pub(in crate::app) fn modal_mut(&mut self) -> Option<&mut PullRequestModal> {
+        self.modal.as_mut()
+    }
+
+    pub(in crate::app) fn set_modal(&mut self, modal: Option<PullRequestModal>) {
+        self.modal = modal;
+    }
+
+    pub(in crate::app) fn draft_persistence(&self) -> DraftPersistence {
+        self.draft_persistence
+    }
+
+    /// The draft writer, started on first use.
+    pub(in crate::app) fn draft_writer(
+        &mut self,
+        spawn: impl FnOnce() -> DraftWriter,
+    ) -> DraftWriter {
+        self.draft_writer.get_or_insert_with(spawn).clone()
+    }
+
+    /// Starts loading the open pull request's drafts.
+    pub(in crate::app) fn begin_drafts_load(&mut self) -> Option<u64> {
+        Some(self.open.as_mut()?.drafts_load.begin())
+    }
+
+    pub(in crate::app) fn attach_drafts_load(
+        &mut self,
+        id: u64,
+        handle: tokio::task::JoinHandle<()>,
+    ) {
+        if let Some(open) = self.open.as_mut() {
+            open.drafts_load.attach(id, handle);
         }
     }
 

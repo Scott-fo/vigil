@@ -148,6 +148,17 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                     ("c", "commit staged changes"),
                 ],
             },
+            Section {
+                title: "Reviewing a pull request",
+                keys: vec![
+                    ("c", "draft a comment on line or selection"),
+                    ("D", "drafts: edit or delete"),
+                    ("composer: ctrl-s", "save the draft"),
+                    ("composer: ⏎", "new line"),
+                    ("composer: ctrl-e", "write in $EDITOR"),
+                    ("composer: ctrl-g", "insert a suggestion block"),
+                ],
+            },
         ],
     ]
 }

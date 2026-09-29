@@ -34,6 +34,7 @@ mod pull_request;
 mod repo_state;
 mod runtime;
 mod sidebar_state;
+mod text_area;
 mod theme_modal;
 mod viewed;
 mod working_tree_actions;
@@ -55,9 +56,11 @@ use self::pull_request::PullRequests;
 #[cfg(test)]
 pub(crate) use self::pull_request::fixtures as pull_request_fixtures;
 pub use self::pull_request::{
-    PULL_REQUEST_LIST_FILTERS, PullRequestEvent, PullRequestListStatus, PullRequestListView,
+    Composer, ComposerStatus, ComposerTarget, DraftEntry, DraftList, PULL_REQUEST_LIST_FILTERS,
+    PullRequestEvent, PullRequestListStatus, PullRequestListView, PullRequestModalView,
     PullRequestOverview, PullRequestPage, PullRequestSelection, PullRequestTimer, QueryInput,
 };
+pub use self::text_area::TextArea;
 use crate::{
     event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{

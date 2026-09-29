@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, PullRequestOverview},
+    app::{App, DraftEntry, PullRequestOverview},
     forge::{
         Check, CheckState, MergeMethod, MergeStateStatus, Mergeability, PullRequest,
         PullRequestState, RequestedReviewer,
@@ -152,6 +152,8 @@ pub(in crate::ui) fn overview_lines(
         )));
     }
     lines.push(Line::from(totals));
+    lines.push(action_hints_line());
+    push_drafts(&mut lines, &overview.drafts, width);
 
     let Some(detail) = overview.detail else {
         lines.push(Line::default());
@@ -175,6 +177,64 @@ pub(in crate::ui) fn overview_lines(
     push_unplaced_threads(&mut lines, &overview.unplaced_threads, width, now);
     lines.push(Line::default());
     lines
+}
+
+/// `c comment · D drafts`.
+fn action_hints_line() -> Line<'static> {
+    let key = Style::new().fg(text_color()).add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::raw(INDENT)];
+    for (index, (keys, label)) in [("c", "comment"), ("D", "drafts")].into_iter().enumerate() {
+        if index > 0 {
+            spans.push(faint(" · "));
+        }
+        spans.push(Span::styled(keys, key));
+        spans.push(faint(format!(" {label}")));
+    }
+    Line::from(spans)
+}
+
+/// The reviewer's drafts, with the ones that lost their lines flagged.
+fn push_drafts(lines: &mut Vec<Line<'static>>, drafts: &[DraftEntry<'_>], width: usize) {
+    if drafts.is_empty() {
+        return;
+    }
+    let pending = drafts.iter().filter(|entry| entry.attached).count();
+    let mut extra = vec![colored(format!("{pending} pending"), primary_color())];
+    let stale = drafts.len() - pending;
+    if stale > 0 {
+        extra.push(faint(" · "));
+        extra.push(colored(format!("{stale} need attention"), warning_color()));
+    }
+    extra.push(faint(" · D edits"));
+    section(lines, "Your drafts", extra);
+    for entry in drafts {
+        let draft = entry.draft;
+        let end = draft.anchor.end.position;
+        let line = match draft.anchor.start_line().filter(|start| *start != end.line) {
+            Some(start) => format!("lines {start}–{}", end.line),
+            None => format!("line {}", end.line),
+        };
+        let mut spans = vec![
+            Span::raw(INDENT),
+            Span::styled(draft.path.clone(), Style::new().fg(text_color())),
+            faint(format!(" · {line} · ")),
+        ];
+        if entry.attached {
+            spans.push(colored("◌ pending", primary_color()));
+        } else {
+            spans.push(colored(
+                "⚠ its lines changed in new commits; edit or delete it",
+                warning_color(),
+            ));
+        }
+        lines.push(Line::from(spans));
+        for row in crate::review::wrap_comment_text(&draft.body, width.saturating_sub(6).max(8))
+            .into_iter()
+            .take(3)
+        {
+            lines.push(Line::from(vec![Span::raw(QUOTE), subtle(row)]));
+        }
+    }
 }
 
 fn section(lines: &mut Vec<Line<'static>>, title: &str, extra: Vec<Span<'static>>) {

@@ -3,6 +3,7 @@ use crate::{
         ForgeError, GitHub, PullRequest, PullRequestList, PullRequestListFilter, PullRequestSummary,
     },
     git::{FetchedPullRequest, PullRequestFetchError},
+    review::DraftComment,
 };
 
 /// Results of background pull request work, delivered through the app's event
@@ -40,6 +41,14 @@ pub enum PullRequestEvent {
         request_id: u64,
         result: Result<PullRequestSummary, ForgeError>,
     },
+    /// The open pull request's drafts, read from the review database.
+    DraftsLoaded {
+        request_id: u64,
+        result: Result<Vec<DraftComment>, String>,
+    },
+    /// A background draft write failed; the drafts on screen are newer than
+    /// the database.
+    DraftWriteFailed(String),
     Tick(PullRequestTimer),
 }
 

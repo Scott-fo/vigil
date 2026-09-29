@@ -23,25 +23,35 @@
 //!   per tab, filtered by typed text, and reloaded every 60 seconds while on
 //!   screen. Enter opens the selected row; a query such as `#17` opens that
 //!   pull request by number even when it is closed or merged.
+//! - **Draft review comments** (`c`), local and persisted in the review
+//!   database, drawn under their lines and listed in the overview (`D` edits
+//!   and deletes them).
 //!
 //! Every request is matched by id: a response to a superseded request is
 //! dropped, and dropping the state aborts its tasks (and their `gh`
 //! processes). Nothing here writes to GitHub.
 
+mod composer;
 mod connect;
 mod current_branch;
+mod draft_list;
+mod drafts;
 mod event;
 mod list;
 mod list_screen;
+mod modal;
 mod open;
 mod selection;
 mod state;
 mod task;
 mod view;
 
+pub use self::composer::{Composer, ComposerStatus, ComposerTarget};
+pub use self::draft_list::DraftList;
 pub use self::event::{PullRequestEvent, PullRequestTimer};
 pub use self::list::{PULL_REQUEST_LIST_FILTERS, QueryInput};
 pub use self::list_screen::{PullRequestListStatus, PullRequestListView};
+pub use self::modal::{DraftEntry, PullRequestModalView};
 pub use self::selection::PullRequestSelection;
 pub use self::state::PullRequestPage;
 pub(super) use self::state::PullRequests;
@@ -79,6 +89,10 @@ impl App {
             PullRequestEvent::LookedUp { request_id, result } => {
                 Ok(self.handle_pull_request_looked_up(request_id, result))
             }
+            PullRequestEvent::DraftsLoaded { request_id, result } => {
+                Ok(self.handle_drafts_loaded(request_id, result))
+            }
+            PullRequestEvent::DraftWriteFailed(error) => Ok(self.handle_draft_write_failed(error)),
             PullRequestEvent::Tick(PullRequestTimer::OpenPullRequest) => {
                 Ok(self.handle_open_pull_request_tick())
             }
@@ -91,5 +105,7 @@ impl App {
 
 #[cfg(test)]
 pub(crate) mod fixtures;
+#[cfg(test)]
+mod review_tests;
 #[cfg(test)]
 mod tests;

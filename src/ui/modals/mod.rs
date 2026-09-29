@@ -14,6 +14,7 @@ mod help;
 mod hints;
 mod list;
 mod prompt;
+mod pull_request;
 mod theme;
 mod worktree;
 
@@ -27,7 +28,8 @@ use self::{
     commit::render_commit_modal, commit_search::render_commit_search_modal,
     diff_search::render_diff_search_modal, diff_stats::render_diff_stats_modal,
     discard::render_discard_modal, file_filter::render_file_filter_modal,
-    file_search::render_file_search_modal, help::render_help_modal, theme::render_theme_modal,
+    file_search::render_file_search_modal, help::render_help_modal,
+    pull_request::render_pull_request_modal, theme::render_theme_modal,
     worktree::render_worktree_modal,
 };
 
@@ -82,6 +84,10 @@ pub(super) fn render_modals(frame: &mut Frame, app: &mut App) {
 
     if app.blame_modal_open {
         render_blame_modal(frame, app);
+    }
+
+    if let Some(view) = app.pull_request_modal() {
+        render_pull_request_modal(frame, view);
     }
 
     if app.help_modal_open {

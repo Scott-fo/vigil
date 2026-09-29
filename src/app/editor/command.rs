@@ -7,6 +7,8 @@ use super::{
 pub(in crate::app) enum AppCommand {
     OpenFileInEditor(String),
     OpenFileInEditorAtLine(String, usize),
+    /// Edit the open review modal's text (a comment or review summary).
+    EditPullRequestText,
 }
 
 impl App {
@@ -18,6 +20,9 @@ impl App {
         let (path, line_number) = match command {
             AppCommand::OpenFileInEditor(path) => (path, None),
             AppCommand::OpenFileInEditorAtLine(path, line_number) => (path, Some(line_number)),
+            AppCommand::EditPullRequestText => {
+                return self.edit_modal_text_in_editor(terminal).await;
+            }
         };
         let target = match self.resolve_editor_open_target(&path, line_number).await {
             Ok(target) => target,

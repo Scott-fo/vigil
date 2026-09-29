@@ -14,6 +14,10 @@ impl App {
             return self.handle_find_prefix_key(key_event).await;
         }
 
+        if let Some(outcome) = self.handle_pull_request_review_key(key_event).await? {
+            return Ok(Some(outcome));
+        }
+
         match key_event.code {
             KeyCode::Esc if self.diff_text_selection.is_some() => {
                 self.clear_diff_text_selection();

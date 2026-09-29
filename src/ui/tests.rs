@@ -476,6 +476,99 @@ mod pull_requests {
         assert_eq!(sidebar_item_index_at(&app, 5, 5, width, height), None);
     }
 
+    fn draft_on_two(body: &str) -> crate::review::DraftComment {
+        use crate::{
+            forge::DiffPosition,
+            review::{DraftAnchor, DraftComment, DraftLine},
+        };
+
+        DraftComment::new(
+            "src/app.rs".to_string(),
+            DraftAnchor {
+                start: None,
+                end: DraftLine {
+                    position: DiffPosition {
+                        side: DiffSide::Right,
+                        line: 2,
+                    },
+                    text: "fn two() {}".to_string(),
+                },
+            },
+            body.to_string(),
+            fixtures::summary(17).head_oid,
+        )
+    }
+
+    const THREE_ADDED: &str = "diff --git a/src/app.rs b/src/app.rs\n\
+                               --- a/src/app.rs\n\
+                               +++ b/src/app.rs\n\
+                               @@ -1,0 +1,3 @@\n\
+                               +fn one() {}\n\
+                               +fn two() {}\n\
+                               +fn three() {}\n";
+
+    #[test]
+    fn drafts_render_under_their_line_as_pending_and_mark_the_file() {
+        let mut app = pull_request_app(Vec::new());
+        app.show_pull_request_diff_for_test(THREE_ADDED, 0);
+        app.save_draft_for_test(draft_on_two("Guard the empty case."));
+
+        let text = buffer_text(&render_to_buffer(&mut app, 120, 30));
+        print(&text);
+        let lines = text.lines().collect::<Vec<_>>();
+        let two = lines
+            .iter()
+            .position(|line| line.contains("fn two()"))
+            .expect("line two renders");
+        assert!(
+            lines[two + 1].contains("╭─ ◌ pending · line 2 · your draft"),
+            "{}",
+            lines[two + 1]
+        );
+        assert!(lines[two + 2].contains("│  Guard the empty case."));
+        assert!(lines[two + 3].contains("╰─"));
+        assert!(lines[two + 4].contains("fn three()"));
+        assert!(
+            text.contains("●1"),
+            "drafts count toward the sidebar marker"
+        );
+        assert!(text.contains(" 1 pending "), "the footer counts drafts");
+    }
+
+    #[test]
+    fn the_overview_lists_drafts_and_the_review_keys() {
+        let mut app = pull_request_app(Vec::new());
+        app.save_draft_for_test(draft_on_two("Guard the empty case."));
+
+        let text = buffer_text(&render_to_buffer(&mut app, 140, 50));
+        print(&text);
+
+        assert!(text.contains("c comment · D drafts"));
+        assert!(text.contains("YOUR DRAFTS  1 pending · D edits"));
+        assert!(text.contains("src/app.rs · line 2 · ◌ pending"));
+        assert!(text.contains("Guard the empty case."));
+    }
+
+    #[test]
+    fn the_composer_shows_where_the_comment_goes_and_its_keys() {
+        let mut app = pull_request_app(Vec::new());
+        app.show_pull_request_diff_for_test(THREE_ADDED, 1);
+        app.start_inline_comment_for_test();
+        app.type_in_pull_request_modal_for_test("Could this be\nsimpler?");
+
+        let text = buffer_text(&render_to_buffer(&mut app, 120, 30));
+        print(&text);
+
+        assert!(text.contains("New comment"));
+        assert!(text.contains("src/app.rs · line 2"));
+        assert!(text.contains("a draft, kept on this machine"));
+        assert!(text.contains("Could this be"));
+        assert!(text.contains("simpler?▏"), "the caret follows the text");
+        assert!(text.contains("ctrl-s save draft"));
+        assert!(text.contains("ctrl-e $EDITOR"));
+        assert!(text.contains("ctrl-g suggestion"));
+    }
+
     #[test]
     fn pull_request_footer_names_the_branches_under_review() {
         let mut app = pull_request_app(Vec::new());

@@ -112,6 +112,7 @@ impl App {
         let reloading = self.pull_requests.open_number() == Some(summary.number);
         self.pull_requests.enter(summary, fetched.head_oid.clone());
         if !reloading {
+            self.load_pull_request_drafts();
             self.active_pane = ActivePane::Sidebar;
             self.clear_diff_text_selection();
             let ticker = spawn_ticker(

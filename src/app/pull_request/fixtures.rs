@@ -253,5 +253,34 @@ impl App {
         self.selected_file_index = 0;
         self.rebuild_sidebar_items();
         self.sync_sidebar_state();
+        self.load_pull_request_drafts();
+    }
+
+    /// Stores a draft on the open pull request, in memory only.
+    pub(crate) fn save_draft_for_test(&mut self, draft: crate::review::DraftComment) {
+        self.save_draft(draft);
+    }
+
+    /// Presses `c` on the cursor line, as the review key does.
+    pub(crate) fn start_inline_comment_for_test(&mut self) {
+        self.start_inline_comment();
+    }
+
+    /// Types `text` into the open review modal's text field.
+    pub(crate) fn type_in_pull_request_modal_for_test(&mut self, text: &str) {
+        if let Some(area) = self.pull_request_modal_text() {
+            area.insert_str(text);
+        }
+    }
+
+    /// Shows `diff` as the selected file's diff with the cursor on display
+    /// row `cursor`, focused, as a reviewer reading the files page would.
+    pub(crate) fn show_pull_request_diff_for_test(&mut self, diff: &str, cursor: usize) {
+        self.select_pull_request_page_for_test(super::PullRequestPage::Files);
+        self.diff_view = crate::git::build_diff_view_from_diff_text(diff, Some("rust"));
+        self.diff_view_mode = crate::app::DiffViewMode::Unified;
+        self.diff_line_wrap_mode = crate::app::DiffLineWrapMode::Wrap;
+        self.active_pane = crate::app::ActivePane::Diff;
+        self.selected_diff_line_index = cursor;
     }
 }
