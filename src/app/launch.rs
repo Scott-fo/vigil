@@ -33,6 +33,7 @@ impl App {
             preference,
         );
         app.queue_initial_working_tree_status_load();
+        app.spawn_stale_pull_request_ref_prune();
         if let Some(target) = options.initial_blame_target {
             app.open_blame_target(target);
         }

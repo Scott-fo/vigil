@@ -9,7 +9,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{
     fixtures,
     list::{PullRequestListState, QueryInput},
-    state::{BranchKey, ConnectOutcome, ConnectReason, PollOutcome, PullRequestPage, PullRequests},
+    state::{
+        BranchKey, ConnectOutcome, ConnectReason, PollOutcome, PullRequestPage, PullRequests,
+        ReviewOrigin,
+    },
 };
 use crate::{
     app::{ActivePane, App, DiffViewMode, ReviewMode, Screen},
@@ -158,7 +161,7 @@ fn stale_current_branch_responses_are_dropped() {
 #[test]
 fn detail_that_arrives_before_the_fetch_applies_when_the_review_opens() {
     let mut state = connected();
-    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17));
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17), ReviewOrigin::Elsewhere);
     let threads = vec![fixtures::thread(
         "T1",
         "src/lib.rs",
@@ -180,8 +183,8 @@ fn detail_that_arrives_before_the_fetch_applies_when_the_review_opens() {
 #[test]
 fn stale_fetches_and_details_are_dropped() {
     let mut state = connected();
-    let (old_fetch, old_detail) = state.begin_open(fixtures::summary(1));
-    let (new_fetch, _) = state.begin_open(fixtures::summary(2));
+    let (old_fetch, old_detail) = state.begin_open(fixtures::summary(1), ReviewOrigin::Elsewhere);
+    let (new_fetch, _) = state.begin_open(fixtures::summary(2), ReviewOrigin::Elsewhere);
 
     assert!(state.finish_fetch(old_fetch).is_none());
     assert!(!state.finish_detail(old_detail, Ok(fixtures::pull_request(1, Vec::new()))));
@@ -191,13 +194,13 @@ fn stale_fetches_and_details_are_dropped() {
 #[test]
 fn reloading_the_open_pull_request_keeps_its_page_and_detail() {
     let mut state = connected();
-    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17));
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17), ReviewOrigin::Elsewhere);
     state.finish_detail(detail_id, Ok(fixtures::pull_request(17, Vec::new())));
     let summary = state.finish_fetch(fetch_id).unwrap();
     state.enter(summary, "head-1".to_string());
     state.set_page(PullRequestPage::Files);
 
-    let (fetch_id, _) = state.begin_open(fixtures::summary(17));
+    let (fetch_id, _) = state.begin_open(fixtures::summary(17), ReviewOrigin::Elsewhere);
     let summary = state.finish_fetch(fetch_id).unwrap();
     state.enter(summary, "head-2".to_string());
 
@@ -248,7 +251,7 @@ fn polling_reports_new_commits_once_and_activity_separately() {
 #[test]
 fn polling_reloads_detail_while_github_computes_mergeability() {
     let mut state = connected();
-    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17));
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(17), ReviewOrigin::Elsewhere);
     // The fixture reports mergeability as unknown.
     state.finish_detail(detail_id, Ok(fixtures::pull_request(17, Vec::new())));
     let summary = state.finish_fetch(fetch_id).unwrap();

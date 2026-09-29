@@ -11,9 +11,10 @@ use super::{
     ComposerTarget, MutationOutcome, PullRequestAction, fixtures,
     gateway::{ForgeCall, ForgeMutation},
     modal::PullRequestModal,
+    state::ReviewOrigin,
 };
 use crate::{
-    app::{App, DiffTextSelection},
+    app::{App, DiffTextSelection, ReviewMode, Screen},
     forge::{
         DiffPosition, DiffSide, ForgeError, HeadBranchAction, HeadBranchOutcome, MergeMethod,
         MergeOutcome, MergeTiming, PendingReview, PullRequest, ReviewEvent, ReviewThread,
@@ -666,6 +667,42 @@ async fn the_actions_menu_stays_shut_without_capabilities() {
 
     assert!(modal(&app).is_none());
     assert!(snackbar(&app).contains("no state changes"));
+}
+
+#[tokio::test]
+async fn esc_returns_to_the_list_when_the_review_was_opened_from_it() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-review-action-tests"));
+    // Loaded without connecting, so going back to the list reloads nothing.
+    let list = app.pull_requests.list_mut();
+    let (id, filter) = list.begin_load();
+    list.finish_load(id, filter, Ok(fixtures::pull_request_list(&[5, 17], 2)));
+    list.move_selection(1);
+    app.open_pull_request_from_for_test(
+        fixtures::pull_request(17, Vec::new()),
+        vec![fixtures::file("src/app.rs")],
+        ReviewOrigin::PullRequestList,
+    );
+
+    keys(&mut app, [press(KeyCode::Esc)]).await;
+
+    assert!(app.running, "esc did not quit");
+    assert_eq!(app.screen(), Screen::PullRequestList);
+    assert!(matches!(app.review_mode, ReviewMode::WorkingTree));
+    assert!(app.pull_requests.open().is_none());
+    assert_eq!(
+        app.pull_request_list_view().rows[app.pull_request_list_view().selected].number,
+        17,
+        "the list keeps its selection"
+    );
+}
+
+#[tokio::test]
+async fn esc_still_quits_when_the_review_was_not_opened_from_the_list() {
+    let mut app = review_app(fixtures::pull_request(18, Vec::new()));
+
+    keys(&mut app, [press(KeyCode::Esc)]).await;
+
+    assert!(!app.running);
 }
 
 #[test]

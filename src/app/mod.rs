@@ -253,6 +253,8 @@ pub struct App {
     blame_load_task: Option<task::JoinHandle<()>>,
     pub diff_stats_modal_open: bool,
     pub help_modal_open: bool,
+    /// Rows the help modal is scrolled by; the renderer clamps it.
+    pub help_scroll: usize,
     pub theme_modal_open: bool,
     pub theme_modal_query: String,
     pub theme_modal_selected_index: usize,

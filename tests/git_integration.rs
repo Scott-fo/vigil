@@ -1280,3 +1280,53 @@ async fn pull_request_fetch_falls_back_to_origin_and_needs_a_remote() -> Result<
     assert_eq!(fetched.head_oid, base);
     Ok(())
 }
+
+#[tokio::test]
+async fn pull_request_ref_cleanup_touches_only_vigil_pull_request_refs() -> Result<()> {
+    let repo = TestRepo::init().await?;
+    repo.write("app.txt", "base\n");
+    repo.commit_all("Base", "2024-01-01T00:00:00Z");
+    let head = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+    for name in [
+        "refs/vigil/pr/1/head",
+        "refs/vigil/pr/1/base",
+        "refs/vigil/pr/12/head",
+        "refs/vigil/pr/2/head",
+        "refs/vigil/other/keep",
+        "refs/heads/feature",
+        "refs/remotes/origin/pr/1",
+    ] {
+        repo.git(&["update-ref", name, &head]);
+    }
+    let refs = |repo: &TestRepo| -> Vec<String> {
+        repo.git(&["for-each-ref", "--format=%(refname)"])
+            .lines()
+            .map(str::to_string)
+            .collect()
+    };
+
+    assert_eq!(git::delete_pull_request_refs(&repo.root, 1).await?, 2);
+    let after_one = refs(&repo);
+    assert!(
+        !after_one
+            .iter()
+            .any(|name| name.starts_with("refs/vigil/pr/1/"))
+    );
+    assert!(
+        after_one.contains(&"refs/vigil/pr/12/head".to_string()),
+        "pull request 12 is not pull request 1"
+    );
+    assert_eq!(git::delete_pull_request_refs(&repo.root, 1).await?, 0);
+
+    assert_eq!(git::prune_pull_request_refs(&repo.root).await?, 2);
+    let pruned = refs(&repo);
+    assert!(!pruned.iter().any(|name| name.starts_with("refs/vigil/pr/")));
+    for kept in [
+        "refs/vigil/other/keep",
+        "refs/heads/feature",
+        "refs/remotes/origin/pr/1",
+    ] {
+        assert!(pruned.contains(&kept.to_string()), "{kept} must survive");
+    }
+    Ok(())
+}

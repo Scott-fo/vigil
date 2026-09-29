@@ -20,6 +20,7 @@ use super::{
     draft_list::DraftList,
     gateway::{ForgeMutation, MutationOutcome},
     merge::{AutoMergeChoice, MergeBlocker, MergeForm, auto_merge_choice, merge_blockers},
+    state::ReviewOrigin,
     submit::{SubmitForm, SubmitWarning},
 };
 
@@ -196,6 +197,13 @@ impl App {
             KeyCode::Char('M') => self.open_merge_form(),
             KeyCode::Char('A') => self.open_actions_menu(),
             KeyCode::Char('D') => self.open_draft_list(),
+            KeyCode::Esc
+                if self.diff_text_selection.is_none()
+                    && self.pull_requests.open().map(|open| open.origin())
+                        == Some(ReviewOrigin::PullRequestList) =>
+            {
+                self.return_to_pull_request_list().await?;
+            }
             _ => return Ok(None),
         }
         Ok(Some(KeyOutcome::Handled))

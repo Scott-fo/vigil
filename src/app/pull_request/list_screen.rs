@@ -14,7 +14,7 @@ use super::{
     super::{App, Screen, SnackbarVariant, input::is_plain_text_key},
     PullRequestEvent, PullRequestTimer,
     list::{PULL_REQUEST_LIST_FILTERS, QueryInput},
-    state::{ConnectReason, ForgeConnection},
+    state::{ConnectReason, ForgeConnection, ReviewOrigin},
     task::spawn_ticker,
 };
 
@@ -196,7 +196,7 @@ impl App {
     pub(in crate::app) fn open_selected_pull_request(&mut self) {
         let list = self.pull_requests.list();
         if let Some(summary) = list.selected_summary().cloned() {
-            self.open_pull_request(summary);
+            self.open_pull_request(summary, ReviewOrigin::PullRequestList);
             return;
         }
         if let Some(number) = list.query_number() {
@@ -235,7 +235,7 @@ impl App {
             return false;
         }
         match result {
-            Ok(summary) => self.open_pull_request(summary),
+            Ok(summary) => self.open_pull_request(summary, ReviewOrigin::PullRequestList),
             Err(error) => {
                 self.status_message = Some(self.current_status_message());
                 self.show_snackbar(

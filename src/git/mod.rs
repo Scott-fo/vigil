@@ -88,8 +88,8 @@ pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_high
 pub(crate) use highlight::{SyntaxToken, highlight_markdown_line};
 pub use merge::prepare_branch_merge;
 pub use pull_request::{
-    FetchedPullRequest, PullRequestFetch, PullRequestFetchError, fetch_pull_request,
-    pull_request_head_ref,
+    FetchedPullRequest, PullRequestFetch, PullRequestFetchError, delete_pull_request_refs,
+    fetch_pull_request, prune_pull_request_refs, pull_request_head_ref,
 };
 pub use refs::{list_comparable_refs, load_branch_compare_refs, load_files_with_branch_diff};
 pub use repo::{

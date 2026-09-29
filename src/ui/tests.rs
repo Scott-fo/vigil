@@ -610,6 +610,29 @@ mod pull_requests {
     }
 
     #[test]
+    fn help_scrolls_on_a_24_row_terminal() {
+        let mut app = build_test_app();
+        app.help_modal_open = true;
+
+        let text = buffer_text(&render_to_buffer(&mut app, 120, 24));
+        print(&text);
+        assert!(text.contains("Keyboard shortcuts"));
+        assert!(
+            text.contains("j/k scroll 1–"),
+            "the footer offers scrolling"
+        );
+        assert!(
+            !text.contains("insert a suggestion block"),
+            "the end is below"
+        );
+
+        app.help_scroll = usize::MAX;
+        let text = buffer_text(&render_to_buffer(&mut app, 120, 24));
+        assert!(text.contains("insert a suggestion block"));
+        assert!(app.help_scroll < 100, "the renderer clamps the scroll");
+    }
+
+    #[test]
     fn pull_request_footer_names_the_branches_under_review() {
         let mut app = pull_request_app(Vec::new());
         let text = buffer_text(&render_to_buffer(&mut app, 160, 20));

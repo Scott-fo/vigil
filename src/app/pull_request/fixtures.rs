@@ -236,6 +236,16 @@ impl App {
         detail: PullRequest,
         files: Vec<FileEntry>,
     ) {
+        self.open_pull_request_from_for_test(detail, files, super::state::ReviewOrigin::Elsewhere);
+    }
+
+    /// Like [`Self::open_pull_request_for_test`], opened from `origin`.
+    pub(in crate::app) fn open_pull_request_from_for_test(
+        &mut self,
+        detail: PullRequest,
+        files: Vec<FileEntry>,
+        origin: super::state::ReviewOrigin,
+    ) {
         let summary = detail.summary.clone();
         let fetched = FetchedPullRequest {
             remote: "origin".to_string(),
@@ -243,7 +253,7 @@ impl App {
             head_oid: summary.head_oid.clone(),
             base_oid: summary.base_oid.clone(),
         };
-        let (_, detail_id) = self.pull_requests.begin_open(summary.clone());
+        let (_, detail_id) = self.pull_requests.begin_open(summary.clone(), origin);
         self.pull_requests.finish_detail(detail_id, Ok(detail));
         self.pull_requests
             .enter(summary.clone(), fetched.head_oid.clone());

@@ -11,27 +11,37 @@ use crate::app::{ActivePane, App};
 
 use super::super::{primary_color, text_color, text_faint_color, text_subtle_color};
 use super::frame::render_modal_frame;
+use super::list::render_quiet_scrollbar;
 
 struct Section {
     title: &'static str,
     keys: Vec<(&'static str, &'static str)>,
 }
 
-const COLUMN_GAP: u16 = 4;
+const COLUMN_GAP: u16 = 3;
+/// Frame border (2), the row under the title, a blank row, and the footer.
+const HELP_CHROME_ROWS: u16 = 5;
 
-pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
+/// Two columns of shortcuts that scroll together. On a terminal too short
+/// for every row, `j`/`k` and page keys scroll; the footer says where the
+/// view is.
+pub(super) fn render_help_modal(frame: &mut Frame, app: &mut App) {
     let [left, right] = sections(app);
     let left_lines = section_lines(&left);
     let right_lines = section_lines(&right);
     let left_width = lines_width(&left_lines);
     let right_width = lines_width(&right_lines);
+    let content_rows = left_lines.len().max(right_lines.len());
 
-    // Two columns plus frame border (2), frame inset (1 each side), and
-    // extra help padding (1 each side).
-    let width = (left_width + right_width) as u16 + COLUMN_GAP + 6;
-    let body_height = left_lines.len().max(right_lines.len()) as u16;
-    // Body, blank line, footer hint, frame border, and the row under the title.
-    let height = body_height + 5;
+    // Two columns plus frame border (2), frame inset (1 each side),
+    // extra help padding (1 each side), and a column for the scrollbar.
+    let width = (left_width + right_width) as u16 + COLUMN_GAP + 7;
+    let max_height = frame
+        .area()
+        .height
+        .saturating_sub(2)
+        .max(HELP_CHROME_ROWS + 1);
+    let height = (content_rows as u16 + HELP_CHROME_ROWS).min(max_height);
     let inner = render_modal_frame(frame, width, height, "Keyboard shortcuts");
 
     let inner = Block::new().padding(Padding::horizontal(1)).inner(inner);
@@ -43,35 +53,61 @@ pub(super) fn render_help_modal(frame: &mut Frame, app: &App) {
             Constraint::Length(1),
         ])
         .areas(inner);
-    let [left_area, _, right_area] = Layout::default()
+    let visible_rows = body.height as usize;
+    let max_scroll = content_rows.saturating_sub(visible_rows);
+    let scroll = app.help_scroll.min(max_scroll);
+    app.help_scroll = scroll;
+
+    let [left_area, _, right_area, scrollbar] = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(left_width as u16),
             Constraint::Length(COLUMN_GAP),
             Constraint::Min(1),
+            Constraint::Length(1),
         ])
         .areas(body);
-
-    frame.render_widget(Paragraph::new(Text::from(left_lines)), left_area);
-    frame.render_widget(Paragraph::new(Text::from(right_lines)), right_area);
+    let window = |lines: Vec<Line<'static>>| {
+        Text::from(
+            lines
+                .into_iter()
+                .skip(scroll)
+                .take(visible_rows)
+                .collect::<Vec<_>>(),
+        )
+    };
+    frame.render_widget(Paragraph::new(window(left_lines)), left_area);
+    frame.render_widget(Paragraph::new(window(right_lines)), right_area);
+    render_quiet_scrollbar(frame, scrollbar, content_rows, scroll);
 
     let pane_hint = match app.active_pane {
         ActivePane::Sidebar if !app.sidebar_hidden => "sidebar focused",
         ActivePane::Diff => "diff focused",
         ActivePane::Sidebar => "sidebar hidden",
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(pane_hint, Style::new().fg(text_faint_color())),
-            Span::styled("  ·  ", Style::new().fg(text_faint_color())),
+    let key = Style::new().fg(text_color()).add_modifier(Modifier::BOLD);
+    let faint = Style::new().fg(text_faint_color());
+    let mut spans = vec![Span::styled(pane_hint, faint)];
+    if max_scroll > 0 {
+        spans.extend([
+            Span::styled("  ·  ", faint),
+            Span::styled("j/k", key),
             Span::styled(
-                "esc",
-                Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+                format!(
+                    " scroll {}–{} of {content_rows}",
+                    scroll + 1,
+                    (scroll + visible_rows).min(content_rows)
+                ),
+                faint,
             ),
-            Span::styled(" close", Style::new().fg(text_faint_color())),
-        ])),
-        footer,
-    );
+        ]);
+    }
+    spans.extend([
+        Span::styled("  ·  ", faint),
+        Span::styled("esc", key),
+        Span::styled(" close", faint),
+    ]);
+    frame.render_widget(Paragraph::new(Line::from(spans)), footer);
 }
 
 fn sections(app: &App) -> [Vec<Section>; 2] {
@@ -113,10 +149,11 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                     ("r", "refetch the pull request under review"),
                     ("y", "copy the pull request's branch name"),
                     ("] on overview", "step into the first file"),
-                    ("Ctrl-d/u on overview", "scroll the overview"),
+                    ("Ctrl-d/u", "scroll the overview"),
                     ("Ctrl-L", "leave pull request review"),
-                    ("list: tab / 1-3", "switch tab"),
-                    ("list: / then #17", "filter, or open any number"),
+                    ("esc", "back to the list it came from"),
+                    ("list: tab, 1-3", "switch tab"),
+                    ("list: /#17", "filter, or open any number"),
                     ("list: ⏎ / esc", "open / back"),
                 ],
             },

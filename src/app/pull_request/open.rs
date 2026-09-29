@@ -11,7 +11,7 @@ use crate::{
 use super::{
     super::{ActivePane, App, ReviewMode, Screen, SnackbarVariant},
     PullRequestEvent, PullRequestSelection, PullRequestTimer,
-    state::{PollOutcome, PullRequestPage},
+    state::{PollOutcome, PullRequestPage, ReviewOrigin},
     task::spawn_ticker,
 };
 
@@ -21,8 +21,12 @@ const OPEN_PULL_REQUEST_POLL_INTERVAL: Duration = Duration::from_secs(30);
 impl App {
     /// Fetches `summary`'s commits and opens it in the review screen. The
     /// review switches over once the fetch lands; until then the current
-    /// review stays up.
-    pub(in crate::app) fn open_pull_request(&mut self, summary: PullRequestSummary) {
+    /// review stays up. `origin` decides where Esc goes back to.
+    pub(in crate::app) fn open_pull_request(
+        &mut self,
+        summary: PullRequestSummary,
+        origin: ReviewOrigin,
+    ) {
         if !self.request_forge_connection() {
             return;
         }
@@ -36,7 +40,7 @@ impl App {
             base_oid: summary.base_oid.clone(),
             base_ref_name: summary.base_ref_name.clone(),
         };
-        let (fetch_id, detail_id) = self.pull_requests.begin_open(summary);
+        let (fetch_id, detail_id) = self.pull_requests.begin_open(summary, origin);
         self.status_message = Some(format!("fetching pull request #{number}…"));
 
         let repo_root = self.repo_root.clone();
@@ -72,10 +76,40 @@ impl App {
     /// Refetches the pull request under review and reloads its diff and
     /// detail (the `r` key in pull request mode).
     pub(in crate::app) fn reload_open_pull_request(&mut self) {
-        let Some(summary) = self.pull_requests.open().map(|open| open.summary().clone()) else {
+        let Some((summary, origin)) = self
+            .pull_requests
+            .open()
+            .map(|open| (open.summary().clone(), open.origin()))
+        else {
             return;
         };
-        self.open_pull_request(summary);
+        self.open_pull_request(summary, origin);
+    }
+
+    /// Esc in a review opened from the list: ends the review and shows the
+    /// list again, with its tab, filter, and selection as they were.
+    pub(in crate::app) async fn return_to_pull_request_list(&mut self) -> color_eyre::Result<()> {
+        self.review_mode = ReviewMode::WorkingTree;
+        self.refresh().await?;
+        self.open_pull_request_list();
+        Ok(())
+    }
+
+    /// Deletes the refs a finished review's fetch wrote, in the background.
+    fn spawn_pull_request_ref_cleanup(&mut self, number: u64) {
+        let repo_root = self.repo_root.clone();
+        self.track_background_task(task::spawn(async move {
+            let _ = git::delete_pull_request_refs(&repo_root, number).await;
+        }));
+    }
+
+    /// Deletes pull request refs an earlier session left behind. Runs once
+    /// at startup, before any review opens.
+    pub(in crate::app) fn spawn_stale_pull_request_ref_prune(&mut self) {
+        let repo_root = self.repo_root.clone();
+        self.track_background_task(task::spawn(async move {
+            let _ = git::prune_pull_request_refs(&repo_root).await;
+        }));
     }
 
     pub(super) async fn handle_pull_request_fetched(
@@ -110,7 +144,9 @@ impl App {
     ) -> color_eyre::Result<()> {
         let selection = PullRequestSelection::new(&summary, &fetched);
         let reloading = self.pull_requests.open_number() == Some(summary.number);
-        self.pull_requests.enter(summary, fetched.head_oid.clone());
+        if let Some(replaced) = self.pull_requests.enter(summary, fetched.head_oid.clone()) {
+            self.spawn_pull_request_ref_cleanup(replaced);
+        }
         if !reloading {
             self.load_pull_request_drafts();
             self.active_pane = ActivePane::Sidebar;
@@ -170,8 +206,9 @@ impl App {
         };
         if self.pull_requests.open_number().is_some()
             && self.pull_requests.open_number() != reviewing
+            && let Some(closed) = self.pull_requests.close()
         {
-            self.pull_requests.close();
+            self.spawn_pull_request_ref_cleanup(closed);
         }
         self.pull_requests.rebind_repo_root(&self.repo_root);
     }

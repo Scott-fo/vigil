@@ -16,6 +16,17 @@ use super::{
     task::{OwnedTask, RequestSlot},
 };
 
+/// How the pull request under review was opened, which decides where Esc
+/// goes back to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum ReviewOrigin {
+    /// From the pull request list; Esc returns to it.
+    PullRequestList,
+    /// From the footer chip, `O`, or anywhere else; Esc keeps its old
+    /// meaning.
+    Elsewhere,
+}
+
 /// Whether the open pull request's drafts have loaded from the database.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::app) enum DraftLoad {
@@ -125,12 +136,13 @@ pub(in crate::app) struct OpenPullRequest {
     newer_head: Option<String>,
     poll: RequestSlot,
     ticker: Option<OwnedTask>,
+    origin: ReviewOrigin,
     drafts: DraftBook,
     drafts_load: RequestSlot,
 }
 
 impl OpenPullRequest {
-    fn new(summary: PullRequestSummary, reviewed_head: String) -> Self {
+    fn new(summary: PullRequestSummary, reviewed_head: String, origin: ReviewOrigin) -> Self {
         Self {
             summary,
             reviewed_head,
@@ -142,6 +154,7 @@ impl OpenPullRequest {
             newer_head: None,
             poll: RequestSlot::default(),
             ticker: None,
+            origin,
             drafts: DraftBook::default(),
             drafts_load: RequestSlot::default(),
         }
@@ -150,6 +163,10 @@ impl OpenPullRequest {
     /// The head commit the review's diff shows, which new drafts pin to.
     pub(in crate::app) fn reviewed_head(&self) -> &str {
         &self.reviewed_head
+    }
+
+    pub(in crate::app) fn origin(&self) -> ReviewOrigin {
+        self.origin
     }
 
     pub(in crate::app) fn drafts(&self) -> &DraftBook {
@@ -249,6 +266,7 @@ pub(in crate::app) struct PullRequests {
     list: PullRequestListState,
     /// A pull request looked up by number before it opens.
     lookup: RequestSlot,
+    opening_origin: ReviewOrigin,
     /// The review-action modal on screen, if any.
     modal: Option<PullRequestModal>,
     /// The write to GitHub in flight; at most one runs at a time.
@@ -273,6 +291,7 @@ impl PullRequests {
 
     fn with_connection(connection: ForgeConnection, draft_persistence: DraftPersistence) -> Self {
         Self {
+            opening_origin: ReviewOrigin::Elsewhere,
             modal: None,
             mutation: RequestSlot::default(),
             in_flight: None,
@@ -465,10 +484,15 @@ impl PullRequests {
 
     /// Starts fetching `summary`'s commits and loading its detail. Returns the
     /// fetch and detail request ids.
-    pub(in crate::app) fn begin_open(&mut self, summary: PullRequestSummary) -> (u64, u64) {
+    pub(in crate::app) fn begin_open(
+        &mut self,
+        summary: PullRequestSummary,
+        origin: ReviewOrigin,
+    ) -> (u64, u64) {
         self.detail_number = Some(summary.number);
         self.early_detail = None;
         self.opening = Some(summary);
+        self.opening_origin = origin;
         (self.fetch.begin(), self.detail.begin())
     }
 
@@ -518,24 +542,36 @@ impl PullRequests {
 
     /// Makes `summary` the pull request under review at `reviewed_head`. A
     /// reload of the same pull request keeps its page, scroll, detail, and
-    /// drafts; a newly opened one starts on the overview.
-    pub(in crate::app) fn enter(&mut self, summary: PullRequestSummary, reviewed_head: String) {
+    /// drafts; a newly opened one starts on the overview. Returns the number
+    /// of a different pull request this replaced, whose review ended.
+    pub(in crate::app) fn enter(
+        &mut self,
+        summary: PullRequestSummary,
+        reviewed_head: String,
+    ) -> Option<u64> {
         let early_detail = self.early_detail.take();
+        let origin = self.opening_origin;
+        let mut replaced = None;
         match self.open.as_mut() {
             Some(open) if open.summary.number == summary.number => {
                 open.summary = summary;
                 open.reviewed_head = reviewed_head;
                 open.newer_head = None;
+                if origin == ReviewOrigin::PullRequestList {
+                    open.origin = origin;
+                }
                 open.rebuild_threads();
             }
-            _ => {
+            previous => {
+                replaced = previous.map(|open| open.summary.number);
                 self.modal = None;
-                self.open = Some(OpenPullRequest::new(summary, reviewed_head));
+                self.open = Some(OpenPullRequest::new(summary, reviewed_head, origin));
             }
         }
         if let Some(result) = early_detail {
             self.apply_detail_result(result);
         }
+        replaced
     }
 
     /// Records a finished detail load for the open (or opening) pull request.
@@ -595,14 +631,15 @@ impl PullRequests {
     /// Ends the review of the open pull request, cancelling its loads and
     /// polling and closing its modals. A write to GitHub already in flight
     /// still finishes and reports, so a submitted review's drafts are
-    /// deleted even after the review screen moved on.
-    pub(in crate::app) fn close(&mut self) {
-        if self.open.take().is_some() {
-            self.detail.cancel();
-            self.detail_number = None;
-            self.early_detail = None;
-            self.modal = None;
-        }
+    /// deleted even after the review screen moved on. Returns the number of
+    /// the pull request whose review ended.
+    pub(in crate::app) fn close(&mut self) -> Option<u64> {
+        let closed = self.open.take()?;
+        self.detail.cancel();
+        self.detail_number = None;
+        self.early_detail = None;
+        self.modal = None;
+        Some(closed.summary.number)
     }
 
     // Review actions ----------------------------------------------------------

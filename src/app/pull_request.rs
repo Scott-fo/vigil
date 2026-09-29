@@ -16,7 +16,9 @@
 //!   [`ReviewMode::PullRequest`](super::ReviewMode) with a
 //!   [`PullRequestSelection`]. The sidebar pins an overview page first. While
 //!   open, it is polled every 30 seconds; new commits raise a notice and `r`
-//!   refetches and reloads. Any other review mode ends it.
+//!   refetches and reloads. Any other review mode ends it and deletes the
+//!   refs its fetch wrote; refs left by an earlier session are pruned at
+//!   startup. Opened from the list, Esc goes back to the list.
 //! - **The pull request list screen**
 //!   ([`Screen::PullRequestList`](super::Screen)): open pull requests per
 //!   [`PullRequestListFilter`](crate::forge::PullRequestListFilter) tab, kept
