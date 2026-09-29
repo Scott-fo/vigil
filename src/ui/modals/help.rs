@@ -91,7 +91,7 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
         ("B", "branches: switch, create, sync"),
         ("w", "open worktree picker"),
         ("t", "open theme picker"),
-        ("Ctrl-L", "reset compare mode"),
+        ("Ctrl-L", "back to working tree"),
         ("p / P", "pull / push current branch"),
         ("q", "quit"),
     ];
@@ -129,6 +129,15 @@ fn sections(app: &App) -> [Vec<Section>; 2] {
                     ("1 / 2 / 3", "resolve conflict: shown sides / both"),
                     ("d", "discard selected file"),
                     ("c", "commit staged changes"),
+                ],
+            },
+            Section {
+                title: "Pull requests",
+                keys: vec![
+                    ("O", "review this branch's pull request"),
+                    ("r", "refetch the pull request under review"),
+                    ("] on overview", "step into the first file"),
+                    ("Ctrl-L", "leave pull request review"),
                 ],
             },
         ],

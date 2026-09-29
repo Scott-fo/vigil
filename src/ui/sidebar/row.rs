@@ -13,7 +13,7 @@ use crate::{
 use super::{
     super::{
         chip_color, hover_color, primary_color, selection_color, success_color, text_color,
-        text_faint_color, text_subtle_color,
+        text_faint_color, text_subtle_color, warning_color,
     },
     text::{devicon_for_path, display_width, truncate_middle},
 };
@@ -41,6 +41,9 @@ pub(super) struct RowContext {
     pub(super) hovered: bool,
     /// Marked viewed at its current diff; the row dims and shows a check.
     pub(super) viewed: bool,
+    /// Unresolved review threads on the file, or, on the overview row, those
+    /// the diff cannot show.
+    pub(super) unresolved_threads: usize,
 }
 
 pub(super) fn row_line(item: &SidebarItem, context: RowContext) -> Line<'static> {
@@ -57,6 +60,7 @@ pub(super) fn row_line(item: &SidebarItem, context: RowContext) -> Line<'static>
 
     let mut spans = vec![accent];
     match item {
+        SidebarItem::Overview => spans.extend(overview_spans(context)),
         SidebarItem::Section {
             section,
             file_count,
@@ -122,6 +126,36 @@ fn section_spans(
     ]
 }
 
+/// `≡ Overview ········ ●2`: the pinned pull request overview row.
+fn overview_spans(context: RowContext) -> Vec<Span<'static>> {
+    let label = "Overview";
+    let marker = thread_marker(context.unresolved_threads);
+    // accent + leading space + glyph + label + gap + marker + trailing space
+    let used = 1 + 1 + 2 + label.width() + marker.width() + 1;
+    let gap = (context.width as usize).saturating_sub(used).max(1);
+    let mut label_style = Style::new().fg(text_color());
+    if context.selection != RowSelection::None {
+        label_style = label_style.add_modifier(Modifier::BOLD);
+    }
+    vec![
+        Span::raw(" "),
+        Span::styled("≡ ", Style::new().fg(primary_color())),
+        Span::styled(label, label_style),
+        Span::raw(" ".repeat(gap)),
+        Span::styled(marker, Style::new().fg(warning_color())),
+        Span::raw(" "),
+    ]
+}
+
+/// `●2 ` for two unresolved review threads; empty when there are none.
+fn thread_marker(count: usize) -> String {
+    if count == 0 {
+        String::new()
+    } else {
+        format!("●{count} ")
+    }
+}
+
 fn header_spans(
     label: &str,
     depth: usize,
@@ -162,6 +196,7 @@ fn file_spans(
     let (icon, icon_color) = devicon_for_path(&file.path)
         .map(|(icon, color)| (format!("{icon} "), color))
         .unwrap_or_else(|| ("· ".to_string(), text_faint_color()));
+    let review_marker = thread_marker(context.unresolved_threads);
     let viewed_marker = if context.viewed { "✓ " } else { "" };
     let stage_marker = if partially_staged { "◐" } else { "" };
 
@@ -169,6 +204,7 @@ fn file_spans(
     let fixed_width = 1
         + display_width(&indent)
         + display_width(&icon)
+        + display_width(&review_marker)
         + display_width(viewed_marker)
         + display_width(stage_marker)
         + STATUS_SLOT_WIDTH;
@@ -209,6 +245,12 @@ fn file_spans(
         Span::styled(display_label, label_style),
         Span::raw(" ".repeat(gap)),
     ];
+    if !review_marker.is_empty() {
+        spans.push(Span::styled(
+            review_marker,
+            Style::new().fg(warning_color()),
+        ));
+    }
     if !viewed_marker.is_empty() {
         spans.push(Span::styled(
             viewed_marker,
@@ -259,21 +301,62 @@ mod tests {
             selection: RowSelection::None,
             hovered: false,
             viewed: false,
+            unresolved_threads: 0,
         }
     }
 
     #[test]
     fn file_rows_fill_the_row_width_exactly() {
-        for (width, viewed) in [(24, false), (40, false), (24, true)] {
+        for (width, viewed, unresolved_threads) in [
+            (24, false, 0),
+            (40, false, 0),
+            (24, true, 0),
+            (24, false, 3),
+            (40, true, 12),
+        ] {
             let line = row_line(
                 &file_item("src/ui/JavaScriptSyntaxHighlighter.tsx", " M", 2),
                 RowContext {
                     viewed,
+                    unresolved_threads,
                     ..context(width)
                 },
             );
 
             assert_eq!(line.width(), width as usize);
+        }
+    }
+
+    #[test]
+    fn files_with_unresolved_threads_show_their_count() {
+        let line = row_line(
+            &file_item("src/main.rs", " M", 0),
+            RowContext {
+                unresolved_threads: 2,
+                ..context(30)
+            },
+        );
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert!(text.contains("●2"), "{text:?}");
+    }
+
+    #[test]
+    fn overview_row_fills_the_row_width() {
+        for unresolved_threads in [0, 4] {
+            let line = row_line(
+                &SidebarItem::Overview,
+                RowContext {
+                    unresolved_threads,
+                    ..context(32)
+                },
+            );
+
+            assert_eq!(line.width(), 32);
         }
     }
 

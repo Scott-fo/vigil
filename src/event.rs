@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use crossterm::event::Event as CrosstermEvent;
 
 use crate::{
-    app::DiffCacheKey,
+    app::{DiffCacheKey, PullRequestEvent},
     git::{
         BlameCommitDetails, BranchCompareRefs, BranchMergeOutcome, BranchOperationError,
         BranchOperationOutcome, BranchSnapshot, CommitSearchEntry, DiffSearchIndex,
@@ -95,4 +95,5 @@ pub enum Event {
     },
     BranchOperationFinished(Result<BranchOperationOutcome, BranchOperationError>),
     ClearSnackbar(u64),
+    PullRequest(PullRequestEvent),
 }

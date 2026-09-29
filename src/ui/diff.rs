@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    highlight_line, highlight_line_range, layout::DiffLayout, status::line_change_spans,
-    surface_color, text_color, text_faint_color, text_subtle_color,
+    highlight_line, highlight_line_range, layout::DiffLayout, pull_request,
+    status::line_change_spans, surface_color, text_color, text_faint_color, text_subtle_color,
 };
 
 /// Thin scrollbar: a faint thumb on an invisible track.
@@ -30,6 +30,11 @@ pub(super) fn render_diff(frame: &mut Frame, app: &mut App, layout: DiffLayout) 
         Block::new().style(Style::new().bg(surface_color())),
         layout.area,
     );
+    if app.pull_request_overview_visible() {
+        pull_request::render_overview_header(frame, app, layout.header);
+        pull_request::render_overview_body(frame, app, layout.body);
+        return;
+    }
     render_file_header(frame, app, layout.header);
     render_diff_body(frame, app, layout.body);
 }
@@ -132,7 +137,9 @@ fn render_diff_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let diff_focused = app.active_pane == ActivePane::Diff;
     let mode = app.diff_view_mode;
     let line_wrap = app.diff_line_wrap_mode;
-    if app.diff_text_selection.is_none() {
+    // Review threads add rows between diff lines, which only the full
+    // (augmented) path lays out.
+    if app.diff_text_selection.is_none() && !app.selected_file_has_review_threads() {
         render_diff_body_windowed(frame, app, area, mode, diff_focused);
         return;
     }
@@ -290,6 +297,7 @@ fn augmented_diff_lines(
         .rendered_lines(mode, width, line_wrap)
         .to_vec();
     let mut lines = Vec::with_capacity(rendered_lines.len());
+    let now = pull_request::now_unix_seconds();
 
     for (display_index, line) in rendered_lines.into_iter().enumerate() {
         let mut rendered_line = line;
@@ -310,6 +318,11 @@ fn augmented_diff_lines(
         }
 
         lines.push(rendered_line);
+        lines.extend(
+            app.review_thread_rows_at(mode, width, display_index)
+                .iter()
+                .map(|row| pull_request::thread_row_line(row, now)),
+        );
     }
 
     lines

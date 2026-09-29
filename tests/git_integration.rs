@@ -8,6 +8,7 @@ use std::{
 use color_eyre::Result;
 use vigil::{
     app::{DiffLineWrapMode, DiffViewMode},
+    forge::RepositoryRef,
     git::{
         self, BlameTarget, BranchCompareSelection, BranchMergeOutcome, BranchMergeRequest,
         CommitCompareSelection, DiffView, EMPTY_TREE_HASH, FileEntry,
@@ -1132,5 +1133,150 @@ async fn branch_snapshot_reports_unborn_detached_and_merge_states() -> Result<()
         run_branch_op(&repo, git::BranchOperation::Push).await,
         Err(git::BranchOperationError::DetachedHead)
     );
+    Ok(())
+}
+
+fn acme_widgets() -> RepositoryRef {
+    RepositoryRef {
+        host: "github.com".to_string(),
+        owner: "acme".to_string(),
+        name: "widgets".to_string(),
+    }
+}
+
+fn pull_request_fetch(number: u64, base_oid: &str) -> git::PullRequestFetch {
+    git::PullRequestFetch {
+        repository: acme_widgets(),
+        number,
+        base_oid: base_oid.to_string(),
+        base_ref_name: "main".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn pull_request_fetch_brings_in_fork_heads_without_touching_branches() -> Result<()> {
+    let author = TestRepo::init().await?;
+    author.write("app.txt", "base\n");
+    author.commit_all("Base", "2024-01-01T00:00:00Z");
+    author.rename_branch("main");
+    let (origin, _teammate) = author.with_origin();
+    author.git(&["push", "--quiet", "origin", "main"]);
+    let base = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+
+    // A fork's commits reach the base repository only as GitHub's
+    // `refs/pull/<n>/head`; no branch on the remote contains them.
+    author.checkout_new_branch("contribution");
+    author.write("app.txt", "base\nchange\n");
+    author.write("new.txt", "new\n");
+    author.commit_all("Contribution", "2024-01-02T00:00:00Z");
+    let head = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    author.git(&["push", "--quiet", "origin", "contribution:refs/pull/1/head"]);
+
+    // The reviewer's `upstream` names the GitHub repository; git rewrites its
+    // URL to the local bare remote, so remote selection runs on real URLs.
+    // `origin` points elsewhere and must not be used.
+    let reviewer = TestRepo::init().await?;
+    let rewrite = format!("url.{}.insteadOf", origin.root.display());
+    reviewer.git(&["config", &rewrite, "git@github.com:acme/widgets.git"]);
+    reviewer.git(&["remote", "add", "origin", "/nonexistent/vigil-origin.git"]);
+    reviewer.git(&[
+        "remote",
+        "add",
+        "upstream",
+        "git@github.com:acme/widgets.git",
+    ]);
+
+    let fetched = git::fetch_pull_request(&reviewer.root, &pull_request_fetch(1, &base))
+        .await
+        .expect("pull request fetches");
+    assert_eq!(fetched.remote, "upstream");
+    assert_eq!(fetched.head_ref, git::pull_request_head_ref(1));
+    assert_eq!(fetched.head_oid, head);
+    assert_eq!(fetched.base_oid, base);
+    assert_eq!(
+        reviewer.git(&["rev-parse", "refs/vigil/pr/1/head"]).trim(),
+        head
+    );
+    // The reviewer had no commits, so the base came from the base branch.
+    reviewer.git(&["cat-file", "-e", &format!("{base}^{{commit}}")]);
+    assert_eq!(
+        reviewer
+            .git(&[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes",
+            ])
+            .trim(),
+        "",
+        "no branch or remote-tracking ref is created or moved"
+    );
+
+    // The pull request diff is the branch-compare three-dot diff.
+    let files = git::load_files_with_branch_diff(
+        &reviewer.root,
+        &BranchCompareSelection {
+            source_ref: fetched.head_oid.clone(),
+            destination_ref: fetched.base_oid.clone(),
+        },
+    )
+    .await?;
+    let paths = files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["app.txt", "new.txt"]);
+
+    // Refetching after a force-push moves only the vigil ref.
+    author.write("new.txt", "amended\n");
+    author.git(&["commit", "--quiet", "--amend", "-a", "--no-edit"]);
+    let amended = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    author.git(&[
+        "push",
+        "--quiet",
+        "--force",
+        "origin",
+        "contribution:refs/pull/1/head",
+    ]);
+    let refetched = git::fetch_pull_request(&reviewer.root, &pull_request_fetch(1, &base))
+        .await
+        .expect("force-pushed pull request refetches");
+    assert_eq!(refetched.head_oid, amended);
+
+    let missing = git::fetch_pull_request(&reviewer.root, &pull_request_fetch(2, &base)).await;
+    assert!(
+        matches!(
+            &missing,
+            Err(git::PullRequestFetchError::Fetch { remote, .. }) if remote == "upstream"
+        ),
+        "{missing:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn pull_request_fetch_falls_back_to_origin_and_needs_a_remote() -> Result<()> {
+    let author = TestRepo::init().await?;
+    author.write("app.txt", "base\n");
+    author.commit_all("Base", "2024-01-01T00:00:00Z");
+    author.rename_branch("main");
+    let (origin, _teammate) = author.with_origin();
+    author.git(&["push", "--quiet", "origin", "main"]);
+    let base = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    author.git(&["push", "--quiet", "origin", "main:refs/pull/3/head"]);
+
+    let reviewer = TestRepo::init().await?;
+    assert!(matches!(
+        git::fetch_pull_request(&reviewer.root, &pull_request_fetch(3, &base)).await,
+        Err(git::PullRequestFetchError::NoRemote { .. })
+    ));
+
+    // A remote URL that names no GitHub repository still works as origin.
+    reviewer.git(&["remote", "add", "origin", origin.root.to_str().unwrap()]);
+    let fetched = git::fetch_pull_request(&reviewer.root, &pull_request_fetch(3, &base))
+        .await
+        .expect("origin serves the pull request");
+    assert_eq!(fetched.remote, "origin");
+    assert_eq!(fetched.head_oid, base);
     Ok(())
 }

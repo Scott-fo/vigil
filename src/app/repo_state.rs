@@ -16,6 +16,7 @@ impl App {
     }
 
     pub(super) async fn refresh(&mut self) -> color_eyre::Result<()> {
+        self.sync_pull_request_with_review_mode();
         self.next_repo_request_id();
         self.repo_loading = false;
         let previously_selected = self.selected_file().map(|file| file.path.clone());
@@ -33,9 +34,11 @@ impl App {
             ReviewMode::CommitCompare(selection) => {
                 git::load_files_with_commit_diff(&self.repo_root, selection).await?
             }
-            ReviewMode::BranchCompare(selection) => {
-                git::load_files_with_branch_diff(&self.repo_root, selection).await?
-            }
+            ReviewMode::BranchCompare(selection)
+            | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+                compare: selection,
+                ..
+            }) => git::load_files_with_branch_diff(&self.repo_root, selection).await?,
         };
         self.apply_refreshed_files(previously_selected, files);
         Ok(())

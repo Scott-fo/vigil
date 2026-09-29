@@ -3,7 +3,7 @@ use super::{
     focus::{row_for_file_path, row_for_path_or_nearest},
     viewport::scroll_to_make_row_visible,
 };
-use crate::sidebar::SidebarSection;
+use crate::sidebar::{SidebarItem, SidebarSection};
 
 impl App {
     pub(in crate::app) fn focus_sidebar_path_or_nearest(
@@ -27,9 +27,12 @@ impl App {
     }
 
     pub(in crate::app) fn sync_sidebar_state(&mut self) {
-        let selected_path = self.selected_file().map(|file| file.path.as_str());
-        let selected_row =
-            selected_path.and_then(|path| row_for_file_path(&self.sidebar_items, path));
+        let selected_row = if self.pull_request_overview_visible() {
+            self.sidebar_items.iter().position(SidebarItem::is_overview)
+        } else {
+            let selected_path = self.selected_file().map(|file| file.path.as_str());
+            selected_path.and_then(|path| row_for_file_path(&self.sidebar_items, path))
+        };
         self.selected_sidebar_row = selected_row.unwrap_or_else(|| {
             self.selected_sidebar_row
                 .min(self.sidebar_items.len().saturating_sub(1))

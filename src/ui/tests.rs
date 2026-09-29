@@ -293,3 +293,158 @@ async fn branch_panel_shows_sync_state_sections_and_selection() {
         "previous branch starts selected: {selected_line}"
     );
 }
+
+mod pull_requests {
+    use super::*;
+    use crate::{
+        app::{PullRequestPage, pull_request_fixtures as fixtures},
+        forge::{DiffSide, ThreadSubject},
+    };
+
+    fn pull_request_app(threads: Vec<crate::forge::ReviewThread>) -> App {
+        let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-ui-tests"));
+        app.open_pull_request_for_test(
+            fixtures::pull_request(17, threads),
+            vec![fixtures::file("src/app.rs")],
+        );
+        app
+    }
+
+    fn show_diff(app: &mut App) {
+        app.select_pull_request_page_for_test(PullRequestPage::Files);
+        app.diff_view = crate::git::build_diff_view_from_diff_text(
+            "diff --git a/src/app.rs b/src/app.rs\n\
+             --- a/src/app.rs\n\
+             +++ b/src/app.rs\n\
+             @@ -1,0 +1,3 @@\n\
+             +fn one() {}\n\
+             +fn two() {}\n\
+             +fn three() {}\n",
+            Some("rust"),
+        );
+    }
+
+    fn print(text: &str) {
+        if std::env::var_os("VIGIL_PRINT_UI").is_some() {
+            println!("{text}");
+        }
+    }
+
+    #[test]
+    fn overview_shows_reviews_checks_merge_state_description_and_stray_threads() {
+        let mut file_level = fixtures::thread("T2", "src/app.rs", DiffSide::Right, None);
+        file_level.subject = ThreadSubject::File;
+        file_level.comments[0].body = "The whole file needs a doc comment.".to_string();
+        let mut app = pull_request_app(vec![file_level]);
+
+        let text = buffer_text(&render_to_buffer(&mut app, 140, 60));
+        print(&text);
+
+        assert!(text.contains("Overview"), "sidebar pins the overview row");
+        assert!(text.contains("Remove Codex review integration"));
+        assert!(text.contains("#17 · open · Scott-fo · master ← review/remove-codex"));
+        assert!(text.contains("REVIEWS  approved"));
+        assert!(text.contains("✓ reviewer  approved"));
+        let lint = text.find("✗ CI / lint").expect("failed check listed");
+        let test = text.find("✓ CI / test").expect("passing check listed");
+        assert!(lint < test, "failures come first");
+        assert!(text.contains("mergeability unknown · GitHub is computing it"));
+        assert!(text.contains("## Summary"));
+        assert!(text.contains("Ready for review."));
+        assert!(text.contains("THREADS OUTSIDE THE DIFF"));
+        assert!(text.contains("src/app.rs · file comment · ● unresolved"));
+        assert!(text.contains("The whole file needs a doc comment."));
+    }
+
+    #[test]
+    fn unresolved_threads_render_under_their_line_with_every_comment() {
+        let mut app = pull_request_app(vec![fixtures::thread(
+            "T1",
+            "src/app.rs",
+            DiffSide::Right,
+            Some(2),
+        )]);
+        show_diff(&mut app);
+
+        let text = buffer_text(&render_to_buffer(&mut app, 120, 30));
+        print(&text);
+        let lines = text.lines().collect::<Vec<_>>();
+        let two = lines
+            .iter()
+            .position(|line| line.contains("fn two()"))
+            .expect("line two renders");
+        assert!(
+            lines[two + 1].contains("╭─ ● 1 comment"),
+            "{}",
+            lines[two + 1]
+        );
+        assert!(lines[two + 2].contains("│  reviewer · "));
+        assert!(lines[two + 3].contains("Should this handle the empty case?"));
+        assert!(lines[two + 4].contains("╰─"));
+        assert!(lines[two + 5].contains("fn three()"));
+        assert!(text.contains("●1"), "the sidebar marks the file");
+    }
+
+    #[test]
+    fn resolved_threads_collapse_to_one_row() {
+        let mut resolved = fixtures::thread("T1", "src/app.rs", DiffSide::Right, Some(2));
+        resolved.is_resolved = true;
+        resolved.resolved_by = Some("Scott-fo".to_string());
+        let mut app = pull_request_app(vec![resolved]);
+        show_diff(&mut app);
+
+        let text = buffer_text(&render_to_buffer(&mut app, 120, 30));
+        print(&text);
+        let lines = text.lines().collect::<Vec<_>>();
+        let two = lines
+            .iter()
+            .position(|line| line.contains("fn two()"))
+            .expect("line two renders");
+        assert!(
+            lines[two + 1].contains("── ✓ resolved · 1 comment · by Scott-fo"),
+            "{}",
+            lines[two + 1]
+        );
+        assert!(lines[two + 2].contains("fn three()"));
+        assert!(!text.contains("Should this handle the empty case?"));
+        assert!(!text.contains("●1"), "resolved threads are not counted");
+    }
+
+    #[test]
+    fn footer_chip_shows_the_current_branch_pull_request_and_opens_it() {
+        let mut app = build_test_app();
+        let mut summary = fixtures::summary(17);
+        summary.is_draft = true;
+        app.set_current_branch_pull_request_for_test("review/remove-codex", summary);
+        let (width, height) = (160, 20);
+        let buffer = render_to_buffer(&mut app, width, height);
+        let footer_row = height - 1;
+
+        let chip = "#17 draft ✓ approved";
+        let start = column_of(&buffer, footer_row, chip).unwrap_or_else(|| {
+            panic!(
+                "footer should show the chip: {:?}",
+                buffer_text(&buffer).lines().last()
+            )
+        });
+        for column in start..start + chip.chars().count() as u16 {
+            assert_eq!(
+                footer_action_at(&app, column, footer_row, width, height),
+                Some(FooterAction::OpenPullRequest)
+            );
+        }
+    }
+
+    #[test]
+    fn pull_request_footer_names_the_branches_under_review() {
+        let mut app = pull_request_app(Vec::new());
+        let text = buffer_text(&render_to_buffer(&mut app, 160, 20));
+
+        assert!(
+            text.lines()
+                .last()
+                .is_some_and(|footer| footer.contains("#17  master ← review/remove-codex")),
+            "{text}"
+        );
+    }
+}

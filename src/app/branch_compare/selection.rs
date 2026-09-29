@@ -26,7 +26,9 @@ impl App {
                 self.branch_compare_source_ref = Some(selection.source_ref.clone());
                 self.branch_compare_destination_ref = Some(selection.destination_ref.clone());
             }
-            _ => {
+            // A pull request compares commit ids that are not in the ref
+            // list, so it seeds like the working tree does.
+            ReviewMode::WorkingTree | ReviewMode::CommitCompare(_) | ReviewMode::PullRequest(_) => {
                 self.branch_compare_source_ref = preferred_source_ref
                     .and_then(|current_ref| {
                         self.branch_compare_available_refs

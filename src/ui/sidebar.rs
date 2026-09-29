@@ -7,7 +7,10 @@ use ratatui::{
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
-use crate::app::{ActivePane, App};
+use crate::{
+    app::{ActivePane, App},
+    sidebar::SidebarItem,
+};
 
 use super::{layout::SidebarLayout, rule_color, text_faint_color, text_subtle_color};
 
@@ -64,6 +67,11 @@ pub(super) fn render_sidebar(frame: &mut Frame, app: &mut App, layout: SidebarLa
             viewed: item
                 .file()
                 .is_some_and(|file| app.is_file_viewed(&file.path)),
+            unresolved_threads: match item {
+                SidebarItem::Overview => app.unresolved_unplaced_thread_count(),
+                SidebarItem::File { file, .. } => app.unresolved_thread_count(&file.path),
+                SidebarItem::Section { .. } | SidebarItem::Header { .. } => 0,
+            },
         };
         let row_area = Rect::new(list.x, list.y + offset as u16, list.width, 1);
         frame.render_widget(Paragraph::new(row_line(item, context)), row_area);

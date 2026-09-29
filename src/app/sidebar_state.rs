@@ -1,4 +1,6 @@
-use crate::sidebar::{self, SidebarBuildOptions, SidebarGrouping, SidebarItem, SidebarSection};
+use crate::sidebar::{
+    self, SidebarBuildOptions, SidebarGrouping, SidebarItem, SidebarOverview, SidebarSection,
+};
 
 use super::App;
 
@@ -16,12 +18,18 @@ impl App {
         } else {
             SidebarGrouping::Tree
         };
+        let overview = if self.pull_request_selection().is_some() {
+            SidebarOverview::Pinned
+        } else {
+            SidebarOverview::Hidden
+        };
         self.sidebar_items = sidebar::build_sidebar(
             &self.files,
             SidebarBuildOptions {
                 grouping,
                 collapsed_directories: &self.collapsed_directories,
                 collapsed_sections: &self.collapsed_sections,
+                overview,
             },
         );
     }

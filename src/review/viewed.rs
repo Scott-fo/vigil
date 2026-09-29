@@ -34,6 +34,7 @@ impl ViewedScope {
                 source_ref,
                 destination_ref,
             } => format!("{root}\0branch\0{source_ref}\0{destination_ref}"),
+            ReviewScope::PullRequest { number } => format!("{root}\0pr\0{number}"),
         })
     }
 
@@ -162,6 +163,31 @@ mod tests {
         assert_ne!(
             working_tree,
             ViewedScope::new(Path::new("/other"), &ReviewScope::WorkingTree)
+        );
+    }
+
+    #[test]
+    fn scope_keys_stay_stable() {
+        let root = Path::new("/repo");
+        let key = |scope: ReviewScope| ViewedScope::new(root, &scope).0;
+
+        assert_eq!(key(ReviewScope::WorkingTree), "/repo\0working-tree");
+        assert_eq!(
+            key(ReviewScope::CommitCompare {
+                commit_hash: "abc".to_string()
+            }),
+            "/repo\0commit\0abc"
+        );
+        assert_eq!(
+            key(ReviewScope::BranchCompare {
+                source_ref: "feature".to_string(),
+                destination_ref: "main".to_string(),
+            }),
+            "/repo\0branch\0feature\0main"
+        );
+        assert_eq!(
+            key(ReviewScope::PullRequest { number: 17 }),
+            "/repo\0pr\u{0}17"
         );
     }
 

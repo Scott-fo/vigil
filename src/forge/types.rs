@@ -43,6 +43,32 @@ impl Timestamp {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Seconds since the Unix epoch, for relative times such as "3h ago".
+    /// `None` when the value is not a `YYYY-MM-DDTHH:MM:SS` UTC timestamp.
+    pub fn unix_seconds(&self) -> Option<i64> {
+        let value = self.0.as_bytes();
+        let number = |range: std::ops::Range<usize>| -> Option<i64> {
+            std::str::from_utf8(value.get(range)?).ok()?.parse().ok()
+        };
+        if value.len() < 19 || value[4] != b'-' || value[7] != b'-' || value[13] != b':' {
+            return None;
+        }
+        let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+        let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
+        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+            return None;
+        }
+        // Days from civil date (Howard Hinnant's algorithm).
+        let year = if month <= 2 { year - 1 } else { year };
+        let era = year.div_euclid(400);
+        let year_of_era = year - era * 400;
+        let shifted_month = (month + 9) % 12;
+        let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
+        let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+        let days = era * 146_097 + day_of_era - 719_468;
+        Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
+    }
 }
 
 impl fmt::Display for Timestamp {
@@ -534,4 +560,26 @@ pub enum HeadBranchOutcome {
 pub enum MergeOutcome {
     Merged { head_branch: HeadBranchOutcome },
     AutoMergeEnabled,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Timestamp;
+
+    #[test]
+    fn timestamps_convert_to_unix_seconds() {
+        assert_eq!(
+            Timestamp::new("1970-01-01T00:00:00Z").unix_seconds(),
+            Some(0)
+        );
+        assert_eq!(
+            Timestamp::new("2026-09-06T21:34:42Z").unix_seconds(),
+            Some(1_788_730_482)
+        );
+        assert_eq!(
+            Timestamp::new("2024-02-29T12:00:00Z").unix_seconds(),
+            Some(1_709_208_000)
+        );
+        assert_eq!(Timestamp::new("yesterday").unix_seconds(), None);
+    }
 }

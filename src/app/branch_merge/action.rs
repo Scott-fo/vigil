@@ -6,9 +6,20 @@ use super::super::{ActivePane, App, ReviewMode};
 
 impl App {
     pub(in crate::app) fn open_branch_merge_modal(&mut self) {
-        let ReviewMode::BranchCompare(selection) = &self.review_mode else {
-            self.status_message = Some("merge is available from branch compare mode".to_string());
-            return;
+        let selection = match &self.review_mode {
+            ReviewMode::BranchCompare(selection) => selection,
+            // A pull request merges on GitHub; merging its fetched commits
+            // into a local branch is not what the reviewer means.
+            ReviewMode::PullRequest(_) => {
+                self.status_message =
+                    Some("local merge is unavailable for pull requests".to_string());
+                return;
+            }
+            ReviewMode::WorkingTree | ReviewMode::CommitCompare(_) => {
+                self.status_message =
+                    Some("merge is available from branch compare mode".to_string());
+                return;
+            }
         };
 
         self.branch_merge_target = Some(git::BranchMergeRequest {

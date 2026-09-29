@@ -67,7 +67,9 @@ impl App {
         width: usize,
         viewport_height: usize,
     ) -> Option<PreparedDiffViewport> {
-        if width == 0 || viewport_height == 0 {
+        // The pull request overview replaces the diff; nothing maps to diff
+        // rows while it shows.
+        if width == 0 || viewport_height == 0 || self.pull_request_overview_visible() {
             return None;
         }
 
@@ -77,7 +79,7 @@ impl App {
             return None;
         }
 
-        let visual_map = Self::diff_visual_line_map(display_line_count);
+        let visual_map = self.diff_visual_line_map(mode, width, display_line_count);
         let visual_line_count = visual_map.len();
         let max_scroll = visual_line_count
             .saturating_sub(viewport_height)
@@ -143,10 +145,25 @@ impl App {
     }
 
     /// Maps each visual row of the diff pane to the display line it shows.
-    /// `None` marks a row that belongs to no diff line; every row is currently
-    /// a diff line, so the map is the identity.
-    fn diff_visual_line_map(display_line_count: usize) -> Vec<Option<usize>> {
-        (0..display_line_count).map(Some).collect()
+    /// `None` marks a row that belongs to no diff line: the rows of a review
+    /// thread drawn under the line before it. Scrolling, the scrollbar, and
+    /// hit testing all count these rows.
+    fn diff_visual_line_map(
+        &mut self,
+        mode: DiffViewMode,
+        width: usize,
+        display_line_count: usize,
+    ) -> Vec<Option<usize>> {
+        if !self.selected_file_has_review_threads() {
+            return (0..display_line_count).map(Some).collect();
+        }
+        let mut map = Vec::with_capacity(display_line_count);
+        for display_index in 0..display_line_count {
+            map.push(Some(display_index));
+            let thread_rows = self.review_thread_rows_at(mode, width, display_index).len();
+            map.extend(std::iter::repeat_n(None, thread_rows));
+        }
+        map
     }
 
     pub(crate) fn page_diff(&mut self, delta: i32) {

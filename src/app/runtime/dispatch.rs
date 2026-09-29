@@ -151,6 +151,11 @@ impl App {
                     self.redraw_if_running(terminal)?;
                 }
             }
+            Event::PullRequest(event) => {
+                if self.handle_pull_request_event(event).await? {
+                    self.redraw_if_running(terminal)?;
+                }
+            }
         }
         Ok(())
     }

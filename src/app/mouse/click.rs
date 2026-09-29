@@ -27,6 +27,14 @@ impl App {
             return Ok(());
         }
 
+        let over_diff =
+            ui::hovered_pane_at(self, mouse_event.column, mouse_event.row, width, height)
+                == Some(ActivePane::Diff);
+        if over_diff && self.pull_request_overview_visible() {
+            self.active_pane = ActivePane::Diff;
+            return Ok(());
+        }
+
         if self.selected_file_is_collapsed_generated()
             && ui::hovered_pane_at(self, mouse_event.column, mouse_event.row, width, height)
                 == Some(ActivePane::Diff)

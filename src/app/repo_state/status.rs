@@ -32,6 +32,9 @@ impl App {
                     selection.source_ref, selection.destination_ref
                 )
             }
+            ReviewMode::PullRequest(selection) => {
+                format!("Pull request #{}: {}", selection.number, selection.title)
+            }
         }
     }
 
@@ -74,6 +77,14 @@ impl App {
                     "{} -> {}  {} file{}{hidden_note}",
                     selection.source_ref,
                     selection.destination_ref,
+                    self.files.len(),
+                    if self.files.len() == 1 { "" } else { "s" }
+                )
+            }
+            ReviewMode::PullRequest(selection) => {
+                format!(
+                    "#{}  {} file{}{hidden_note}",
+                    selection.number,
                     self.files.len(),
                     if self.files.len() == 1 { "" } else { "s" }
                 )

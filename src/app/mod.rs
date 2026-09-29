@@ -30,6 +30,7 @@ mod launch;
 mod modal_lookup;
 mod mouse;
 mod navigation;
+mod pull_request;
 mod repo_state;
 mod runtime;
 mod sidebar_state;
@@ -50,6 +51,12 @@ use self::diff_search::{DiffSearchIndexReadiness, DiffSearchNavigationTarget};
 use self::file_filter::ExcludeSuffixes;
 pub use self::launch::AppLaunchOptions;
 use self::modal_lookup::ModalLookupIndex;
+use self::pull_request::PullRequests;
+#[cfg(test)]
+pub(crate) use self::pull_request::fixtures as pull_request_fixtures;
+pub use self::pull_request::{
+    PullRequestEvent, PullRequestOverview, PullRequestPage, PullRequestSelection, PullRequestTimer,
+};
 use crate::{
     event::{DiffPrefetchedEvent, Event, EventHandler},
     git::{
@@ -131,6 +138,9 @@ pub enum ReviewMode {
     WorkingTree,
     CommitCompare(CommitCompareSelection),
     BranchCompare(BranchCompareSelection),
+    /// A GitHub pull request. Diffs run through the branch-compare path with
+    /// the selection's `compare` endpoints.
+    PullRequest(PullRequestSelection),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,6 +309,7 @@ pub struct App {
     viewed_files: ViewedFiles,
     viewed_scope: Option<ViewedScope>,
     viewed_request_id: u64,
+    pull_requests: PullRequests,
     pub snackbar_notice: Option<SnackbarNotice>,
     pub snackbar_generation: u64,
     pub status_message: Option<String>,

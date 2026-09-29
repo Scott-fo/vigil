@@ -2,6 +2,7 @@ mod diff;
 mod hit;
 mod layout;
 mod modals;
+mod pull_request;
 mod selection;
 mod sidebar;
 pub mod splash;
@@ -62,15 +63,26 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .branch_snapshot()
             .filter(|_| app.splash_error().is_none() && !app.repo_loading)
             .map(|snapshot| {
+                let key = |key: &'static str, label: &'static str| {
+                    [
+                        Span::raw("   "),
+                        Span::styled(
+                            key,
+                            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(label, Style::new().fg(text_faint_color())),
+                    ]
+                };
                 let mut spans = branch_readout_spans(snapshot);
-                spans.extend([
-                    Span::raw("   "),
-                    Span::styled(
-                        "B",
-                        Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" branches", Style::new().fg(text_faint_color())),
-                ]);
+                let pull_request = app.current_branch_pull_request();
+                if let Some(summary) = pull_request {
+                    spans.push(Span::raw(" "));
+                    spans.extend(pull_request::pull_request_chip_spans(summary));
+                }
+                spans.extend(key("B", " branches"));
+                if pull_request.is_some() {
+                    spans.extend(key("O", " review pull request"));
+                }
                 Line::from(spans)
             });
         frame.render_widget(

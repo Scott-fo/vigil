@@ -193,6 +193,7 @@ fn grouped(
             grouping: SidebarGrouping::ByStageState,
             collapsed_directories,
             collapsed_sections,
+            overview: SidebarOverview::Hidden,
         },
     )
 }
@@ -316,8 +317,29 @@ fn tree_grouping_matches_the_ungrouped_builder() {
             grouping: SidebarGrouping::Tree,
             collapsed_directories: &HashSet::new(),
             collapsed_sections: &HashSet::new(),
+            overview: SidebarOverview::Hidden,
         },
     );
 
     assert_eq!(tree, build_sidebar_items(&files, &HashSet::new()));
+}
+
+#[test]
+fn pinned_overview_leads_the_sidebar_and_is_no_file() {
+    let files = [file("src/lib.rs", "M ")];
+    let items = build_sidebar(
+        &files,
+        SidebarBuildOptions {
+            grouping: SidebarGrouping::Tree,
+            collapsed_directories: &HashSet::new(),
+            collapsed_sections: &HashSet::new(),
+            overview: SidebarOverview::Pinned,
+        },
+    );
+
+    assert_eq!(items[0], SidebarItem::Overview);
+    assert!(items[0].file().is_none());
+    assert!(!items[0].is_directory());
+    assert_eq!(items[0].path(), "");
+    assert_eq!(&items[1..], build_sidebar_items(&files, &HashSet::new()));
 }

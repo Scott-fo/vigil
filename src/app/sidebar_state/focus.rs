@@ -119,6 +119,7 @@ mod tests {
                 grouping: sidebar::SidebarGrouping::ByStageState,
                 collapsed_directories: &HashSet::new(),
                 collapsed_sections: &HashSet::new(),
+                overview: sidebar::SidebarOverview::Hidden,
             },
         );
 

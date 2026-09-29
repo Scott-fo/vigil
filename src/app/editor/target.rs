@@ -32,7 +32,11 @@ impl App {
                 )
                 .await
             }
-            ReviewMode::BranchCompare(selection) => {
+            ReviewMode::BranchCompare(selection)
+            | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+                compare: selection,
+                ..
+            }) => {
                 self.branch_compare_editor_open_target(
                     selection.source_ref.as_str(),
                     file_path,

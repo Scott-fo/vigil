@@ -537,7 +537,10 @@ async fn load_diff_search_index(
         ReviewMode::CommitCompare(selection) => {
             git::load_diff_search_index_for_commit_compare(repo_root, selection, diff_options).await
         }
-        ReviewMode::BranchCompare(selection) => {
+        ReviewMode::BranchCompare(selection)
+        | ReviewMode::PullRequest(crate::app::PullRequestSelection {
+            compare: selection, ..
+        }) => {
             git::load_diff_search_index_for_branch_compare(repo_root, selection, diff_options).await
         }
     }

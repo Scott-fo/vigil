@@ -214,6 +214,12 @@ pub fn clear_exact_highlight_cache() {
     clear_exact_cache();
 }
 
+/// Highlight tokens for one line of markdown prose, such as a pull request
+/// description. Needs no registry: markdown is highlighted line by line.
+pub(crate) fn highlight_markdown_line(line: &str) -> Vec<SyntaxToken> {
+    highlight_markdown_line_tokens(line)
+}
+
 #[inline]
 fn push_syntax_token(
     tokens: &mut Vec<SyntaxToken>,

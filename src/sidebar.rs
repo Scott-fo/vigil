@@ -114,16 +114,29 @@ impl DirectoryKey {
     }
 }
 
+/// Whether the sidebar starts with a pinned overview row, as it does while a
+/// pull request is under review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarOverview {
+    #[default]
+    Hidden,
+    Pinned,
+}
+
 /// Everything that decides which rows the sidebar shows.
 #[derive(Debug, Clone, Copy)]
 pub struct SidebarBuildOptions<'a> {
     pub grouping: SidebarGrouping,
     pub collapsed_directories: &'a HashSet<DirectoryKey>,
     pub collapsed_sections: &'a HashSet<SidebarSection>,
+    pub overview: SidebarOverview,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidebarItem {
+    /// The pinned first row that shows the pull request overview instead of
+    /// a file. Only present with [`SidebarOverview::Pinned`].
+    Overview,
     /// Heading row for a staging group. Only present in grouped sidebars.
     Section {
         section: SidebarSection,
@@ -154,10 +167,11 @@ pub enum SidebarItem {
 }
 
 impl SidebarItem {
-    /// Repository path of the row. Section headings have no path.
+    /// Repository path of the row. Section headings and the overview row
+    /// have no path.
     pub fn path(&self) -> &str {
         match self {
-            SidebarItem::Section { .. } => "",
+            SidebarItem::Overview | SidebarItem::Section { .. } => "",
             SidebarItem::Header { path, .. } => path,
             SidebarItem::File { file, .. } => file.path.as_str(),
         }
@@ -165,9 +179,14 @@ impl SidebarItem {
 
     pub fn section(&self) -> Option<SidebarSection> {
         match self {
+            SidebarItem::Overview => None,
             SidebarItem::Section { section, .. } => Some(*section),
             SidebarItem::Header { section, .. } | SidebarItem::File { section, .. } => *section,
         }
+    }
+
+    pub fn is_overview(&self) -> bool {
+        matches!(self, SidebarItem::Overview)
     }
 
     pub fn is_directory(&self) -> bool {
@@ -177,14 +196,16 @@ impl SidebarItem {
     pub fn directory_key(&self) -> Option<DirectoryKey> {
         match self {
             SidebarItem::Header { section, path, .. } => Some(DirectoryKey::new(*section, path)),
-            SidebarItem::Section { .. } | SidebarItem::File { .. } => None,
+            SidebarItem::Overview | SidebarItem::Section { .. } | SidebarItem::File { .. } => None,
         }
     }
 
     pub fn file(&self) -> Option<&FileEntry> {
         match self {
             SidebarItem::File { file, .. } => Some(file),
-            SidebarItem::Section { .. } | SidebarItem::Header { .. } => None,
+            SidebarItem::Overview | SidebarItem::Section { .. } | SidebarItem::Header { .. } => {
+                None
+            }
         }
     }
 }
@@ -249,7 +270,10 @@ pub fn build_sidebar(files: &[FileEntry], options: SidebarBuildOptions<'_>) -> V
         ..FileTreeOptions::default()
     };
 
-    let mut items = Vec::with_capacity(files.len() + 2);
+    let mut items = Vec::with_capacity(files.len() + 3);
+    if options.overview == SidebarOverview::Pinned {
+        items.push(SidebarItem::Overview);
+    }
     match options.grouping {
         SidebarGrouping::Tree => push_tree_items(files, None, &tree_options(None), &mut items),
         SidebarGrouping::ByStageState => {
