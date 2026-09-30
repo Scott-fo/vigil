@@ -21,7 +21,15 @@
 //!
 //! # Cost and staleness
 //!
-//! Every operation is async and spawns `gh` (tens to hundreds of
+//! [`GitHub::connect`] usually costs two local `git` processes: when the
+//! remotes settle the repository unambiguously on `github.com`, it never runs
+//! `gh`. Otherwise (GitHub Enterprise, ssh host aliases, ties between
+//! remotes, `GH_REPO`/`GH_HOST` overrides) it asks `gh repo view`, one API
+//! round trip. Either way it happens once per session, and because the fast
+//! path does not run `gh`, a missing or logged-out `gh` first shows up as
+//! the error of the first request rather than of `connect`.
+//!
+//! Every other operation is async and spawns `gh` (tens to hundreds of
 //! milliseconds plus network). Nothing is cached: each result is a
 //! snapshot, and callers that display long-lived state own refreshing it.
 //! Reads spend GitHub's GraphQL rate limit (5,000 points an hour); a full
@@ -38,6 +46,8 @@
 //! logged-out `gh`, a checkout without a GitHub remote, missing objects,
 //! rate limiting, and invalid input from other failures. Invalid review
 //! input is rejected before any request is sent.
+//! [`ForgeError::is_gh_unavailable`] picks out the failures that will repeat
+//! on every request until the user installs or logs in to `gh`.
 //!
 //! # What callers should not rely on
 //!
@@ -48,6 +58,7 @@
 mod client;
 mod error;
 mod gh;
+mod repository;
 mod request;
 mod types;
 mod wire;

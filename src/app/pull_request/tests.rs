@@ -7,11 +7,11 @@ use std::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    PullRequestEvent, fixtures,
+    PullRequestEvent, PullRequestListStatus, fixtures,
     list::{PullRequestListState, QueryInput},
     state::{
-        BranchKey, ConnectOutcome, ConnectReason, PollOutcome, PullRequestPage, PullRequests,
-        ReviewOrigin,
+        BranchKey, ConnectOutcome, ConnectReason, ForgeConnection, PollOutcome, PullRequestPage,
+        PullRequests, ReviewOrigin,
     },
 };
 use crate::{
@@ -729,6 +729,48 @@ fn only_the_current_open_reports_its_fetch() {
 
     state.finish_fetch(second);
     assert_eq!(state.fetching_number(second), None);
+}
+
+#[test]
+fn a_request_that_finds_gh_unusable_turns_the_connection_off() {
+    let mut state = connected();
+    state.mark_gh_unavailable(ForgeError::GhNotInstalled);
+    assert!(state.github().is_none());
+    assert!(matches!(
+        state.connection(),
+        ForgeConnection::Unavailable(ForgeError::GhNotInstalled)
+    ));
+    // Background work stays off; the user asking reconnects.
+    assert_eq!(state.begin_connect(ConnectReason::Background), None);
+    assert!(state.begin_connect(ConnectReason::UserRequest).is_some());
+
+    // Only a live connection is turned off.
+    let mut disabled = PullRequests::disabled();
+    disabled.mark_gh_unavailable(ForgeError::GhNotInstalled);
+    assert!(matches!(disabled.connection(), ForgeConnection::Disabled));
+}
+
+#[tokio::test]
+async fn a_list_load_that_finds_gh_logged_out_explains_it_on_the_list() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.show_pull_request_list_for_test(fixtures::pull_request_list(&[1], 1));
+    let (request_id, filter) = app.pull_requests.list_mut().begin_load();
+    let error = ForgeError::NotAuthenticated {
+        message: "no token".to_string(),
+    };
+    app.handle_pull_request_event(PullRequestEvent::ListLoaded {
+        request_id,
+        filter,
+        result: Err(error.clone()),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        app.pull_request_list_view().status,
+        PullRequestListStatus::Unavailable(Some(&error))
+    );
+    app.quit();
 }
 
 fn row_numbers(list: &PullRequestListState) -> Vec<u64> {

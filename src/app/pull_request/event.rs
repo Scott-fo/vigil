@@ -65,6 +65,26 @@ pub enum PullRequestEvent {
     Tick(PullRequestTimer),
 }
 
+impl PullRequestEvent {
+    /// The error a finished GitHub request reports, if it failed. Connecting
+    /// is left out: its failures are handled as connection state.
+    pub(super) fn request_error(&self) -> Option<&ForgeError> {
+        match self {
+            Self::CurrentBranchLoaded { result, .. } => result.as_ref().err(),
+            Self::DetailLoaded { result, .. } => result.as_ref().as_ref().err(),
+            Self::Polled { result, .. } | Self::LookedUp { result, .. } => result.as_ref().err(),
+            Self::ListLoaded { result, .. } => result.as_ref().err(),
+            Self::MutationFinished { result, .. } => result.as_ref().err(),
+            Self::Connected { .. }
+            | Self::FetchStarted { .. }
+            | Self::Fetched { .. }
+            | Self::DraftsLoaded { .. }
+            | Self::DraftWriteFailed(_)
+            | Self::Tick(_) => None,
+        }
+    }
+}
+
 /// Which periodic refresh a [`PullRequestEvent::Tick`] is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullRequestTimer {

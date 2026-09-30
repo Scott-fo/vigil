@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::{
     error::ForgeError,
     gh::run_gh,
+    repository::resolve_repository_locally,
     request::{
         GraphqlRequest, LIST_LIMIT, PullRequestMutation, add_comment_request, api_args, documents,
         graphql_args, head_ref_path, merge_request, pull_request_variables, reply_request,
@@ -42,11 +43,23 @@ impl GitHub {
     /// from the git remotes, preferring `upstream` over `origin`, or the
     /// default set with `gh repo set-default`.
     ///
+    /// When local git config settles it (a `github.com` remote chosen
+    /// unambiguously), this reads only the config and never runs `gh`, so
+    /// success does not prove `gh` is installed or logged in: that surfaces
+    /// as [`ForgeError::GhNotInstalled`] or [`ForgeError::NotAuthenticated`]
+    /// from the first request. Otherwise it asks `gh repo view`.
+    ///
     /// Fails with [`ForgeError::NotGitHubRepository`] when no remote points
     /// at a GitHub host, which callers should treat as "PR features are
     /// unavailable" rather than as an error to report.
     pub async fn connect(repo_root: impl Into<PathBuf>) -> Result<Self, ForgeError> {
         let repo_root = repo_root.into();
+        if let Some(repository) = resolve_repository_locally(&repo_root).await {
+            return Ok(Self {
+                repo_root,
+                repository,
+            });
+        }
         let args = strings(&["repo", "view", "--json", "nameWithOwner,url"]);
         let stdout = run_gh(&repo_root, &args, None).await?;
         let view: RepositoryView = decode("repository", &stdout)?;

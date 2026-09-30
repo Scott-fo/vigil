@@ -70,6 +70,13 @@ impl fmt::Display for ForgeError {
 impl std::error::Error for ForgeError {}
 
 impl ForgeError {
+    /// `gh` itself cannot be used: it is not installed or not logged in.
+    /// Every request fails this way until the user fixes it, so callers can
+    /// stop issuing requests in the background.
+    pub fn is_gh_unavailable(&self) -> bool {
+        matches!(self, Self::GhNotInstalled | Self::NotAuthenticated { .. })
+    }
+
     pub(super) fn decode(context: impl Into<String>, message: impl fmt::Display) -> Self {
         Self::DecodeFailed {
             context: context.into(),

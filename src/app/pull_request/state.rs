@@ -51,7 +51,9 @@ pub(in crate::app) enum ForgeConnection {
     Connecting,
     Connected(GitHub),
     /// `gh` is missing or logged out, or the repository is not on GitHub.
-    /// Retried only when the user asks for a pull request feature.
+    /// Found by connecting or, since connecting may not run `gh`, by the
+    /// first request. Retried only when the user asks for a pull request
+    /// feature.
     Unavailable(ForgeError),
 }
 
@@ -379,6 +381,15 @@ impl PullRequests {
                     report: wanted.then_some(error),
                 })
             }
+        }
+    }
+
+    /// Records that a request found `gh` missing or logged out after a
+    /// connection that never ran it. Background work stops as if connecting
+    /// had failed, and the next user request reconnects and retries.
+    pub(in crate::app) fn mark_gh_unavailable(&mut self, error: ForgeError) {
+        if matches!(self.connection, ForgeConnection::Connected(_)) {
+            self.connection = ForgeConnection::Unavailable(error);
         }
     }
 

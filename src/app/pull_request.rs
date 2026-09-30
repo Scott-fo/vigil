@@ -4,10 +4,14 @@
 //! [`PullRequests`](state::PullRequests) value on `App`:
 //!
 //! - **The GitHub connection.** vigil connects lazily in the background the
-//!   first time a branch snapshot loads. When the repository is not on
-//!   GitHub, or `gh` is missing or logged out, pull request features stay off
-//!   quietly; only an explicit request (`O`, a click on the footer chip)
-//!   retries and explains why.
+//!   first time a branch snapshot loads; usually that reads only git config
+//!   (see [`GitHub::connect`](crate::forge::GitHub::connect)). When the
+//!   repository is not on GitHub, or `gh` is missing or logged out, pull
+//!   request features stay off quietly; only an explicit request (`O`, a
+//!   click on the footer chip, the list) retries and explains why. Since
+//!   connecting may not run `gh`, a missing or logged-out `gh` is often
+//!   found by the first request instead, which turns the connection off the
+//!   same way.
 //! - **The current branch's pull request**, shown as a footer chip. It is
 //!   looked up again whenever the branch snapshot reloads, at most every few
 //!   seconds for the same branch tip.
@@ -85,6 +89,11 @@ impl App {
         &mut self,
         event: PullRequestEvent,
     ) -> color_eyre::Result<bool> {
+        if let Some(error) = event.request_error()
+            && error.is_gh_unavailable()
+        {
+            self.pull_requests.mark_gh_unavailable(error.clone());
+        }
         match event {
             PullRequestEvent::Connected { request_id, result } => {
                 Ok(self.handle_forge_connected(request_id, result))
