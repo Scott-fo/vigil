@@ -226,6 +226,17 @@ impl PullRequestListState {
         true
     }
 
+    /// Forgets every tab's rows and errors, as when the repository turns out
+    /// to have been renamed: GitHub search under the old name found nothing,
+    /// and each tab should load (and read its saved page) under the new one.
+    pub(in crate::app) fn clear_pages(&mut self) {
+        self.loaded.clear();
+        self.error = None;
+        self.selected = 0;
+        self.scroll = 0;
+        self.refilter();
+    }
+
     /// Whether `filter`'s tab has rows to show, live or saved.
     pub(in crate::app) fn has_page(&self, filter: PullRequestListFilter) -> bool {
         self.loaded.contains_key(&filter)

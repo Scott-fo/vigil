@@ -1047,6 +1047,39 @@ fn a_renamed_repository_switches_the_client_once_confirmed() {
     );
 }
 
+/// Every tab loaded under the old name found nothing, since GitHub search
+/// does not follow renames; none of them may keep showing that.
+#[tokio::test]
+async fn a_confirmed_rename_forgets_every_tab_loaded_under_the_old_name() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.pull_requests = connected_locally();
+    for filter in [
+        PullRequestListFilter::NeedsMyReview,
+        PullRequestListFilter::Mine,
+    ] {
+        let list = app.pull_requests.list_mut();
+        list.set_filter(filter);
+        let (id, filter) = list.begin_load(Instant::now());
+        list.finish_load(id, filter, Ok(fixtures::pull_request_list(&[], 0)));
+    }
+    let (request_id, _) = app.pull_requests.begin_confirm().unwrap();
+
+    app.handle_pull_request_event(PullRequestEvent::RepositoryConfirmed {
+        request_id,
+        result: Ok(GitHub::new(
+            "/tmp/vigil-pr-tests",
+            repository("Scott-fo", "vigil-next"),
+        )),
+    })
+    .await
+    .unwrap();
+
+    let list = app.pull_requests.list();
+    assert!(!list.has_page(PullRequestListFilter::NeedsMyReview));
+    assert!(!list.has_page(PullRequestListFilter::Mine));
+    app.quit();
+}
+
 #[tokio::test]
 async fn confirming_a_repository_gh_cannot_see_turns_the_connection_off() {
     let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));

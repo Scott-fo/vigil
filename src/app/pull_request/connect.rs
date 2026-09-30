@@ -111,8 +111,8 @@ impl App {
         self.pull_requests.attach_confirm(request_id, handle);
     }
 
-    /// GitHub search does not follow renames, so a list loaded under the old
-    /// name is reloaded under the new one.
+    /// GitHub search does not follow renames, so every tab loaded under the
+    /// old name is forgotten and the shown one reloads under the new one.
     pub(super) fn handle_repository_confirmed(
         &mut self,
         request_id: u64,
@@ -121,6 +121,7 @@ impl App {
         if !self.pull_requests.finish_confirm(request_id, result) {
             return false;
         }
+        self.pull_requests.list_mut().clear_pages();
         self.load_pull_request_list_if_shown();
         true
     }
