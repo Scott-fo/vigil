@@ -734,7 +734,7 @@ fn only_the_current_open_reports_its_fetch() {
 #[test]
 fn a_request_that_finds_gh_unusable_turns_the_connection_off() {
     let mut state = connected();
-    state.mark_gh_unavailable(ForgeError::GhNotInstalled);
+    state.mark_unavailable(ForgeError::GhNotInstalled);
     assert!(state.github().is_none());
     assert!(matches!(
         state.connection(),
@@ -746,8 +746,63 @@ fn a_request_that_finds_gh_unusable_turns_the_connection_off() {
 
     // Only a live connection is turned off.
     let mut disabled = PullRequests::disabled();
-    disabled.mark_gh_unavailable(ForgeError::GhNotInstalled);
+    disabled.mark_unavailable(ForgeError::GhNotInstalled);
     assert!(matches!(disabled.connection(), ForgeConnection::Disabled));
+}
+
+#[tokio::test]
+async fn a_lookup_that_cannot_see_the_repository_stops_background_lookups() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.set_branch_snapshot(fixtures::branch_snapshot("feature"));
+    app.pull_requests.connect_for_test(github());
+    let request_id = app
+        .pull_requests
+        .begin_current_branch_load(key("feature"), true, Instant::now())
+        .unwrap();
+    app.handle_pull_request_event(PullRequestEvent::CurrentBranchLoaded {
+        request_id,
+        result: Err(ForgeError::NotFound {
+            message: "Could not resolve to a Repository with the name 'Scott-fo/vigil'."
+                .to_string(),
+        }),
+    })
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        app.pull_requests.connection(),
+        ForgeConnection::Unavailable(ForgeError::NotFound { .. })
+    ));
+    // The next branch snapshot neither looks up nor reconnects.
+    app.refresh_current_branch_pull_request(true);
+    assert!(matches!(
+        app.pull_requests.connection(),
+        ForgeConnection::Unavailable(_)
+    ));
+    assert!(app.pull_requests.github().is_none());
+    app.quit();
+}
+
+#[test]
+fn failed_current_branch_lookups_wait_out_the_interval_too() {
+    let mut state = connected();
+    let now = Instant::now();
+    let id = state
+        .begin_current_branch_load(key("feature"), false, now)
+        .unwrap();
+    state.finish_current_branch_load(id, &Err(ForgeError::GhNotInstalled), now);
+
+    let soon = now + Duration::from_secs(2);
+    assert_eq!(
+        state.begin_current_branch_load(key("feature"), false, soon),
+        None
+    );
+    assert!(
+        state
+            .begin_current_branch_load(key("feature"), true, soon)
+            .is_some(),
+        "an explicit request still looks up"
+    );
 }
 
 #[tokio::test]

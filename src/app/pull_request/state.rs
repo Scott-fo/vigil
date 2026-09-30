@@ -384,10 +384,12 @@ impl PullRequests {
         }
     }
 
-    /// Records that a request found `gh` missing or logged out after a
-    /// connection that never ran it. Background work stops as if connecting
-    /// had failed, and the next user request reconnects and retries.
-    pub(in crate::app) fn mark_gh_unavailable(&mut self, error: ForgeError) {
+    /// Records that a request found GitHub unable to serve this checkout
+    /// (`gh` missing or logged out, repository not visible) after a
+    /// connection that never ran `gh`. Background work stops as if
+    /// connecting had failed, and the next user request reconnects and
+    /// retries.
+    pub(in crate::app) fn mark_unavailable(&mut self, error: ForgeError) {
         if matches!(self.connection, ForgeConnection::Connected(_)) {
             self.connection = ForgeConnection::Unavailable(error);
         }
@@ -478,8 +480,10 @@ impl PullRequests {
         if let Ok(summary) = result {
             current.branch = Some(key.branch.clone());
             current.summary = summary.clone();
-            current.last_load = Some((key, now));
         }
+        // A failed lookup waits out the interval too, so a failing `gh` is
+        // not rerun on every working tree change.
+        current.last_load = Some((key, now));
         true
     }
 

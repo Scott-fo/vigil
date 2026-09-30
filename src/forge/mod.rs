@@ -46,8 +46,8 @@
 //! logged-out `gh`, a checkout without a GitHub remote, missing objects,
 //! rate limiting, and invalid input from other failures. Invalid review
 //! input is rejected before any request is sent.
-//! [`ForgeError::is_gh_unavailable`] picks out the failures that will repeat
-//! on every request until the user installs or logs in to `gh`.
+//! [`ForgeError::leaves_forge_unavailable`] picks out the failures that will
+//! repeat on every request until the user fixes `gh` or the remote.
 //!
 //! # What callers should not rely on
 //!

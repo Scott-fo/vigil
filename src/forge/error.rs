@@ -70,11 +70,23 @@ impl fmt::Display for ForgeError {
 impl std::error::Error for ForgeError {}
 
 impl ForgeError {
-    /// `gh` itself cannot be used: it is not installed or not logged in.
+    /// GitHub cannot serve this checkout at all: `gh` is not installed or
+    /// not logged in (for this host), the checkout has no GitHub remote `gh`
+    /// accepts, or the repository itself does not exist or is not visible.
     /// Every request fails this way until the user fixes it, so callers can
     /// stop issuing requests in the background.
-    pub fn is_gh_unavailable(&self) -> bool {
-        matches!(self, Self::GhNotInstalled | Self::NotAuthenticated { .. })
+    pub fn leaves_forge_unavailable(&self) -> bool {
+        match self {
+            Self::GhNotInstalled
+            | Self::NotAuthenticated { .. }
+            | Self::NotGitHubRepository { .. } => true,
+            // GraphQL's answer for a missing repository, as opposed to a
+            // missing pull request or thread inside it.
+            Self::NotFound { message } => message
+                .to_ascii_lowercase()
+                .contains("could not resolve to a repository"),
+            _ => false,
+        }
     }
 
     pub(super) fn decode(context: impl Into<String>, message: impl fmt::Display) -> Self {
@@ -331,6 +343,36 @@ mod tests {
                         .into()
             }
         );
+    }
+
+    #[test]
+    fn only_failures_about_the_whole_checkout_leave_the_forge_unavailable() {
+        let missing_repository = classify(
+            1,
+            r#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository with the name 'acme/gone'."}]}"#,
+            "gh: Could not resolve to a Repository with the name 'acme/gone'.",
+        );
+        let missing_pull_request = classify(
+            1,
+            r#"{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a PullRequest with the number of 99."}]}"#,
+            "gh: Could not resolve to a PullRequest with the number of 99.",
+        );
+        assert!(matches!(missing_repository, ForgeError::NotFound { .. }));
+        assert!(missing_repository.leaves_forge_unavailable());
+        assert!(matches!(missing_pull_request, ForgeError::NotFound { .. }));
+        assert!(!missing_pull_request.leaves_forge_unavailable());
+
+        assert!(ForgeError::GhNotInstalled.leaves_forge_unavailable());
+        assert!(
+            classify(
+                4,
+                "",
+                "To get started with GitHub CLI, please run:  gh auth login"
+            )
+            .leaves_forge_unavailable()
+        );
+        assert!(classify(1, "", "no git remotes found").leaves_forge_unavailable());
+        assert!(!classify(1, "", "gh: HTTP 502").leaves_forge_unavailable());
     }
 
     #[test]
