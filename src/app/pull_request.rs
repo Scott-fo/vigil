@@ -45,6 +45,11 @@
 //!   refresh, or behind this session's review) is looked up before it
 //!   opens, so a review never starts from an old head or base (see
 //!   [`RowCurrency`](list::RowCurrency)).
+//! - **Prefetching.** Once a list page loads live, the commits and detail
+//!   of its top ten rows are fetched in the background when missing or
+//!   stale, and so is the current branch's detail after each lookup, so
+//!   the likeliest opens are instant (see [`prefetch`]). Prefetching only
+//!   fills refs and the cache; it never changes the screen.
 //! - **Reviewing and acting on it.** Draft comments (`c`) are local and
 //!   persisted in the review database until a review (`S`) sends them;
 //!   replies (`R`), resolving (`T`), conversation comments (`C`), merging
@@ -70,6 +75,7 @@ mod list_screen;
 mod merge;
 mod modal;
 mod open;
+mod prefetch;
 mod saved;
 mod selection;
 mod state;
@@ -153,6 +159,7 @@ impl App {
             PullRequestEvent::MutationFinished { request_id, result } => {
                 Ok(self.handle_mutation_finished(request_id, result))
             }
+            PullRequestEvent::Prefetch(event) => Ok(self.handle_prefetch_event(event)),
             PullRequestEvent::Tick(PullRequestTimer::OpenPullRequest) => {
                 Ok(self.handle_open_pull_request_tick())
             }
@@ -165,6 +172,8 @@ impl App {
 
 #[cfg(test)]
 pub(crate) mod fixtures;
+#[cfg(test)]
+mod prefetch_tests;
 #[cfg(test)]
 mod review_tests;
 #[cfg(test)]

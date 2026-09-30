@@ -4,9 +4,10 @@
 //! app starts at most one at a time; [`ForgeGateway::Live`] runs it on
 //! GitHub in the background and reports a [`MutationOutcome`] through the
 //! event loop. Tests switch the gateway to recording, which keeps every
-//! mutation, follow-up reload, and lookup before opening in a log instead
-//! of spawning `gh`, and deliver results by hand. Nothing else in the app reaches the forge's
-//! write methods.
+//! mutation, follow-up reload, lookup before opening, and background
+//! prefetch in a log instead of spawning `gh` or `git`, and deliver results
+//! by hand. Nothing else in the app reaches the forge's write methods.
+//! Tests that do not record get no prefetching at all.
 
 use tokio::task;
 
@@ -135,6 +136,10 @@ pub(in crate::app) enum ForgeCall {
     RefreshCurrentBranch,
     /// A pull request looked up by number before opening.
     LookUp(u64),
+    /// A commit prefetch of these pull requests (`git fetch`).
+    PrefetchCommits(Vec<u64>),
+    /// A detail prefetch of these pull requests (one GitHub request).
+    PrefetchDetails(Vec<u64>),
 }
 
 impl App {

@@ -136,6 +136,7 @@ impl App {
             return false;
         }
         self.pull_requests.list_mut().clear_pages();
+        self.pull_requests.prefetch_mut().forget_saved_details();
         self.load_pull_request_list_if_shown();
         true
     }

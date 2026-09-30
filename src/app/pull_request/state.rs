@@ -16,6 +16,7 @@ use super::{
     gateway::{ForgeGateway, ForgeMutation},
     list::{LIST_POLL_INTERVAL, PullRequestListState, RowCurrency},
     modal::PullRequestModal,
+    prefetch::Prefetch,
     saved::{Freshness, SavedSnapshots},
     task::{OwnedTask, RequestSlot},
 };
@@ -414,6 +415,8 @@ pub(in crate::app) struct PullRequests {
     list: PullRequestListState,
     /// A pull request looked up by number before it opens.
     lookup: RequestSlot,
+    /// The number `lookup` is for.
+    lookup_number: Option<u64>,
     opening_origin: ReviewOrigin,
     /// The review-action modal on screen, if any.
     modal: Option<PullRequestModal>,
@@ -424,6 +427,8 @@ pub(in crate::app) struct PullRequests {
     draft_persistence: DraftPersistence,
     draft_writer: Option<DraftWriter>,
     saved: SavedSnapshots,
+    /// Background prefetches of listed pull requests.
+    prefetch: Prefetch,
 }
 
 impl Default for PullRequests {
@@ -454,6 +459,7 @@ impl PullRequests {
     ) -> Self {
         Self {
             saved,
+            prefetch: Prefetch::default(),
             opening_origin: ReviewOrigin::Elsewhere,
             modal: None,
             mutation: RequestSlot::default(),
@@ -479,6 +485,7 @@ impl PullRequests {
             ended_review: None,
             list: PullRequestListState::default(),
             lookup: RequestSlot::default(),
+            lookup_number: None,
         }
     }
 
@@ -806,8 +813,14 @@ impl PullRequests {
 
     /// Starts looking up a pull request by number, superseding any earlier
     /// lookup.
-    pub(in crate::app) fn begin_lookup(&mut self) -> u64 {
+    pub(in crate::app) fn begin_lookup(&mut self, number: u64) -> u64 {
+        self.lookup_number = Some(number);
         self.lookup.begin()
+    }
+
+    /// The pull request a running lookup is about to open.
+    pub(in crate::app) fn looking_up_number(&self) -> Option<u64> {
+        self.lookup_number.filter(|_| self.lookup_in_flight())
     }
 
     pub(in crate::app) fn attach_lookup(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {
@@ -1080,9 +1093,16 @@ impl PullRequests {
         self.mutation.current_id()
     }
 
-    #[cfg(test)]
     pub(in crate::app) fn gateway(&self) -> &ForgeGateway {
         &self.gateway
+    }
+
+    pub(in crate::app) fn prefetch(&self) -> &Prefetch {
+        &self.prefetch
+    }
+
+    pub(in crate::app) fn prefetch_mut(&mut self) -> &mut Prefetch {
+        &mut self.prefetch
     }
 
     pub(in crate::app) fn gateway_mut(&mut self) -> &mut ForgeGateway {

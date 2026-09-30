@@ -7,7 +7,7 @@ use crate::{
     review::DraftComment,
 };
 
-use super::gateway::MutationOutcome;
+use super::{gateway::MutationOutcome, prefetch::PrefetchEvent};
 
 /// Results of background pull request work, delivered through the app's event
 /// loop. Each carries the id of the request that produced it so superseded
@@ -80,6 +80,10 @@ pub enum PullRequestEvent {
         request_id: u64,
         result: Result<MutationOutcome, ForgeError>,
     },
+    /// A background prefetch made progress. Its failures are silent; one
+    /// that leaves the forge unavailable turns pull request features off
+    /// without a message (see the prefetch module).
+    Prefetch(PrefetchEvent),
     Tick(PullRequestTimer),
 }
 
@@ -101,6 +105,7 @@ impl PullRequestEvent {
             | Self::SavedDetailRead { .. }
             | Self::DraftsLoaded { .. }
             | Self::DraftWriteFailed(_)
+            | Self::Prefetch(_)
             | Self::Tick(_) => None,
         }
     }

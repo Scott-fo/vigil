@@ -29,8 +29,8 @@ use tokio::{sync::mpsc, task};
 use crate::{
     event::Event,
     forge::{
-        ForgeCache, PullRequest, PullRequestList, PullRequestListFilter, RepositoryRef, Snapshot,
-        Timestamp,
+        ForgeCache, PullRequest, PullRequestList, PullRequestListFilter, PullRequestSummary,
+        RepositoryRef, Snapshot, Timestamp,
     },
 };
 
@@ -223,6 +223,29 @@ impl SavedSnapshots {
         !matches!(self.source, CacheSource::Off)
     }
 
+    /// Which of `rows` have no saved detail for the `updated_at` and head
+    /// they report (see [`ForgeCache::stale_pull_requests`]), checked on
+    /// the blocking pool when awaited. `None` when there is no cache or it
+    /// cannot answer.
+    pub(in crate::app) fn stale_pull_requests(
+        &self,
+        repository: RepositoryRef,
+        rows: Vec<PullRequestSummary>,
+    ) -> impl Future<Output = Option<Vec<u64>>> + Send + 'static {
+        let source = self.source.clone();
+        async move {
+            task::spawn_blocking(move || {
+                source
+                    .resolve()?
+                    .stale_pull_requests(&repository, &rows)
+                    .ok()
+            })
+            .await
+            .ok()
+            .flatten()
+        }
+    }
+
     /// Queues `save` behind earlier ones, starting the save task on first
     /// use. Saves still queued when the app quits are dropped.
     fn queue(&mut self, save: SnapshotSave) {
@@ -253,7 +276,7 @@ impl SavedSnapshots {
 impl App {
     /// The repository to key snapshots by, while GitHub is connected and
     /// a cache is in use.
-    fn saved_snapshot_repository(&self) -> Option<RepositoryRef> {
+    pub(super) fn saved_snapshot_repository(&self) -> Option<RepositoryRef> {
         let saved = self.pull_requests.saved();
         if !saved.enabled() {
             return None;

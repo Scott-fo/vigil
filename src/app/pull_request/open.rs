@@ -11,6 +11,7 @@ use crate::{
 use super::{
     super::{ActivePane, App, ReviewMode, Screen, SnackbarVariant},
     PullRequestEvent, PullRequestSelection, PullRequestTimer,
+    prefetch::{OPEN_WAITS_FOR_PREFETCH, wait_for_landing},
     saved::request_time,
     state::{DetailOutcome, PollOutcome, PullRequestPage, ReviewOrigin},
     task::spawn_ticker,
@@ -73,10 +74,20 @@ impl App {
             self.status_message = Some(self.current_status_message());
         }
         let (fetch_id, detail_id) = self.pull_requests.begin_open(summary, origin);
+        // A prefetch fetching these commits would race this open for the
+        // same ref; let it land, then take what it brought. A prefetch that
+        // does not land soon is left behind.
+        let prefetch_landing = self.pull_requests.prefetch().commits_landing(number);
 
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
         let fetch = task::spawn(async move {
+            if let Some(landing) = prefetch_landing {
+                let _ = sender.send(Event::PullRequest(PullRequestEvent::FetchStarted {
+                    request_id: fetch_id,
+                }));
+                wait_for_landing(landing, OPEN_WAITS_FOR_PREFETCH).await;
+            }
             if source == CommitSource::LocalFirst
                 && let Some(local) = git::resolve_local_pull_request(&repo_root, &request).await
             {

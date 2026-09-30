@@ -56,6 +56,19 @@
 //! [`GitHub::load_pull_requests`] asks for up to ten pull requests in one
 //! request, which GitHub prices at six points for ten (extra pages cost as
 //! they would alone).
+//!
+//! The app prefetches the details of the first ten rows of each list page
+//! it loads live, and of the current branch's pull request after each
+//! lookup, but only those whose saved detail is missing or was saved for
+//! another `updated_at`, head, or check rollup
+//! ([`ForgeCache::stale_pull_requests`], a local lookup). So a list refresh
+//! in which nothing changed costs no request beyond the list itself, and a
+//! changed pull request (including one whose CI moved on) costs its share
+//! of one batch. The worst case, all ten rows changing between every
+//! 60-second refresh while the list stays open, as when all of them are
+//! running CI, is six points a minute: about 7% of the hourly budget. A
+//! failed prefetch pauses for five minutes, fifteen after a rate limit,
+//! rather than retrying.
 //! GitHub computes mergeability in the background, so a fresh load may
 //! report [`Mergeability::Unknown`] until a later one. Dropping a future
 //! kills its `gh` process; for writes that leaves it unknown whether the

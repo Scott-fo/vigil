@@ -191,6 +191,11 @@ impl App {
         if !list.finish_load(request_id, filter, result) {
             return false;
         }
+        // A live page was just accepted: prefetch its likeliest opens.
+        if let Some(page) = &live {
+            self.prefetch_listed_pull_requests(page);
+        }
+        let list = self.pull_requests.list_mut();
         if let (Some(page), Some(Freshness::Live { requested_at })) =
             (live, list.page_freshness(filter))
         {
@@ -252,7 +257,7 @@ impl App {
         let Some(github) = self.pull_requests.github().cloned() else {
             return;
         };
-        let request_id = self.pull_requests.begin_lookup();
+        let request_id = self.pull_requests.begin_lookup(number);
         self.status_message = Some(format!("looking up pull request #{number}…"));
         match self.pull_requests.gateway_mut() {
             ForgeGateway::Live => {}
