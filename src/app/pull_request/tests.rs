@@ -204,6 +204,30 @@ fn stale_fetches_and_details_are_dropped() {
     assert_eq!(state.finish_fetch(new_fetch).map(|pr| pr.number), Some(2));
 }
 
+/// A poll or a write reloading #5's detail while #7 is being fetched must
+/// not abort #7's detail load, or #7 would open without one.
+#[test]
+fn reloading_the_open_detail_waits_while_another_pull_request_opens() {
+    let mut state = connected();
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(5), ReviewOrigin::Elsewhere);
+    state.finish_detail(detail_id, Ok(fixtures::pull_request(5, Vec::new())));
+    let summary = state.finish_fetch(fetch_id).unwrap();
+    state.enter(summary.clone(), summary.head_oid.clone());
+    assert!(state.begin_detail_reload().is_some(), "reloads when idle");
+
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(7), ReviewOrigin::Elsewhere);
+    assert_eq!(state.begin_detail_reload(), None);
+    assert!(
+        state
+            .finish_detail(detail_id, Ok(fixtures::pull_request(7, Vec::new())))
+            .is_some(),
+        "the opening detail load still counts"
+    );
+    let summary = state.finish_fetch(fetch_id).unwrap();
+    state.enter(summary.clone(), summary.head_oid.clone());
+    assert!(state.open().unwrap().live_detail().is_some());
+}
+
 #[test]
 fn reloading_the_open_pull_request_keeps_its_page_and_detail() {
     let mut state = connected();

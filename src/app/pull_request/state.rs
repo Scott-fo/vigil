@@ -987,8 +987,18 @@ impl PullRequests {
     }
 
     /// Reloads the open pull request's detail without refetching commits.
+    /// `None` while another pull request is opening: the two share one
+    /// detail request, and the opening one's load must not be aborted. The
+    /// open review is about to be replaced, and if the open fails its next
+    /// poll reloads it.
     pub(in crate::app) fn begin_detail_reload(&mut self) -> Option<(u64, u64)> {
         let number = self.open.as_ref()?.summary.number;
+        if self
+            .opening_number()
+            .is_some_and(|opening| opening != number)
+        {
+            return None;
+        }
         self.detail_number = Some(number);
         self.detail_requested_at = Instant::now();
         Some((self.detail.begin(), number))
