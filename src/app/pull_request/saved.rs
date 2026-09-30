@@ -268,6 +268,20 @@ impl App {
         Some(self.pull_requests.github()?.repository().clone())
     }
 
+    /// Whether a read issued for `repository` still belongs to the
+    /// connected one. A rename found after connecting switches the client,
+    /// and a read under the old name that lands afterwards is dropped.
+    /// Spelling is compared as the cache keys it, ignoring case, since
+    /// adopting GitHub's canonical casing is not a different repository.
+    fn is_saved_snapshot_repository(&self, repository: &RepositoryRef) -> bool {
+        self.pull_requests.github().is_some_and(|github| {
+            let current = github.repository();
+            current.host.eq_ignore_ascii_case(&repository.host)
+                && current.owner.eq_ignore_ascii_case(&repository.owner)
+                && current.name.eq_ignore_ascii_case(&repository.name)
+        })
+    }
+
     /// Reads `filter`'s saved page in the background, for a tab with
     /// nothing to show yet.
     pub(super) fn read_saved_pull_request_list(&mut self, filter: PullRequestListFilter) {
@@ -304,12 +318,7 @@ impl App {
         let Some(snapshot) = snapshot else {
             return false;
         };
-        if self
-            .pull_requests
-            .github()
-            .map(|github| github.repository())
-            != Some(repository)
-        {
+        if !self.is_saved_snapshot_repository(repository) {
             return false;
         }
         self.pull_requests.list_mut().show_saved(filter, snapshot)
@@ -368,12 +377,7 @@ impl App {
         let Some(snapshot) = snapshot else {
             return false;
         };
-        if self
-            .pull_requests
-            .github()
-            .map(|github| github.repository())
-            != Some(repository)
-        {
+        if !self.is_saved_snapshot_repository(repository) {
             return false;
         }
         self.pull_requests.show_saved_detail(number, *snapshot)

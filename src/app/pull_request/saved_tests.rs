@@ -188,6 +188,41 @@ async fn a_live_load_that_finds_gh_logged_out_explains_it_over_a_saved_page() {
     app.quit();
 }
 
+/// A connect from local remotes may later learn the repository's
+/// canonical name. Only a real rename makes a saved read under the old
+/// name stale; GitHub's casing of the same name does not.
+#[test]
+fn a_saved_read_from_before_a_rename_is_dropped_but_not_one_from_a_recasing() {
+    let (mut app, _, filter) = list_app();
+    let before = repository();
+    app.pull_requests.connect_for_test(GitHub::new(
+        app.repo_root.clone(),
+        RepositoryRef {
+            owner: "SCOTT-FO".to_string(),
+            name: "Vigil".to_string(),
+            ..repository()
+        },
+    ));
+    assert!(app.handle_saved_pull_request_list(
+        &before,
+        filter,
+        Some(saved(fixtures::pull_request_list(&[4], 1))),
+    ));
+
+    app.pull_requests.connect_for_test(GitHub::new(
+        app.repo_root.clone(),
+        RepositoryRef {
+            name: "vigil-renamed".to_string(),
+            ..repository()
+        },
+    ));
+    assert!(!app.handle_saved_pull_request_list(
+        &before,
+        PullRequestListFilter::AllOpen,
+        Some(saved(fixtures::pull_request_list(&[5], 1))),
+    ));
+}
+
 #[test]
 fn saved_pages_of_another_repository_or_a_miss_show_nothing() {
     let (mut app, _, filter) = list_app();
