@@ -19,6 +19,11 @@
 //!   [`GitHub::resolve_thread`], [`GitHub::merge_pull_request`], and friends
 //!   write back.
 //!
+//! [`ForgeCache`] keeps the last list pages and pull request details on
+//! disk between sessions, so screens can show them at once while a live
+//! load runs. It is separate from the client: callers read and save
+//! [`Snapshot`]s themselves.
+//!
 //! # Cost and staleness
 //!
 //! [`GitHub::connect`] usually costs two local `git` processes: when the
@@ -38,9 +43,12 @@
 //! false) and switch clients if the name changed. The client is usable
 //! before it answers.
 //!
-//! Every other operation is async and spawns `gh` (tens to hundreds of
-//! milliseconds plus network). Nothing is cached: each result is a
-//! snapshot, and callers that display long-lived state own refreshing it.
+//! Every other [`GitHub`] operation is async and spawns `gh` (tens to
+//! hundreds of milliseconds plus network). The client caches nothing: each
+//! result is a snapshot, and callers that display long-lived state own
+//! refreshing it. A cached [`Snapshot`] is older still and only for display
+//! until a live load replaces it; see [`ForgeCache`] for its staleness
+//! contract and write policy.
 //! Reads spend GitHub's GraphQL rate limit (5,000 points an hour); a full
 //! pull request load costs about one point, plus one request per extra page
 //! on pull requests with more than 50 threads or 100 comments or checks.
@@ -64,6 +72,7 @@
 //! touches local branches, the working tree, or git refs, so after a merge
 //! the caller decides whether to fetch or switch branches.
 
+mod cache;
 mod client;
 mod error;
 mod gh;
@@ -72,6 +81,7 @@ mod request;
 mod types;
 mod wire;
 
+pub use self::cache::{ForgeCache, Snapshot};
 pub use self::client::GitHub;
 pub use self::error::ForgeError;
 pub use self::types::{

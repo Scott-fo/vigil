@@ -3,8 +3,15 @@
 //! Every finite GitHub state is an enum here. Wire strings never leave the
 //! `forge` module; unknown values GitHub may add later map to the closest
 //! documented fallback on each type.
+//!
+//! The pull request facts derive `Serialize` and `Deserialize` for the forge
+//! cache, which saves them as vigil's own JSON. That encoding is not
+//! GitHub's wire format (see `wire`) and is not stable across vigil
+//! versions: the cache discards rows it cannot read.
 
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 /// The GitHub repository a [`GitHub`](super::GitHub) client talks to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -32,7 +39,7 @@ impl fmt::Display for RepositoryRef {
 ///
 /// GitHub always reports UTC with a `Z` suffix, so ordering the strings
 /// orders the instants.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Timestamp(String);
 
 impl Timestamp {
@@ -105,7 +112,7 @@ impl fmt::Display for Timestamp {
 }
 
 /// GraphQL node id of a review thread; the handle for reply and resolve.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ThreadId(String);
 
 impl ThreadId {
@@ -124,7 +131,7 @@ impl fmt::Display for ThreadId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PullRequestState {
     Open,
     Closed,
@@ -133,7 +140,7 @@ pub enum PullRequestState {
 
 /// The branch-protection review verdict. Absent when the base branch does not
 /// require reviews.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReviewDecision {
     Approved,
     ChangesRequested,
@@ -146,7 +153,7 @@ pub enum ReviewDecision {
 /// anything not yet completed is `Pending`; `TIMED_OUT`, `ACTION_REQUIRED`,
 /// and `STARTUP_FAILURE` are `Failure`; `STALE` and unknown conclusions are
 /// `Neutral`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CheckState {
     Pending,
     Success,
@@ -157,7 +164,7 @@ pub enum CheckState {
 }
 
 /// Per-state counts for every check run and commit status on a commit.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CheckCounts {
     pub pending: u32,
     pub success: u32,
@@ -200,14 +207,14 @@ impl CheckCounts {
 ///
 /// `state` is GitHub's own rollup (what the PR list icon shows), which can
 /// only be `Pending`, `Success`, or `Failure`; `counts` breaks it down.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CheckRollup {
     pub state: CheckState,
     pub counts: CheckCounts,
 }
 
 /// One row of a pull request list: enough to render and to open its diff.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequestSummary {
     pub number: u64,
     pub title: String,
@@ -245,7 +252,7 @@ pub enum PullRequestListFilter {
 }
 
 /// A page of pull requests, newest update first.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequestList {
     pub pull_requests: Vec<PullRequestSummary>,
     /// How many pull requests match the filter. Larger than
@@ -262,7 +269,7 @@ impl PullRequestList {
 /// Whether the head can merge into the base without conflicts. GitHub
 /// computes this in the background, so a fresh or recently pushed pull
 /// request reports `Unknown` until a later load.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Mergeability {
     Mergeable,
     Conflicting,
@@ -270,7 +277,7 @@ pub enum Mergeability {
 }
 
 /// What stands between the pull request and a merge right now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MergeStateStatus {
     /// Mergeable with passing checks.
     Clean,
@@ -290,14 +297,14 @@ pub enum MergeStateStatus {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum MergeMethod {
     Merge,
     Squash,
     Rebase,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoMerge {
     pub method: MergeMethod,
     pub enabled_by: Option<String>,
@@ -305,7 +312,7 @@ pub struct AutoMerge {
 }
 
 /// Someone whose review was requested and has not yet been given.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RequestedReviewer {
     /// A user, bot, or mannequin account.
     User {
@@ -317,7 +324,7 @@ pub enum RequestedReviewer {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReviewState {
     Approved,
     ChangesRequested,
@@ -327,7 +334,7 @@ pub enum ReviewState {
 }
 
 /// A submitted (or, for the viewer, pending) review.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Review {
     pub id: String,
     pub author: String,
@@ -339,7 +346,7 @@ pub struct Review {
 }
 
 /// A top-level comment on the pull request's conversation tab.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationComment {
     pub id: String,
     pub author: String,
@@ -349,7 +356,7 @@ pub struct ConversationComment {
 }
 
 /// One check run or commit status on the head commit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Check {
     /// Job name for check runs, context for commit statuses.
     pub name: String,
@@ -364,7 +371,7 @@ pub struct Check {
 }
 
 /// Which side of a split diff a line lives on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DiffSide {
     /// The base (old) file. Deleted and unchanged lines by old line number.
     Left,
@@ -373,14 +380,14 @@ pub enum DiffSide {
 }
 
 /// A line in the pull request diff, numbered in the file on `side`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DiffPosition {
     pub side: DiffSide,
     pub line: u32,
 }
 
 /// What a review thread is attached to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ThreadSubject {
     /// One line or a range of lines.
     Line,
@@ -388,14 +395,14 @@ pub enum ThreadSubject {
     File,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CommentState {
     Submitted,
     /// Part of the viewer's pending review; nobody else can see it yet.
     Pending,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadComment {
     pub id: String,
     pub author: String,
@@ -413,7 +420,7 @@ pub struct ThreadComment {
 /// are `None` and only the originals remain; `is_outdated` alone does not
 /// imply that, because GitHub also marks threads outdated whose lines still
 /// map.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewThread {
     pub id: ThreadId,
     pub path: String,
@@ -440,7 +447,7 @@ pub struct ReviewThread {
 /// The viewer's unsubmitted review on github.com. GitHub allows one per
 /// reviewer, and [`GitHub::submit_review`](super::GitHub::submit_review)
 /// fails while it exists.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingReview {
     pub id: String,
     pub created_at: Timestamp,
@@ -449,7 +456,7 @@ pub struct PendingReview {
 }
 
 /// What the authenticated user is and may do on this pull request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Viewer {
     pub login: String,
     pub is_author: bool,
@@ -464,7 +471,7 @@ pub struct Viewer {
 }
 
 /// Repository-level merge configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeSettings {
     /// Allowed methods in `Merge`, `Squash`, `Rebase` order.
     pub allowed_methods: Vec<MergeMethod>,
@@ -479,7 +486,7 @@ pub struct MergeSettings {
 ///
 /// Collections are complete: `load_pull_request` follows every pagination
 /// cursor rather than truncating large pull requests.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequest {
     pub summary: PullRequestSummary,
     /// Markdown.
