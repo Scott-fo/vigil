@@ -695,12 +695,15 @@ impl PullRequests {
     // Opening a pull request -------------------------------------------------
 
     /// Starts getting `summary`'s commits and loading its detail. Returns the
-    /// fetch and detail request ids.
+    /// fetch and detail request ids. An explicit open wins over a lookup
+    /// still running, which would otherwise open its own pull request when
+    /// it answers.
     pub(in crate::app) fn begin_open(
         &mut self,
         summary: PullRequestSummary,
         origin: ReviewOrigin,
     ) -> (u64, u64) {
+        self.lookup.cancel();
         self.detail_number = Some(summary.number);
         self.early_detail = None;
         self.early_saved_detail = None;
@@ -788,6 +791,18 @@ impl PullRequests {
 
     pub(in crate::app) fn finish_lookup(&mut self, id: u64) -> bool {
         self.lookup.complete(id)
+    }
+
+    pub(in crate::app) fn lookup_in_flight(&self) -> bool {
+        self.lookup.in_flight()
+    }
+
+    /// Drops a running lookup, as when the list it was started from
+    /// closes. Returns whether one was running.
+    pub(in crate::app) fn cancel_lookup(&mut self) -> bool {
+        let running = self.lookup.in_flight();
+        self.lookup.cancel();
+        running
     }
 
     #[cfg(test)]

@@ -68,6 +68,10 @@ impl App {
             base_oid: summary.base_oid.clone(),
             base_ref_name: summary.base_ref_name.clone(),
         };
+        if self.pull_requests.lookup_in_flight() {
+            // `begin_open` drops it; its "looking up" status goes too.
+            self.status_message = Some(self.current_status_message());
+        }
         let (fetch_id, detail_id) = self.pull_requests.begin_open(summary, origin);
 
         let repo_root = self.repo_root.clone();

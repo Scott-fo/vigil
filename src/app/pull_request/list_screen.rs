@@ -139,10 +139,15 @@ impl App {
         self.pull_requests.list_mut().set_ticker(ticker);
     }
 
-    /// Returns to the review screen and stops refreshing the list.
+    /// Returns to the review screen and stops refreshing the list. A lookup
+    /// started from the list is dropped: leaving means the user no longer
+    /// wants it opened.
     pub(in crate::app) fn close_pull_request_list(&mut self) {
         self.screen = Screen::Review;
         self.pull_requests.list_mut().stop();
+        if self.pull_requests.cancel_lookup() {
+            self.status_message = Some(self.current_status_message());
+        }
     }
 
     /// Loads the shown tab from GitHub, superseding a running load. A tab
@@ -274,10 +279,10 @@ impl App {
         if !self.pull_requests.finish_lookup(request_id) {
             return false;
         }
+        self.status_message = Some(self.current_status_message());
         match result {
             Ok(summary) => self.open_pull_request(summary, ReviewOrigin::PullRequestList),
             Err(error) => {
-                self.status_message = Some(self.current_status_message());
                 self.show_snackbar(
                     format!("could not find that pull request: {error}"),
                     SnackbarVariant::Error,

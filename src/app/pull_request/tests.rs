@@ -744,6 +744,51 @@ async fn a_row_from_a_saved_page_is_looked_up_and_opens_the_live_head() {
     assert!(app.recorded_forge_calls().is_empty(), "no lookup");
 }
 
+/// An app on the list screen whose selected row, #7, is outdated.
+fn app_with_outdated_row() -> App {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.record_forge_calls_for_test();
+    app.pull_requests.connect_for_test(github());
+    app.screen = Screen::PullRequestList;
+    let list = app.pull_requests.list_mut();
+    let (_, filter) = list.begin_load(Instant::now());
+    list.show_saved(
+        filter,
+        Snapshot::new(
+            fixtures::pull_request_list(&[7, 8], 2),
+            Timestamp::new("2026-09-29T15:00:00Z"),
+        ),
+    );
+    app
+}
+
+/// Enter on outdated #7 starts a lookup. Opening #8 before it answers, or
+/// leaving the list, means #7 must not open when it does.
+#[test]
+fn a_later_open_or_leaving_the_list_drops_a_running_lookup() {
+    let mut app = app_with_outdated_row();
+    app.open_selected_pull_request();
+    assert_eq!(app.recorded_forge_calls(), vec![ForgeCall::LookUp(7)]);
+    let lookup = app.pull_requests.lookup_request_id();
+    app.pull_requests
+        .begin_open(fixtures::summary(8), ReviewOrigin::PullRequestList);
+    assert!(!app.handle_pull_request_looked_up(lookup, Ok(fixtures::summary(7))));
+    assert_eq!(app.pull_requests.opening_number(), Some(8));
+
+    let mut app = app_with_outdated_row();
+    app.open_selected_pull_request();
+    let lookup = app.pull_requests.lookup_request_id();
+    app.handle_pull_request_list_key(press(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(app.screen, Screen::Review);
+    assert!(!app.handle_pull_request_looked_up(lookup, Ok(fixtures::summary(7))));
+    assert_eq!(app.pull_requests.opening_number(), None);
+    assert_ne!(
+        app.status_message.as_deref(),
+        Some("looking up pull request #7…"),
+        "the dropped lookup's status goes with it"
+    );
+}
+
 /// A list with `row` on its first tab, loaded by a request that started
 /// `age` ago.
 fn state_with_live_row(row: PullRequestSummary, age: Duration) -> PullRequests {
