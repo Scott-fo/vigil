@@ -141,6 +141,15 @@ impl App {
             .is_some_and(|open| open.newer_head().is_some())
     }
 
+    /// GitHub reports the reviewed head on another base than the diff uses,
+    /// so the diff may count base-branch commits as changes; `r` would
+    /// reload onto it.
+    pub fn pull_request_base_moved(&self) -> bool {
+        self.pull_requests
+            .open()
+            .is_some_and(|open| open.moved_base().is_some())
+    }
+
     /// Unresolved review threads on `path`, for the sidebar marker.
     pub fn unresolved_thread_count(&self, path: &str) -> usize {
         self.pull_requests

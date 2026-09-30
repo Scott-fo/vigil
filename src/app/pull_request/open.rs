@@ -194,9 +194,11 @@ impl App {
             self.spawn_pull_request_ref_cleanup(replaced);
         }
         // Detail that landed during the fetch may already know of a newer
-        // head; `enter` clears the notice otherwise.
+        // head or base; `enter` clears the notices otherwise.
         if self.pull_request_has_newer_head() {
             self.announce_newer_head(number);
+        } else if self.pull_request_base_moved() {
+            self.announce_moved_base(number);
         }
         if !reloading {
             self.load_pull_request_drafts();
@@ -239,10 +241,12 @@ impl App {
         if let Some(detail) = live {
             self.save_pull_request(Snapshot::new(detail, request_time(requested_at)));
         }
-        if outcome == DetailOutcome::HeadMoved
-            && let Some(number) = self.pull_requests.open_number()
-        {
-            self.announce_newer_head(number);
+        if let Some(number) = self.pull_requests.open_number() {
+            match outcome {
+                DetailOutcome::HeadMoved => self.announce_newer_head(number),
+                DetailOutcome::BaseMoved => self.announce_moved_base(number),
+                DetailOutcome::Applied => {}
+            }
         }
         if let Some(error) = self
             .pull_requests
@@ -316,6 +320,13 @@ impl App {
     fn announce_newer_head(&mut self, number: u64) {
         self.show_snackbar(
             format!("pull request #{number} has new commits · r to reload"),
+            SnackbarVariant::Info,
+        );
+    }
+
+    fn announce_moved_base(&mut self, number: u64) {
+        self.show_snackbar(
+            format!("pull request #{number} base moved · r to reload"),
             SnackbarVariant::Info,
         );
     }

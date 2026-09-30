@@ -461,6 +461,63 @@ async fn a_live_detail_with_a_newer_head_says_the_review_is_behind() {
     );
 }
 
+/// A review opened from an outdated summary may fetch a head that was
+/// rebased since, while its diff still uses the summary's old base; the
+/// live detail of that head gives the base away.
+#[tokio::test]
+async fn a_live_detail_on_another_base_than_the_diff_says_the_review_is_behind() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-saved-tests"));
+    let outdated = fixtures::summary(18);
+    let (fetch_id, detail_id) = app
+        .pull_requests
+        .begin_open(outdated, super::state::ReviewOrigin::Elsewhere);
+    let outdated = app.pull_requests.finish_fetch(fetch_id).unwrap();
+    let rebased_head = "2".repeat(40);
+    app.pull_requests.enter(outdated, rebased_head.clone());
+    let mut live = fixtures::pull_request(18, Vec::new());
+    live.summary.head_oid = rebased_head;
+    live.summary.base_oid = "3".repeat(40);
+
+    app.handle_pull_request_detail_loaded(detail_id, Ok(live));
+
+    assert!(app.pull_request_base_moved());
+    assert!(!app.pull_request_has_newer_head());
+    let notice = app
+        .snackbar_notice
+        .as_ref()
+        .map(|notice| notice.message.clone());
+    assert_eq!(
+        notice.as_deref(),
+        Some("pull request #18 base moved · r to reload")
+    );
+    assert_eq!(
+        app.pull_requests.open().unwrap().summary().base_oid,
+        "3".repeat(40),
+        "r reloads from the summary, onto the new base"
+    );
+}
+
+/// The base branch advancing moves GitHub's base commit too, but for a
+/// review opened from a summary of its head that changes nothing.
+#[tokio::test]
+async fn a_moved_base_is_ignored_when_the_review_opened_from_its_heads_summary() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-saved-tests"));
+    let summary = fixtures::summary(18);
+    let (fetch_id, detail_id) = app
+        .pull_requests
+        .begin_open(summary, super::state::ReviewOrigin::Elsewhere);
+    let summary = app.pull_requests.finish_fetch(fetch_id).unwrap();
+    app.pull_requests
+        .enter(summary.clone(), summary.head_oid.clone());
+    let mut live = fixtures::pull_request(18, Vec::new());
+    live.summary.base_oid = "3".repeat(40);
+
+    app.handle_pull_request_detail_loaded(detail_id, Ok(live));
+
+    assert!(!app.pull_request_base_moved());
+    assert!(app.snackbar_notice.is_none());
+}
+
 // Round trips through a cache file -----------------------------------------
 
 fn temp_cache() -> (ForgeCache, PathBuf) {

@@ -120,6 +120,10 @@ pub(in crate::app) enum DetailOutcome {
     /// The detail reports a head the review does not show, seen for the
     /// first time; the reviewer should hear about it once.
     HeadMoved,
+    /// The detail confirms the reviewed head but on another base than the
+    /// diff uses, which the review opened from an outdated summary; the
+    /// reviewer should hear about it once.
+    BaseMoved,
 }
 
 /// What a poll of the open pull request found.
@@ -157,6 +161,14 @@ pub(in crate::app) struct OpenPullRequest {
     overview_scroll: usize,
     /// A newer head GitHub reported since the review was fetched.
     newer_head: Option<String>,
+    /// The base the diff uses, while it came from a summary of another
+    /// head: the commits were fetched past what the summary described, so
+    /// the base may be one the head has since been rebased off. The first
+    /// live detail of the reviewed head confirms it or moves it.
+    unconfirmed_base: Option<String>,
+    /// A base GitHub reported for the reviewed head that the diff does not
+    /// use, so the diff may show base-branch commits as changes.
+    moved_base: Option<String>,
     poll: RequestSlot,
     ticker: Option<OwnedTask>,
     origin: ReviewOrigin,
@@ -175,6 +187,8 @@ impl OpenPullRequest {
             page: PullRequestPage::Overview,
             overview_scroll: 0,
             newer_head: None,
+            unconfirmed_base: None,
+            moved_base: None,
             poll: RequestSlot::default(),
             ticker: None,
             origin,
@@ -263,6 +277,20 @@ impl OpenPullRequest {
         self.newer_head.as_deref()
     }
 
+    /// A base GitHub reports for the reviewed head that the diff does not
+    /// use; `r` reloads onto it.
+    pub(in crate::app) fn moved_base(&self) -> Option<&str> {
+        self.moved_base.as_deref()
+    }
+
+    /// Records which base the diff uses: `summary`'s, which is only
+    /// trustworthy if `summary` described the reviewed head.
+    fn diff_base_from(&mut self, summary: &PullRequestSummary) {
+        self.unconfirmed_base =
+            (summary.head_oid != self.reviewed_head).then(|| summary.base_oid.clone());
+        self.moved_base = None;
+    }
+
     pub(in crate::app) fn overview_scroll(&self) -> usize {
         self.overview_scroll
     }
@@ -275,16 +303,22 @@ impl OpenPullRequest {
         self.ticker = Some(ticker);
     }
 
-    /// Shows a live detail. A head other than the reviewed one means the
-    /// review is behind, as when it was opened from a saved list row;
-    /// returns true the first time that head is seen. `requested_at` is
-    /// when the load started.
-    fn apply_detail(&mut self, detail: PullRequest, requested_at: Instant) -> bool {
-        let head = &detail.summary.head_oid;
-        let first_notice =
-            *head != self.reviewed_head && self.newer_head.as_deref() != Some(head.as_str());
-        if first_notice {
-            self.newer_head = Some(head.clone());
+    /// Shows a live detail, loaded by a request that started at
+    /// `requested_at`. Reports, once each, a head other than the reviewed
+    /// one, and a base the diff should have used for the reviewed head.
+    fn apply_detail(&mut self, detail: PullRequest, requested_at: Instant) -> DetailOutcome {
+        let summary = &detail.summary;
+        let mut outcome = DetailOutcome::Applied;
+        if summary.head_oid != self.reviewed_head {
+            if self.newer_head.as_deref() != Some(summary.head_oid.as_str()) {
+                self.newer_head = Some(summary.head_oid.clone());
+                outcome = DetailOutcome::HeadMoved;
+            }
+        } else if let Some(base) = self.unconfirmed_base.take()
+            && base != summary.base_oid
+        {
+            self.moved_base = Some(summary.base_oid.clone());
+            outcome = DetailOutcome::BaseMoved;
         }
         self.summary = detail.summary.clone();
         self.detail = Some(ShownDetail {
@@ -293,7 +327,7 @@ impl OpenPullRequest {
         });
         self.detail_error = None;
         self.rebuild_threads();
-        first_notice
+        outcome
     }
 
     /// Shows a saved detail while nothing else is shown. Only a snapshot of
@@ -733,8 +767,9 @@ impl PullRequests {
                 {
                     open.detail = None;
                 }
-                open.summary = summary;
                 open.reviewed_head = reviewed_head;
+                open.diff_base_from(&summary);
+                open.summary = summary;
                 open.newer_head = None;
                 if origin == ReviewOrigin::PullRequestList {
                     open.origin = origin;
@@ -744,7 +779,9 @@ impl PullRequests {
             previous => {
                 replaced = previous.map(|open| open.summary.number);
                 self.modal = None;
-                self.open = Some(OpenPullRequest::new(summary, reviewed_head, origin));
+                let mut open = OpenPullRequest::new(summary.clone(), reviewed_head, origin);
+                open.diff_base_from(&summary);
+                self.open = Some(open);
             }
         }
         if let (Some(snapshot), Some(open)) = (early_saved_detail, self.open.as_mut()) {
@@ -826,11 +863,7 @@ impl PullRequests {
         };
         match result {
             Ok(detail) if detail.summary.number == open.summary.number => {
-                if open.apply_detail(detail, requested_at) {
-                    DetailOutcome::HeadMoved
-                } else {
-                    DetailOutcome::Applied
-                }
+                open.apply_detail(detail, requested_at)
             }
             Ok(_) => DetailOutcome::Applied,
             Err(error) => {

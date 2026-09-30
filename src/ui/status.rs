@@ -256,11 +256,18 @@ fn review_target_segments(app: &App) -> Vec<FooterSegment> {
                     Style::new().fg(primary_color()).bg(chip_color()),
                 )]));
             }
-            if app.pull_request_has_newer_head() {
+            let reload = if app.pull_request_has_newer_head() {
+                Some(" new commits · r reload ")
+            } else if app.pull_request_base_moved() {
+                Some(" base moved · r reload ")
+            } else {
+                None
+            };
+            if let Some(label) = reload {
                 segments.push(FooterSegment::plain(" "));
                 segments.push(FooterSegment {
                     spans: vec![Span::styled(
-                        " new commits · r reload ",
+                        label,
                         Style::new().fg(warning_color()).bg(chip_color()),
                     )],
                     action: Some(FooterAction::ReloadPullRequest),
