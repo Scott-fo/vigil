@@ -67,6 +67,11 @@ impl RequestSlot {
         self.in_flight
     }
 
+    /// Whether request `id` is the latest one and still running.
+    pub(super) fn is_current(&self, id: u64) -> bool {
+        self.in_flight && id == self.id
+    }
+
     /// Like [`Self::attach`], but the task keeps running if the request is
     /// superseded or the slot is dropped. For writes, which must not stop
     /// midway.

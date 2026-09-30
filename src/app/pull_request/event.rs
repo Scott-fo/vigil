@@ -21,6 +21,12 @@ pub enum PullRequestEvent {
         request_id: u64,
         result: Result<Option<PullRequestSummary>, ForgeError>,
     },
+    /// The pull request's commits are not local, so a network fetch began.
+    FetchStarted {
+        request_id: u64,
+    },
+    /// The pull request's commits are ready, from the object store or a
+    /// fetch.
     Fetched {
         request_id: u64,
         result: Result<FetchedPullRequest, PullRequestFetchError>,

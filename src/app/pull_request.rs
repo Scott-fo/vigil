@@ -11,17 +11,19 @@
 //! - **The current branch's pull request**, shown as a footer chip. It is
 //!   looked up again whenever the branch snapshot reloads, at most every few
 //!   seconds for the same branch tip.
-//! - **The pull request under review.** Opening one fetches its commits
-//!   (`git::fetch_pull_request`) while its detail loads, then switches to
-//!   [`ReviewMode::PullRequest`](super::ReviewMode) with a
-//!   [`PullRequestSelection`]. The sidebar pins an overview page first. While
-//!   open, it is polled every 30 seconds; new commits raise a notice and `r`
-//!   refetches and reloads. Any other review mode ends it and deletes the
-//!   refs its fetch wrote; refs left by an earlier session are pruned at
-//!   startup. Opened from the list, Esc goes back to the list. `K` checks
-//!   the reviewed head out as a local branch through the shared branch
-//!   operation (see [`PullRequestSelection::checkout`]); the review stays
-//!   open, pinned to the same commits.
+//! - **The pull request under review.** Opening one uses its head and base
+//!   commits straight from the object store when they are there
+//!   (`git::resolve_local_pull_request`), and fetches them
+//!   (`git::fetch_pull_request`) only when they are not, while its detail
+//!   loads; then it switches to [`ReviewMode::PullRequest`](super::ReviewMode)
+//!   with a [`PullRequestSelection`]. The sidebar pins an overview page
+//!   first. While open, it is polled every 30 seconds; new commits raise a
+//!   notice and `r` always refetches and reloads. Any other review mode ends
+//!   it and deletes the refs its fetch wrote; refs left by an earlier session
+//!   are pruned at startup. Opened from the list, Esc goes back to the list.
+//!   `K` checks the reviewed head out as a local branch through the shared
+//!   branch operation (see [`PullRequestSelection::checkout`]); the review
+//!   stays open, pinned to the same commits.
 //! - **The pull request list screen**
 //!   ([`Screen::PullRequestList`](super::Screen)): open pull requests per
 //!   [`PullRequestListFilter`](crate::forge::PullRequestListFilter) tab, kept
@@ -86,6 +88,9 @@ impl App {
         match event {
             PullRequestEvent::Connected { request_id, result } => {
                 Ok(self.handle_forge_connected(request_id, result))
+            }
+            PullRequestEvent::FetchStarted { request_id } => {
+                Ok(self.handle_pull_request_fetch_started(request_id))
             }
             PullRequestEvent::CurrentBranchLoaded { request_id, result } => {
                 Ok(self.handle_current_branch_pull_request_loaded(request_id, result))

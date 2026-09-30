@@ -18,14 +18,34 @@ use super::{
 /// How often the pull request under review is checked for new commits.
 const OPEN_PULL_REQUEST_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Where opening a pull request gets its commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommitSource {
+    /// The head GitHub last reported, straight from the object store when
+    /// its commits are already there; a fetch only when they are not.
+    LocalFirst,
+    /// Always fetch, for when the user asks for the newest commits.
+    Fetch,
+}
+
 impl App {
-    /// Fetches `summary`'s commits and opens it in the review screen. The
-    /// review switches over once the fetch lands; until then the current
-    /// review stays up. `origin` decides where Esc goes back to.
+    /// Opens `summary` in the review screen. When its head and base commits
+    /// are already local the review switches over in milliseconds; otherwise
+    /// they are fetched first, and until the fetch lands the current review
+    /// stays up. `origin` decides where Esc goes back to.
     pub(in crate::app) fn open_pull_request(
         &mut self,
         summary: PullRequestSummary,
         origin: ReviewOrigin,
+    ) {
+        self.start_opening_pull_request(summary, origin, CommitSource::LocalFirst);
+    }
+
+    fn start_opening_pull_request(
+        &mut self,
+        summary: PullRequestSummary,
+        origin: ReviewOrigin,
+        source: CommitSource,
     ) {
         if !self.request_forge_connection() {
             return;
@@ -42,11 +62,22 @@ impl App {
             base_ref_name: summary.base_ref_name.clone(),
         };
         let (fetch_id, detail_id) = self.pull_requests.begin_open(summary, origin);
-        self.status_message = Some(format!("fetching pull request #{number}…"));
 
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
         let fetch = task::spawn(async move {
+            if source == CommitSource::LocalFirst
+                && let Some(local) = git::resolve_local_pull_request(&repo_root, &request).await
+            {
+                let _ = sender.send(Event::PullRequest(PullRequestEvent::Fetched {
+                    request_id: fetch_id,
+                    result: Ok(local),
+                }));
+                return;
+            }
+            let _ = sender.send(Event::PullRequest(PullRequestEvent::FetchStarted {
+                request_id: fetch_id,
+            }));
             let result = git::fetch_pull_request(&repo_root, &request).await;
             let _ = sender.send(Event::PullRequest(PullRequestEvent::Fetched {
                 request_id: fetch_id,
@@ -55,6 +86,15 @@ impl App {
         });
         self.pull_requests.attach_fetch(fetch_id, fetch);
         self.spawn_pull_request_detail_load(github, detail_id, number);
+    }
+
+    /// The commits were not local, so opening waits on the network: say so.
+    pub(super) fn handle_pull_request_fetch_started(&mut self, request_id: u64) -> bool {
+        let Some(number) = self.pull_requests.fetching_number(request_id) else {
+            return false;
+        };
+        self.status_message = Some(format!("fetching pull request #{number}…"));
+        true
     }
 
     fn spawn_pull_request_detail_load(
@@ -75,7 +115,8 @@ impl App {
     }
 
     /// Refetches the pull request under review and reloads its diff and
-    /// detail (the `r` key in pull request mode).
+    /// detail (the `r` key in pull request mode). Always fetches, even when
+    /// the known head is local: the user is asking for newer commits.
     pub(in crate::app) fn reload_open_pull_request(&mut self) {
         let Some((summary, origin)) = self
             .pull_requests
@@ -84,7 +125,7 @@ impl App {
         else {
             return;
         };
-        self.open_pull_request(summary, origin);
+        self.start_opening_pull_request(summary, origin, CommitSource::Fetch);
     }
 
     /// Esc in a review opened from the list: ends the review and shows the

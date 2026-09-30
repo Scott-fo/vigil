@@ -7,7 +7,7 @@ use std::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    fixtures,
+    PullRequestEvent, fixtures,
     list::{PullRequestListState, QueryInput},
     state::{
         BranchKey, ConnectOutcome, ConnectReason, PollOutcome, PullRequestPage, PullRequests,
@@ -16,7 +16,11 @@ use super::{
 };
 use crate::{
     app::{ActivePane, App, DiffViewMode, ReviewMode, Screen},
-    forge::{DiffSide, ForgeError, GitHub, PullRequestListFilter, RepositoryRef, Timestamp},
+    event::Event,
+    forge::{
+        DiffSide, ForgeError, GitHub, PullRequestListFilter, PullRequestSummary, RepositoryRef,
+        Timestamp,
+    },
     git::{self, FetchedPullRequest},
     sidebar::SidebarItem,
 };
@@ -607,6 +611,124 @@ async fn opening_a_fetched_pull_request_reviews_it_and_ctrl_l_leaves() {
     assert!(!app.pull_request_overview_visible());
 
     app.quit();
+}
+
+/// A repository with `main` at a base commit and `feature` one commit
+/// ahead, plus an `origin` that does not exist, so any fetch fails fast
+/// without touching the network. Returns the repository, base, and head.
+fn repo_with_local_pull_request(name: &str) -> (TempRepo, String, String) {
+    let repo = TempRepo::new(name);
+    repo.write("src/lib.rs", "fn a() {}\n");
+    let base = repo.commit("base");
+    repo.run(&["switch", "--quiet", "-c", "feature"]);
+    repo.write("src/lib.rs", "fn a() {}\nfn b() {}\n");
+    let head = repo.commit("feature");
+    repo.run(&["switch", "--quiet", "main"]);
+    repo.run(&["remote", "add", "origin", "/nonexistent/vigil-origin.git"]);
+    (repo, base, head)
+}
+
+/// An app connected to GitHub for `repo` without asking it.
+fn connected_app(repo: &TempRepo) -> App {
+    let mut app = App::new_for_benchmarks(repo.path().to_path_buf());
+    app.pull_requests.connect_for_test(GitHub::new(
+        repo.path(),
+        RepositoryRef {
+            host: "github.com".to_string(),
+            owner: "Scott-fo".to_string(),
+            name: "vigil".to_string(),
+        },
+    ));
+    app
+}
+
+/// Opens `summary` and waits for its commits, answering the fetch events,
+/// and returns what happened in order. The detail load is dropped before it
+/// runs: tests never reach GitHub.
+async fn open_and_wait_for_commits(
+    app: &mut App,
+    summary: PullRequestSummary,
+) -> Vec<&'static str> {
+    app.open_pull_request(summary, ReviewOrigin::PullRequestList);
+    app.pull_requests.cancel_detail_for_test();
+    let mut seen = Vec::new();
+    loop {
+        let Event::PullRequest(event) = app.events.next().await.unwrap() else {
+            continue;
+        };
+        let step = match &event {
+            PullRequestEvent::FetchStarted { .. } => "fetch started",
+            PullRequestEvent::Fetched { result: Ok(_), .. } => "commits ready",
+            PullRequestEvent::Fetched { result: Err(_), .. } => "commits failed",
+            _ => "other",
+        };
+        seen.push(step);
+        app.handle_pull_request_event(event).await.unwrap();
+        if step.starts_with("commits") {
+            return seen;
+        }
+    }
+}
+
+#[tokio::test]
+async fn opening_a_pull_request_with_local_commits_reviews_it_without_fetching() {
+    let (repo, base, head) = repo_with_local_pull_request("open-local");
+    let mut app = connected_app(&repo);
+    let mut summary = fixtures::summary(7);
+    summary.head_oid = head.clone();
+    summary.base_oid = base.clone();
+
+    let seen = open_and_wait_for_commits(&mut app, summary).await;
+
+    assert_eq!(seen, vec!["commits ready"]);
+    let ReviewMode::PullRequest(selection) = &app.review_mode else {
+        panic!("review should show the pull request: {seen:?}");
+    };
+    assert_eq!(selection.number, 7);
+    assert_eq!(selection.head_oid, head);
+    assert_eq!(selection.base_oid, base);
+    assert_eq!(selection.remote, "origin");
+    assert_eq!(repo.run(&["rev-parse", "refs/vigil/pr/7/head"]), head);
+    assert!(
+        !app.status_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("fetching"),
+        "{:?}",
+        app.status_message
+    );
+    app.quit();
+}
+
+#[tokio::test]
+async fn opening_a_pull_request_without_its_commits_fetches_them() {
+    let (repo, base, _) = repo_with_local_pull_request("open-remote");
+    let mut app = connected_app(&repo);
+    let mut summary = fixtures::summary(8);
+    summary.head_oid = "0123456789abcdef0123456789abcdef01234567".to_string();
+    summary.base_oid = base;
+
+    let seen = open_and_wait_for_commits(&mut app, summary).await;
+
+    // The fetch ran (and failed: `origin` does not exist).
+    assert_eq!(seen, vec!["fetch started", "commits failed"]);
+    assert!(matches!(app.review_mode, ReviewMode::WorkingTree));
+    assert!(app.pull_requests.open().is_none());
+    app.quit();
+}
+
+#[test]
+fn only_the_current_open_reports_its_fetch() {
+    let mut state = connected();
+    let (first, _) = state.begin_open(fixtures::summary(1), ReviewOrigin::Elsewhere);
+    assert_eq!(state.fetching_number(first), Some(1));
+
+    let (second, _) = state.begin_open(fixtures::summary(2), ReviewOrigin::Elsewhere);
+    assert_eq!(state.fetching_number(first), None);
+    assert_eq!(state.fetching_number(second), Some(2));
+
+    state.finish_fetch(second);
+    assert_eq!(state.fetching_number(second), None);
 }
 
 fn row_numbers(list: &PullRequestListState) -> Vec<u64> {

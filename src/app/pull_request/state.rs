@@ -482,7 +482,7 @@ impl PullRequests {
 
     // Opening a pull request -------------------------------------------------
 
-    /// Starts fetching `summary`'s commits and loading its detail. Returns the
+    /// Starts getting `summary`'s commits and loading its detail. Returns the
     /// fetch and detail request ids.
     pub(in crate::app) fn begin_open(
         &mut self,
@@ -499,6 +499,22 @@ impl PullRequests {
     /// The number of the pull request whose commits are being fetched.
     pub(in crate::app) fn opening_number(&self) -> Option<u64> {
         self.opening.as_ref().map(|summary| summary.number)
+    }
+
+    /// The number of the pull request being opened by request `id`, unless
+    /// that request was superseded or finished.
+    pub(in crate::app) fn fetching_number(&self, id: u64) -> Option<u64> {
+        self.fetch
+            .is_current(id)
+            .then(|| self.opening_number())
+            .flatten()
+    }
+
+    /// Drops the detail load an open started, so a test never reaches
+    /// GitHub.
+    #[cfg(test)]
+    pub(in crate::app) fn cancel_detail_for_test(&mut self) {
+        self.detail.cancel();
     }
 
     pub(in crate::app) fn list(&self) -> &PullRequestListState {
