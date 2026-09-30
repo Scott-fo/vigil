@@ -350,6 +350,26 @@ fn a_saved_detail_of_another_head_is_not_shown() {
     assert_eq!(overview.saved_at, None);
 }
 
+/// A saved detail describes one head. When its live load failed and `r`
+/// fetched newer commits, its threads would sit over the wrong diff.
+#[tokio::test]
+async fn reloading_onto_a_new_head_drops_a_saved_detail() {
+    let (mut app, detail_id) = review_on_saved_detail();
+    app.handle_pull_request_detail_loaded(detail_id, Err(ForgeError::GhNotInstalled));
+    assert!(shown_body(&app).is_some(), "the saved detail stays up");
+
+    let summary = app.pull_requests.open().unwrap().summary().clone();
+    let (fetch_id, _) = app
+        .pull_requests
+        .begin_open(summary, super::state::ReviewOrigin::Elsewhere);
+    let summary = app.pull_requests.finish_fetch(fetch_id).unwrap();
+    app.pull_requests.enter(summary, "2".repeat(40));
+
+    let overview = app.pull_request_overview().unwrap();
+    assert!(overview.detail.is_none());
+    assert_eq!(overview.saved_at, None);
+}
+
 #[tokio::test]
 async fn merging_waits_for_the_live_detail() {
     let (mut app, detail_id) = review_on_saved_detail();

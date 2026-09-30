@@ -710,8 +710,10 @@ impl PullRequests {
 
     /// Makes `summary` the pull request under review at `reviewed_head`. A
     /// reload of the same pull request keeps its page, scroll, detail, and
-    /// drafts; a newly opened one starts on the overview. Returns the number
-    /// of a different pull request this replaced, whose review ended.
+    /// drafts, except a saved detail of another head, whose threads would
+    /// not match the new diff; a newly opened one starts on the overview.
+    /// Returns the number of a different pull request this replaced, whose
+    /// review ended.
     pub(in crate::app) fn enter(
         &mut self,
         summary: PullRequestSummary,
@@ -723,6 +725,14 @@ impl PullRequests {
         let mut replaced = None;
         match self.open.as_mut() {
             Some(open) if open.summary.number == summary.number => {
+                if open.reviewed_head != reviewed_head
+                    && open
+                        .detail
+                        .as_ref()
+                        .is_some_and(|shown| !shown.freshness.is_live())
+                {
+                    open.detail = None;
+                }
                 open.summary = summary;
                 open.reviewed_head = reviewed_head;
                 open.newer_head = None;
