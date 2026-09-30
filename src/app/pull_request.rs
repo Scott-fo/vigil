@@ -41,7 +41,10 @@
 //!   cache, marked with its age, until the live load replaces it; every live
 //!   result is saved in turn (see [`saved`]). Writes to GitHub that depend
 //!   on what the detail says (merging, state changes) wait for the live
-//!   detail.
+//!   detail. A list row that may be outdated (saved, older than a list
+//!   refresh, or behind this session's review) is looked up before it
+//!   opens, so a review never starts from an old head or base (see
+//!   [`RowCurrency`](list::RowCurrency)).
 //! - **Reviewing and acting on it.** Draft comments (`c`) are local and
 //!   persisted in the review database until a review (`S`) sends them;
 //!   replies (`R`), resolving (`T`), conversation comments (`C`), merging

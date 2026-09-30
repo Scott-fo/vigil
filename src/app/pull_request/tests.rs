@@ -8,7 +8,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     PullRequestEvent, PullRequestListStatus, fixtures,
-    list::{PullRequestListState, QueryInput},
+    gateway::ForgeCall,
+    list::{PullRequestListState, QueryInput, RowCurrency},
     state::{
         BranchKey, ConnectOutcome, ConnectReason, ForgeConnection, PollOutcome, PullRequestPage,
         PullRequests, ReviewOrigin,
@@ -18,8 +19,8 @@ use crate::{
     app::{ActivePane, App, DiffViewMode, ReviewMode, Screen},
     event::Event,
     forge::{
-        DiffSide, ForgeError, GitHub, PullRequestListFilter, PullRequestSummary, RepositoryRef,
-        Timestamp,
+        DiffSide, ForgeError, GitHub, PullRequestList, PullRequestListFilter, PullRequestSummary,
+        RepositoryRef, Snapshot, Timestamp,
     },
     git::{self, FetchedPullRequest},
     sidebar::SidebarItem,
@@ -662,6 +663,13 @@ async fn open_and_wait_for_commits(
     summary: PullRequestSummary,
 ) -> Vec<&'static str> {
     app.open_pull_request(summary, ReviewOrigin::PullRequestList);
+    wait_for_commits(app).await
+}
+
+/// Answers the events of an open already started until its commits are
+/// ready or failed, and returns what happened in order. The detail load is
+/// dropped before it runs.
+async fn wait_for_commits(app: &mut App) -> Vec<&'static str> {
     app.pull_requests.cancel_detail_for_test();
     let mut seen = Vec::new();
     loop {
@@ -680,6 +688,142 @@ async fn open_and_wait_for_commits(
             return seen;
         }
     }
+}
+
+/// A saved list page may name a head GitHub has since moved past, whose
+/// commits are likely still local. Opening its row looks the pull request
+/// up and reviews the live head; a live page's row opens at once.
+#[tokio::test]
+async fn a_row_from_a_saved_page_is_looked_up_and_opens_the_live_head() {
+    let (repo, base, head) = repo_with_local_pull_request("open-saved-row");
+    let mut live = fixtures::summary(7);
+    live.head_oid = head.clone();
+    live.base_oid = base.clone();
+    let mut outdated = live.clone();
+    outdated.head_oid = base.clone();
+    let page = |summary: &PullRequestSummary| PullRequestList {
+        pull_requests: vec![summary.clone()],
+        total_count: 1,
+    };
+
+    let mut app = connected_app(&repo);
+    app.record_forge_calls_for_test();
+    app.screen = Screen::PullRequestList;
+    let list = app.pull_requests.list_mut();
+    let (_, filter) = list.begin_load(Instant::now());
+    list.show_saved(
+        filter,
+        Snapshot::new(page(&outdated), Timestamp::new("2026-09-29T15:00:00Z")),
+    );
+    app.open_selected_pull_request();
+    assert_eq!(app.recorded_forge_calls(), vec![ForgeCall::LookUp(7)]);
+    assert_eq!(
+        app.pull_requests.opening_number(),
+        None,
+        "nothing opens yet"
+    );
+
+    let lookup = app.pull_requests.lookup_request_id();
+    app.handle_pull_request_looked_up(lookup, Ok(live.clone()));
+    let seen = wait_for_commits(&mut app).await;
+    assert_eq!(seen, vec!["commits ready"]);
+    let ReviewMode::PullRequest(selection) = &app.review_mode else {
+        panic!("review should show the pull request: {seen:?}");
+    };
+    assert_eq!(selection.head_oid, head, "the live head, not the saved one");
+
+    let mut app = connected_app(&repo);
+    app.record_forge_calls_for_test();
+    app.screen = Screen::PullRequestList;
+    let list = app.pull_requests.list_mut();
+    let (id, filter) = list.begin_load(Instant::now());
+    list.finish_load(id, filter, Ok(page(&live)));
+    app.open_selected_pull_request();
+    let seen = wait_for_commits(&mut app).await;
+    assert_eq!(seen, vec!["commits ready"]);
+    assert!(app.recorded_forge_calls().is_empty(), "no lookup");
+}
+
+/// A list with `row` on its first tab, loaded by a request that started
+/// `age` ago.
+fn state_with_live_row(row: PullRequestSummary, age: Duration) -> PullRequests {
+    let mut state = connected();
+    let list = state.list_mut();
+    let (id, filter) = list.begin_load(Instant::now().checked_sub(age).unwrap());
+    list.finish_load(
+        id,
+        filter,
+        Ok(PullRequestList {
+            pull_requests: vec![row],
+            total_count: 1,
+        }),
+    );
+    state
+}
+
+fn selected_currency(state: &PullRequests) -> RowCurrency {
+    state.selected_list_row(Instant::now()).unwrap().1
+}
+
+#[test]
+fn list_rows_are_current_only_within_a_list_refresh_and_after_a_good_load() {
+    let row = fixtures::summary(7);
+    let state = state_with_live_row(row.clone(), Duration::ZERO);
+    assert_eq!(selected_currency(&state), RowCurrency::Current);
+
+    let state = state_with_live_row(row.clone(), Duration::from_secs(61));
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Outdated,
+        "older than a list refresh, as after the list was left and reopened"
+    );
+
+    let mut state = state_with_live_row(row, Duration::ZERO);
+    let list = state.list_mut();
+    let (id, filter) = list.begin_load(Instant::now());
+    list.finish_load(id, filter, Err(ForgeError::GhNotInstalled));
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Outdated,
+        "a failed reload leaves the rows unconfirmed"
+    );
+}
+
+/// Open #7 at H1, `r` fetches H2, Esc back to the list and Enter before
+/// the list reloads: the row still names H1, which is local.
+#[test]
+fn a_list_row_behind_this_sessions_review_is_outdated() {
+    let row = fixtures::summary(7);
+    let mut state = state_with_live_row(row.clone(), Duration::ZERO);
+    let (fetch_id, _) = state.begin_open(row.clone(), ReviewOrigin::PullRequestList);
+    let summary = state.finish_fetch(fetch_id).unwrap();
+    state.enter(summary, "2".repeat(40));
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Outdated,
+        "while open"
+    );
+
+    state.close();
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Outdated,
+        "after the review ended"
+    );
+
+    let mut newer = row;
+    newer.head_oid = "3".repeat(40);
+    newer.updated_at = Timestamp::new("2026-09-30T09:00:00Z");
+    let mut state = state_with_live_row(newer, Duration::ZERO);
+    let (fetch_id, _) = state.begin_open(fixtures::summary(7), ReviewOrigin::PullRequestList);
+    let summary = state.finish_fetch(fetch_id).unwrap();
+    state.enter(summary, "2".repeat(40));
+    state.close();
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Current,
+        "a row updated after the review's summary is newer than it"
+    );
 }
 
 #[tokio::test]

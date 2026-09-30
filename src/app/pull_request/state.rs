@@ -14,7 +14,7 @@ use crate::{
 use super::{
     drafts::{DraftBook, DraftPersistence, DraftWriter},
     gateway::{ForgeGateway, ForgeMutation},
-    list::PullRequestListState,
+    list::{LIST_POLL_INTERVAL, PullRequestListState, RowCurrency},
     modal::PullRequestModal,
     saved::{Freshness, SavedSnapshots},
     task::{OwnedTask, RequestSlot},
@@ -148,6 +148,25 @@ struct ShownDetail {
     freshness: Freshness,
 }
 
+/// What an ended review knew about its pull request, so a list row opened
+/// afterwards is not trusted over it.
+#[derive(Debug)]
+struct EndedReview {
+    summary: PullRequestSummary,
+    /// The newest head the review knew: the reviewed one, or a newer one
+    /// GitHub reported.
+    head: String,
+}
+
+impl EndedReview {
+    fn of(open: &OpenPullRequest) -> Self {
+        Self {
+            summary: open.summary.clone(),
+            head: open.known_head().to_string(),
+        }
+    }
+}
+
 /// The pull request under review.
 #[derive(Debug)]
 pub(in crate::app) struct OpenPullRequest {
@@ -277,6 +296,12 @@ impl OpenPullRequest {
         self.newer_head.as_deref()
     }
 
+    /// The newest head the review knows: a newer one GitHub reported, else
+    /// the reviewed one.
+    fn known_head(&self) -> &str {
+        self.newer_head.as_deref().unwrap_or(&self.reviewed_head)
+    }
+
     /// A base GitHub reports for the reviewed head that the diff does not
     /// use; `r` reloads onto it.
     pub(in crate::app) fn moved_base(&self) -> Option<&str> {
@@ -378,6 +403,8 @@ pub(in crate::app) struct PullRequests {
     /// A saved detail read while its pull request was still being fetched.
     early_saved_detail: Option<Snapshot<PullRequest>>,
     open: Option<OpenPullRequest>,
+    /// The last review that ended this session.
+    ended_review: Option<EndedReview>,
     list: PullRequestListState,
     /// A pull request looked up by number before it opens.
     lookup: RequestSlot,
@@ -442,6 +469,7 @@ impl PullRequests {
             early_detail: None,
             early_saved_detail: None,
             open: None,
+            ended_review: None,
             list: PullRequestListState::default(),
             lookup: RequestSlot::default(),
         }
@@ -707,6 +735,43 @@ impl PullRequests {
         &self.list
     }
 
+    /// The list's selected row, and whether it is current enough at `now`
+    /// to open from (see [`RowCurrency`]).
+    pub(in crate::app) fn selected_list_row(
+        &self,
+        now: Instant,
+    ) -> Option<(&PullRequestSummary, RowCurrency)> {
+        let row = self.list.selected_summary()?;
+        let page_current = match self.list.freshness()? {
+            Freshness::Live { requested_at } => {
+                now.saturating_duration_since(*requested_at) < LIST_POLL_INTERVAL
+                    && self.list.error().is_none()
+            }
+            Freshness::Saved { .. } => false,
+        };
+        // A review this session may know a newer head than the row, as
+        // after `r` fetched new commits, until a list load catches up.
+        let known = match self.open.as_ref() {
+            Some(open) if open.summary.number == row.number => {
+                Some((&open.summary, open.known_head()))
+            }
+            _ => self
+                .ended_review
+                .as_ref()
+                .filter(|ended| ended.summary.number == row.number)
+                .map(|ended| (&ended.summary, ended.head.as_str())),
+        };
+        let behind_review = known.is_some_and(|(summary, head)| {
+            head != row.head_oid && row.updated_at <= summary.updated_at
+        });
+        let currency = if page_current && !behind_review {
+            RowCurrency::Current
+        } else {
+            RowCurrency::Outdated
+        };
+        Some((row, currency))
+    }
+
     pub(in crate::app) fn list_mut(&mut self) -> &mut PullRequestListState {
         &mut self.list
     }
@@ -723,6 +788,11 @@ impl PullRequests {
 
     pub(in crate::app) fn finish_lookup(&mut self, id: u64) -> bool {
         self.lookup.complete(id)
+    }
+
+    #[cfg(test)]
+    pub(in crate::app) fn lookup_request_id(&self) -> u64 {
+        self.lookup.current_id()
     }
 
     pub(in crate::app) fn attach_fetch(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {
@@ -777,7 +847,10 @@ impl PullRequests {
                 open.rebuild_threads();
             }
             previous => {
-                replaced = previous.map(|open| open.summary.number);
+                if let Some(previous) = previous {
+                    self.ended_review = Some(EndedReview::of(previous));
+                }
+                replaced = self.open.as_ref().map(|open| open.summary.number);
                 self.modal = None;
                 let mut open = OpenPullRequest::new(summary.clone(), reviewed_head, origin);
                 open.diff_base_from(&summary);
@@ -902,6 +975,7 @@ impl PullRequests {
     /// the pull request whose review ended.
     pub(in crate::app) fn close(&mut self) -> Option<u64> {
         let closed = self.open.take()?;
+        self.ended_review = Some(EndedReview::of(&closed));
         self.detail.cancel();
         self.detail_number = None;
         self.early_detail = None;

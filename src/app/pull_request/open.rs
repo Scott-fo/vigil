@@ -35,6 +35,11 @@ impl App {
     /// they are fetched first, and until the fetch lands the current review
     /// stays up. Its saved detail, if any, shows until the live one loads.
     /// `origin` decides where Esc goes back to.
+    ///
+    /// `summary` must name the pull request's current head and base, as a
+    /// lookup, the current-branch chip, or a current list row does (see
+    /// [`RowCurrency`](super::list::RowCurrency)): its commits are trusted
+    /// when they are local. An outdated list row is looked up first instead.
     pub(in crate::app) fn open_pull_request(
         &mut self,
         summary: PullRequestSummary,

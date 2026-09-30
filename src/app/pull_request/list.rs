@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use nucleo_matcher::{
     Config as MatcherConfig, Matcher,
@@ -14,6 +17,27 @@ use super::{
     saved::Freshness,
     task::{OwnedTask, RequestSlot},
 };
+
+/// How often the list reloads while it is on screen; a live page older
+/// than this may be out of date.
+pub(super) const LIST_POLL_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Whether a list row names its pull request's current head and base
+/// closely enough to open from.
+///
+/// Opening trusts a summary's commits when they are local, so an outdated
+/// row would review the commits it names, not the pull request's current
+/// ones, and diff them against a base the head may have been rebased off.
+/// An outdated row is looked up first and opened from the live summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum RowCurrency {
+    /// From a list load that started within the last list refresh, and not
+    /// behind what this session's review of the pull request knows.
+    Current,
+    /// From a saved page, a load older than a list refresh or followed by a
+    /// failed reload, or behind the head this session's review knows.
+    Outdated,
+}
 
 /// The tabs of the pull request list, in display order.
 pub const PULL_REQUEST_LIST_FILTERS: [PullRequestListFilter; 3] = [

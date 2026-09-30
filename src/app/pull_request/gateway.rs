@@ -4,8 +4,8 @@
 //! app starts at most one at a time; [`ForgeGateway::Live`] runs it on
 //! GitHub in the background and reports a [`MutationOutcome`] through the
 //! event loop. Tests switch the gateway to recording, which keeps every
-//! mutation and follow-up reload in a log instead of spawning `gh`, and
-//! deliver results by hand. Nothing else in the app reaches the forge's
+//! mutation, follow-up reload, and lookup before opening in a log instead
+//! of spawning `gh`, and deliver results by hand. Nothing else in the app reaches the forge's
 //! write methods.
 
 use tokio::task;
@@ -133,6 +133,8 @@ pub(in crate::app) enum ForgeCall {
     Mutation(ForgeMutation),
     ReloadDetail,
     RefreshCurrentBranch,
+    /// A pull request looked up by number before opening.
+    LookUp(u64),
 }
 
 impl App {

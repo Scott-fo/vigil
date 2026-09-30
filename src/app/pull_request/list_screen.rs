@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
@@ -13,17 +13,17 @@ use crate::{
     ui::{self, PullRequestListTarget},
 };
 
+#[cfg(test)]
+use super::gateway::ForgeCall;
 use super::{
     super::{App, Screen, SnackbarVariant, input::is_plain_text_key},
     PullRequestEvent, PullRequestTimer,
-    list::{PULL_REQUEST_LIST_FILTERS, QueryInput},
+    gateway::ForgeGateway,
+    list::{LIST_POLL_INTERVAL, PULL_REQUEST_LIST_FILTERS, QueryInput, RowCurrency},
     saved::{Freshness, request_time},
     state::{ConnectReason, ForgeConnection, ReviewOrigin},
     task::spawn_ticker,
 };
-
-/// How often the list reloads while it is on screen.
-const LIST_POLL_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Why the list has no rows to show, or that it has them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,14 +215,23 @@ impl App {
     }
 
     /// Opens the selected row, or the pull request the query names by
-    /// number when no row matches.
+    /// number when no row matches. An outdated row (see [`RowCurrency`]) is
+    /// looked up first, so the review opens on the live head and base.
     pub(in crate::app) fn open_selected_pull_request(&mut self) {
-        let list = self.pull_requests.list();
-        if let Some(summary) = list.selected_summary().cloned() {
-            self.open_pull_request(summary, ReviewOrigin::PullRequestList);
+        if let Some((summary, currency)) = self.pull_requests.selected_list_row(Instant::now()) {
+            match currency {
+                RowCurrency::Current => {
+                    let summary = summary.clone();
+                    self.open_pull_request(summary, ReviewOrigin::PullRequestList);
+                }
+                RowCurrency::Outdated => {
+                    let number = summary.number;
+                    self.look_up_pull_request(number);
+                }
+            }
             return;
         }
-        if let Some(number) = list.query_number() {
+        if let Some(number) = self.pull_requests.list().query_number() {
             self.look_up_pull_request(number);
         }
     }
@@ -238,6 +247,14 @@ impl App {
         };
         let request_id = self.pull_requests.begin_lookup();
         self.status_message = Some(format!("looking up pull request #{number}…"));
+        match self.pull_requests.gateway_mut() {
+            ForgeGateway::Live => {}
+            #[cfg(test)]
+            ForgeGateway::Recording(log) => {
+                log.push(ForgeCall::LookUp(number));
+                return;
+            }
+        }
         let sender = self.events.sender();
         let handle = task::spawn(async move {
             let result = github.load_summary(number).await;
