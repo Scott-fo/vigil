@@ -29,7 +29,12 @@ async fn no_more<T>(_after: String) -> Result<Connection<T>, ForgeError> {
 
 /// Mirrors `GitHub::load_pull_request` with canned follow-up pages.
 async fn load_fixture(fixture: &str, thread_pages: &[&str]) -> PullRequest {
-    let (shell, first) = pull_request_data(fixture).split(1).unwrap();
+    load_data(pull_request_data(fixture), thread_pages).await
+}
+
+/// Completes one pull request's data with canned review thread pages.
+async fn load_data(data: PullRequestData, thread_pages: &[&str]) -> PullRequest {
+    let (shell, first) = data.split(1).unwrap();
     let pages = RefCell::new(thread_pages.iter());
     let threads = collect_pages("review threads", first.review_threads, |_after| {
         let page = pages.borrow_mut().next().copied();
@@ -342,6 +347,69 @@ fn open_summary_with_approval() {
         (summary.additions, summary.deletions, summary.changed_files),
         (44, 13, 5)
     );
+}
+
+/// A batched response holding each fixture's pull request under its alias,
+/// beside the shared viewer and merge settings.
+fn batch_response(fixtures: &[&str]) -> Value {
+    let mut batch: Value = serde_json::from_str(fixtures[0]).unwrap();
+    batch["data"]["repository"]
+        .as_object_mut()
+        .unwrap()
+        .remove("pullRequest");
+    for fixture in fixtures {
+        let mut single: Value = serde_json::from_str(fixture).unwrap();
+        let pull_request = single["data"]["repository"]["pullRequest"].take();
+        let alias = pull_request_alias(pull_request["number"].as_u64().unwrap());
+        batch["data"]["repository"][alias] = pull_request;
+    }
+    batch
+}
+
+#[tokio::test]
+async fn batched_details_split_per_alias_and_match_single_loads() {
+    let bytes = serde_json::to_vec(&batch_response(&[TOKIO_7696, VIGIL_16])).unwrap();
+    let data: PullRequestsData =
+        decode_value("batch", graphql_data("batch", &bytes).unwrap()).unwrap();
+
+    let each = data.into_each(&[7696, 16]).unwrap();
+
+    let numbers = each.iter().map(|(number, _)| *number).collect::<Vec<_>>();
+    assert_eq!(numbers, [7696, 16], "in the order asked for");
+    let mut each = each.into_iter();
+    let (_, tokio) = each.next().unwrap();
+    let (_, vigil) = each.next().unwrap();
+    // The tokio pull request overflows its first page of review threads;
+    // completing it follows the page like a single load does, so a batched
+    // detail is never saved truncated.
+    let (_, first) = pull_request_data(TOKIO_7696).split(7696).unwrap();
+    assert!(first.review_threads.page_info.has_next_page);
+    assert_eq!(
+        load_data(tokio, &[TOKIO_7696_THREADS_PAGE]).await,
+        load_fixture(TOKIO_7696, &[TOKIO_7696_THREADS_PAGE]).await
+    );
+    // A batch shares one repository's merge settings; these fixtures come
+    // from two repositories, so the second takes the first's.
+    let batched = load_data(vigil, &[]).await;
+    let mut alone = load_fixture(VIGIL_16, &[]).await;
+    alone.merge_settings = batched.merge_settings.clone();
+    assert_eq!(batched, alone);
+}
+
+#[test]
+fn a_batched_alias_that_is_null_or_absent_is_not_found() {
+    let mut response = batch_response(&[VIGIL_16]);
+    response["data"]["repository"]["pr16"] = Value::Null;
+    let data: PullRequestsData = decode_value("batch", response["data"].take()).unwrap();
+
+    let each = data.into_each(&[16, 17]).unwrap();
+
+    for (number, data) in each {
+        assert!(
+            matches!(data.split(number), Err(ForgeError::NotFound { .. })),
+            "#{number}"
+        );
+    }
 }
 
 #[test]

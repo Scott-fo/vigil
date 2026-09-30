@@ -14,7 +14,8 @@
 //!   [`GitHub::list_pull_requests`] return [`PullRequestSummary`] rows.
 //! - [`GitHub::load_pull_request`] returns a complete [`PullRequest`]:
 //!   reviews, conversation, checks, merge state, and every
-//!   [`ReviewThread`] with every comment.
+//!   [`ReviewThread`] with every comment. [`GitHub::load_pull_requests`]
+//!   loads several in one request, for prefetching.
 //! - [`GitHub::submit_review`], [`GitHub::reply_to_thread`],
 //!   [`GitHub::resolve_thread`], [`GitHub::merge_pull_request`], and friends
 //!   write back.
@@ -52,6 +53,9 @@
 //! Reads spend GitHub's GraphQL rate limit (5,000 points an hour); a full
 //! pull request load costs about one point, plus one request per extra page
 //! on pull requests with more than 50 threads or 100 comments or checks.
+//! [`GitHub::load_pull_requests`] asks for up to ten pull requests in one
+//! request, which GitHub prices at six points for ten (extra pages cost as
+//! they would alone).
 //! GitHub computes mergeability in the background, so a fresh load may
 //! report [`Mergeability::Unknown`] until a later one. Dropping a future
 //! kills its `gh` process; for writes that leaves it unknown whether the

@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use super::{
     error::ForgeError,
+    request::pull_request_alias,
     types::{
         AutoMerge, Check, CheckCounts, CheckRollup, CheckState, CommentState, ConversationComment,
         DiffPosition, DiffSide, MergeMethod, MergeSettings, MergeStateStatus, Mergeability,
@@ -389,7 +390,7 @@ impl From<WireDiffSide> for DiffSide {
 // ---------------------------------------------------------------------------
 // Shared objects
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct WireActor {
     login: String,
 }
@@ -542,13 +543,62 @@ pub(super) struct PullRequestData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireRepository {
+    #[serde(flatten)]
+    settings: WireMergeSettings,
+    pull_request: Option<WirePullRequest>,
+}
+
+/// `MergeSettingsFields`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireMergeSettings {
     merge_commit_allowed: bool,
     squash_merge_allowed: bool,
     rebase_merge_allowed: bool,
     auto_merge_allowed: bool,
     delete_branch_on_merge: bool,
     viewer_default_merge_method: WireMergeMethod,
-    pull_request: Option<WirePullRequest>,
+}
+
+/// `data` of the batched `PullRequests` query: the viewer, the merge
+/// settings, and one aliased pull request per number.
+#[derive(Debug, Deserialize)]
+pub(super) struct PullRequestsData {
+    viewer: WireActor,
+    repository: serde_json::Map<String, Value>,
+}
+
+impl PullRequestsData {
+    /// One [`PullRequestData`] per number in `numbers`, as if each had been
+    /// loaded alone, read from the field [`pull_request_alias`] names. A
+    /// missing or null alias splits into [`ForgeError::NotFound`].
+    pub fn into_each(self, numbers: &[u64]) -> Result<Vec<(u64, PullRequestData)>, ForgeError> {
+        let mut repository = self.repository;
+        let pull_requests = numbers
+            .iter()
+            .map(|number| (*number, repository.remove(&pull_request_alias(*number))))
+            .collect::<Vec<_>>();
+        let settings: WireMergeSettings = decode_value("pull requests", Value::Object(repository))?;
+        pull_requests
+            .into_iter()
+            .map(|(number, pull_request)| {
+                let pull_request = match pull_request {
+                    Some(value) if !value.is_null() => Some(decode_value("pull requests", value)?),
+                    _ => None,
+                };
+                Ok((
+                    number,
+                    PullRequestData {
+                        viewer: self.viewer.clone(),
+                        repository: WireRepository {
+                            settings: settings.clone(),
+                            pull_request,
+                        },
+                    },
+                ))
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -947,20 +997,20 @@ impl PullRequestData {
                 message: format!("pull request #{number}"),
             })?;
         let mut allowed_methods = Vec::new();
-        if repository.merge_commit_allowed {
+        if repository.settings.merge_commit_allowed {
             allowed_methods.push(MergeMethod::Merge);
         }
-        if repository.squash_merge_allowed {
+        if repository.settings.squash_merge_allowed {
             allowed_methods.push(MergeMethod::Squash);
         }
-        if repository.rebase_merge_allowed {
+        if repository.settings.rebase_merge_allowed {
             allowed_methods.push(MergeMethod::Rebase);
         }
         let merge_settings = MergeSettings {
             allowed_methods,
-            viewer_default_method: repository.viewer_default_merge_method.into(),
-            auto_merge_allowed: repository.auto_merge_allowed,
-            delete_branch_on_merge: repository.delete_branch_on_merge,
+            viewer_default_method: repository.settings.viewer_default_merge_method.into(),
+            auto_merge_allowed: repository.settings.auto_merge_allowed,
+            delete_branch_on_merge: repository.settings.delete_branch_on_merge,
         };
         let first = FirstPages {
             review_requests: pull_request.review_requests,

@@ -1,0 +1,9 @@
+
+fragment MergeSettingsFields on Repository {
+  mergeCommitAllowed
+  squashMergeAllowed
+  rebaseMergeAllowed
+  autoMergeAllowed
+  deleteBranchOnMerge
+  viewerDefaultMergeMethod
+}

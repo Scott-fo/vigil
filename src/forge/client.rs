@@ -10,9 +10,10 @@ use super::{
     gh::run_gh,
     repository::resolve_repository_locally,
     request::{
-        GraphqlRequest, LIST_LIMIT, PullRequestMutation, add_comment_request, api_args, documents,
-        graphql_args, head_ref_path, merge_request, pull_request_variables, reply_request,
-        resolve_request, review_body, review_path, search_query,
+        GraphqlRequest, LIST_LIMIT, PULL_REQUEST_BATCH, PullRequestMutation, add_comment_request,
+        api_args, documents, graphql_args, head_ref_path, merge_request, pull_request_variables,
+        pull_requests_request, reply_request, resolve_request, review_body, review_path,
+        search_query,
     },
     types::{
         ConversationComment, HeadBranchAction, HeadBranchOutcome, MergeOptions, MergeOutcome,
@@ -21,7 +22,7 @@ use super::{
     },
     wire::{
         CollectedPages, Connection, FirstPages, MergeTarget, PageInfo, PartialThread,
-        PullRequestData, RepositoryView, RestReview, SearchPage, WireCheck,
+        PullRequestData, PullRequestsData, RepositoryView, RestReview, SearchPage, WireCheck,
         WireConversationComment, WireReview, WireReviewRequest, WireSummary, WireThread,
         WireThreadComment, collect_pages, decode, decode_value, graphql_data, take_at,
     },
@@ -233,6 +234,43 @@ impl GitHub {
             .collect_pull_request_pages(&variables, &shell.head_oid, first)
             .await?;
         Ok(shell.finish(pages))
+    }
+
+    /// Everything about several pull requests, as [`Self::load_pull_request`]
+    /// returns it for each, in the order of `numbers` (repeats dropped).
+    ///
+    /// Up to ten pull requests share one GraphQL request, so a batch costs
+    /// one round trip instead of one per pull request. A pull request whose
+    /// collections overflow their first page costs its follow-up requests
+    /// as it would alone; every result is complete, never truncated. The
+    /// batch fails as a whole, as when one of the numbers does not exist.
+    pub async fn load_pull_requests(
+        &self,
+        numbers: &[u64],
+    ) -> Result<Vec<PullRequest>, ForgeError> {
+        let mut unique = Vec::with_capacity(numbers.len());
+        for number in numbers {
+            if !unique.contains(number) {
+                unique.push(*number);
+            }
+        }
+        let mut pull_requests = Vec::with_capacity(unique.len());
+        for batch in unique.chunks(PULL_REQUEST_BATCH) {
+            let request = pull_requests_request(&self.repository, batch);
+            let data: PullRequestsData = decode_value(
+                "pull requests",
+                self.query("pull requests", &request).await?,
+            )?;
+            for (number, data) in data.into_each(batch)? {
+                let (shell, first) = data.split(number)?;
+                let variables = pull_request_variables(&self.repository, number);
+                let pages = self
+                    .collect_pull_request_pages(&variables, &shell.head_oid, first)
+                    .await?;
+                pull_requests.push(shell.finish(pages));
+            }
+        }
+        Ok(pull_requests)
     }
 
     async fn collect_pull_request_pages(
@@ -724,6 +762,23 @@ mod tests {
 
         #[tokio::test]
         #[ignore = "talks to github.com through gh"]
+        async fn a_batch_loads_what_single_loads_do() {
+            let github = GitHub::connect(repo_root()).await.unwrap();
+            let batch = github.load_pull_requests(&[16, 15, 16]).await.unwrap();
+            let numbers = batch
+                .iter()
+                .map(|pull_request| pull_request.summary.number)
+                .collect::<Vec<_>>();
+            assert_eq!(numbers, [16, 15]);
+            assert_eq!(batch[0], github.load_pull_request(16).await.unwrap());
+            assert!(matches!(
+                github.load_pull_requests(&[16, 99_999]).await,
+                Err(ForgeError::NotFound { .. })
+            ));
+        }
+
+        #[tokio::test]
+        #[ignore = "talks to github.com through gh"]
         async fn follows_review_thread_pages() {
             // tokio-rs/tokio#2273 has 74 review threads, more than one page.
             let github = GitHub::new(
@@ -757,7 +812,17 @@ mod tests {
                 owner: "Scott-fo".into(),
                 name: "vigil".into(),
             };
-            for (name, document) in documents::QUERIES.iter().chain(documents::MUTATIONS) {
+            let built = documents::built_queries();
+            let all = documents::QUERIES
+                .iter()
+                .chain(documents::MUTATIONS)
+                .map(|(name, document)| (*name, *document))
+                .chain(
+                    built
+                        .iter()
+                        .map(|(name, document)| (*name, document.as_str())),
+                );
+            for (name, document) in all {
                 let body = serde_json::to_vec(&json!({
                     "query": format!("{document}\nquery VigilSchemaProbe {{ viewer {{ login }} }}\n"),
                     "operationName": "VigilSchemaProbe",
