@@ -62,7 +62,12 @@ fn parse_remotes(config: &str, remote_verbose: &str) -> Vec<Remote> {
         .lines()
         .filter_map(|line| {
             let (name, rest) = line.split_once('\t')?;
-            let url = rest.strip_suffix(" (fetch)")?;
+            // Partial clones append their filter: `<url> (fetch) [blob:none]`.
+            let (url, filter) = rest.rsplit_once(" (fetch)")?;
+            let filter = filter.trim();
+            if !(filter.is_empty() || filter.starts_with('[') && filter.ends_with(']')) {
+                return None;
+            }
             Some((name.to_string(), url.trim().to_string()))
         })
         .collect::<HashMap<_, _>>();
@@ -221,5 +226,16 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn partial_clones_keep_their_rewritten_fetch_url() {
+        let remotes = parse_remotes(
+            "remote.origin.url https://github.com/Scott-fo/vigil.git\n",
+            "origin\thttps://mirror.example.com/vigil.git (fetch) [blob:none]\n\
+             origin\thttps://github.com/Scott-fo/vigil.git (push)\n",
+        );
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].fetch_url, "https://mirror.example.com/vigil.git");
     }
 }
