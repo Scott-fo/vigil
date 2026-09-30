@@ -175,7 +175,13 @@ pub struct ForgeCache {
 impl ForgeCache {
     /// Opens the cache at the default per-user location.
     pub fn open_default() -> color_eyre::Result<Self> {
-        Self::open(crate::user_data::data_dir().join("forge-cache.sqlite3"))
+        Self::open(Self::default_path())
+    }
+
+    /// The default per-user location: `forge-cache.sqlite3` in vigil's data
+    /// directory. Resolving it touches no files.
+    pub fn default_path() -> PathBuf {
+        crate::user_data::data_dir().join("forge-cache.sqlite3")
     }
 
     /// Opens the cache at `path`, creating it as needed and deleting rows

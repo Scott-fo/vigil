@@ -19,8 +19,9 @@
 //! `PullRequests::disabled`, and never touch the user's cache file.
 
 use std::{
-    sync::{Arc, OnceLock},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    path::PathBuf,
+    sync::{Arc, Mutex, PoisonError},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use tokio::{sync::mpsc, task};
@@ -72,15 +73,65 @@ pub(in crate::app) fn request_time(requested_at: Instant) -> Timestamp {
     )
 }
 
+/// After a failed open, how long reads and saves miss before the next try.
+const REOPEN_INTERVAL: Duration = Duration::from_secs(60);
+
+/// A cache file opened on first use, off the UI thread. A failed open, such
+/// as a busy timeout while another vigil migrates the file, is retried at
+/// most once per [`REOPEN_INTERVAL`] rather than giving up for the session.
+#[derive(Debug)]
+struct LazyCache {
+    path: PathBuf,
+    state: Mutex<LazyState>,
+}
+
+#[derive(Debug)]
+enum LazyState {
+    Unopened,
+    Open(ForgeCache),
+    Failed { at: Instant },
+}
+
+impl LazyCache {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            state: Mutex::new(LazyState::Unopened),
+        }
+    }
+
+    /// The cache, opening it unless an open failed within the interval
+    /// before `now`. Blocking.
+    fn resolve(&self, now: Instant) -> Option<ForgeCache> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        match &*state {
+            LazyState::Open(cache) => return Some(cache.clone()),
+            LazyState::Failed { at } if now.saturating_duration_since(*at) < REOPEN_INTERVAL => {
+                return None;
+            }
+            LazyState::Unopened | LazyState::Failed { .. } => {}
+        }
+        match ForgeCache::open(self.path.clone()) {
+            Ok(cache) => {
+                *state = LazyState::Open(cache.clone());
+                Some(cache)
+            }
+            Err(_) => {
+                *state = LazyState::Failed { at: now };
+                None
+            }
+        }
+    }
+}
+
 /// Which cache snapshots come from.
 #[derive(Debug, Clone)]
 enum CacheSource {
     /// No cache: reads miss and saves are dropped.
     Off,
-    /// The per-user cache file, opened on first use off the UI thread.
-    /// `None` inside once opening failed.
+    /// The per-user cache file.
     #[cfg_attr(test, allow(dead_code))]
-    UserCache(Arc<OnceLock<Option<ForgeCache>>>),
+    UserCache(Arc<LazyCache>),
     /// A cache the caller opened, such as a temporary file in tests.
     #[cfg(test)]
     Given(ForgeCache),
@@ -92,7 +143,7 @@ impl CacheSource {
         match self {
             Self::Off => None,
             #[cfg(not(test))]
-            Self::UserCache(cell) => cell.get_or_init(|| ForgeCache::open_default().ok()).clone(),
+            Self::UserCache(cache) => cache.resolve(Instant::now()),
             // Tests must never touch the user's cache file, even by accident.
             #[cfg(test)]
             Self::UserCache(_) => {
@@ -146,7 +197,9 @@ pub(in crate::app) struct SavedSnapshots {
 impl SavedSnapshots {
     /// The per-user cache, opened lazily.
     pub(in crate::app) fn user_cache() -> Self {
-        Self::from_source(CacheSource::UserCache(Arc::new(OnceLock::new())))
+        Self::from_source(CacheSource::UserCache(Arc::new(LazyCache::new(
+            ForgeCache::default_path(),
+        ))))
     }
 
     /// No cache at all.
@@ -346,5 +399,41 @@ impl App {
     #[cfg(test)]
     pub(in crate::app) fn use_forge_cache_for_test(&mut self, cache: ForgeCache) {
         *self.pull_requests.saved_mut() = SavedSnapshots::given(cache);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_open_is_retried_after_the_interval_not_before() {
+        let dir = std::env::temp_dir().join(format!(
+            "vigil-lazy-cache-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&dir);
+        // A file where the cache's directory should be makes opening fail.
+        std::fs::write(&dir, "not a directory").unwrap();
+        let cache = LazyCache::new(dir.join("forge-cache.sqlite3"));
+        let start = Instant::now();
+
+        assert!(cache.resolve(start).is_none());
+        std::fs::remove_file(&dir).unwrap();
+        assert!(
+            cache.resolve(start + Duration::from_secs(10)).is_none(),
+            "no retry within the interval"
+        );
+        assert!(
+            cache.resolve(start + REOPEN_INTERVAL).is_some(),
+            "retried once the interval passed"
+        );
+        assert!(
+            cache.resolve(start + REOPEN_INTERVAL).is_some(),
+            "stays open"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
