@@ -1472,6 +1472,8 @@ async fn pull_request_ref_cleanup_touches_only_vigil_pull_request_refs() -> Resu
         "refs/vigil/pr/1/base",
         "refs/vigil/pr/12/head",
         "refs/vigil/pr/2/head",
+        "refs/vigil/base/main",
+        "refs/vigil/base/release/1.0",
         "refs/vigil/other/keep",
         "refs/heads/feature",
         "refs/remotes/origin/pr/1",
@@ -1496,11 +1498,19 @@ async fn pull_request_ref_cleanup_touches_only_vigil_pull_request_refs() -> Resu
         after_one.contains(&"refs/vigil/pr/12/head".to_string()),
         "pull request 12 is not pull request 1"
     );
+    assert!(
+        after_one.contains(&"refs/vigil/base/main".to_string()),
+        "shared base branches outlive any one review"
+    );
     assert_eq!(git::delete_pull_request_refs(&repo.root, 1).await?, 0);
 
-    assert_eq!(git::prune_pull_request_refs(&repo.root).await?, 2);
+    assert_eq!(git::prune_pull_request_refs(&repo.root).await?, 4);
     let pruned = refs(&repo);
-    assert!(!pruned.iter().any(|name| name.starts_with("refs/vigil/pr/")));
+    assert!(
+        !pruned
+            .iter()
+            .any(|name| name.starts_with("refs/vigil/pr/") || name.starts_with("refs/vigil/base/"))
+    );
     for kept in [
         "refs/vigil/other/keep",
         "refs/heads/feature",
@@ -1508,6 +1518,296 @@ async fn pull_request_ref_cleanup_touches_only_vigil_pull_request_refs() -> Resu
     ] {
         assert!(pruned.contains(&kept.to_string()), "{kept} must survive");
     }
+    Ok(())
+}
+
+/// An author with `main` pushed to a bare origin and one commit per pull
+/// request number pushed as GitHub's `refs/pull/<n>/head`. Returns the
+/// author, the origin, the base commit, and each pull request's head.
+async fn remote_with_pull_requests(
+    numbers: &[u64],
+) -> Result<(TestRepo, TestRepo, String, Vec<String>)> {
+    let author = TestRepo::init().await?;
+    author.write("app.txt", "base\n");
+    author.commit_all("Base", "2024-01-01T00:00:00Z");
+    author.rename_branch("main");
+    let (origin, _teammate) = author.with_origin();
+    author.git(&["push", "--quiet", "origin", "main"]);
+    let base = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    let mut heads = Vec::new();
+    for number in numbers {
+        author.checkout("main");
+        author.checkout_new_branch(&format!("contribution-{number}"));
+        author.write(&format!("pr-{number}.txt"), &format!("{number}\n"));
+        author.commit_all(&format!("Contribution {number}"), "2024-01-02T00:00:00Z");
+        heads.push(author.git(&["rev-parse", "HEAD"]).trim().to_string());
+        author.git(&[
+            "push",
+            "--quiet",
+            "origin",
+            &format!("HEAD:refs/pull/{number}/head"),
+        ]);
+    }
+    author.checkout("main");
+    Ok((author, origin, base, heads))
+}
+
+fn vigil_refs(repo: &TestRepo) -> Vec<String> {
+    repo.git(&["for-each-ref", "--format=%(refname)", "refs/vigil"])
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[tokio::test]
+async fn pull_request_prefetch_fetches_a_batch_in_one_fetch_and_opens_locally() -> Result<()> {
+    let (_author, origin, base, heads) = remote_with_pull_requests(&[1, 2, 3]).await?;
+    let reviewer = TestRepo::init().await?;
+    reviewer.git(&["remote", "add", "origin", origin.root.to_str().unwrap()]);
+    let requests = [1, 2, 3]
+        .iter()
+        .zip(&heads)
+        .map(|(number, head)| reported_pull_request(*number, head, &base))
+        .collect::<Vec<_>>();
+    for request in &requests {
+        assert_eq!(
+            git::resolve_local_pull_request(&reviewer.root, request).await,
+            None
+        );
+    }
+
+    let report = git::prefetch_pull_requests(&reviewer.root, &requests)
+        .await
+        .expect("prefetch runs");
+
+    assert_eq!(report.fetches, 1, "one fetch for the whole batch");
+    assert_eq!(
+        report.outcomes,
+        vec![
+            (1, git::PrefetchOutcome::Fetched),
+            (2, git::PrefetchOutcome::Fetched),
+            (3, git::PrefetchOutcome::Fetched),
+        ]
+    );
+    // Every head gets its ref; the shared base branch is fetched once, into
+    // a ref of its own rather than any one pull request's.
+    assert_eq!(
+        vigil_refs(&reviewer),
+        vec![
+            "refs/vigil/base/main",
+            "refs/vigil/pr/1/head",
+            "refs/vigil/pr/2/head",
+            "refs/vigil/pr/3/head",
+        ]
+    );
+    assert_eq!(
+        reviewer
+            .git(&[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes",
+            ])
+            .trim(),
+        "",
+        "no branch or remote-tracking ref is created or moved"
+    );
+
+    // Opening is now local: the remote is gone and every request resolves.
+    reviewer.git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "/nonexistent/vigil-origin.git",
+    ]);
+    for (request, head) in requests.iter().zip(&heads) {
+        let local = git::resolve_local_pull_request(&reviewer.root, request)
+            .await
+            .expect("prefetched commits resolve locally");
+        assert_eq!(&local.head_oid, head);
+        assert_eq!(local.base_oid, base);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn pull_request_prefetch_skips_local_rows_and_survives_review_cleanup() -> Result<()> {
+    let (_author, origin, base, heads) = remote_with_pull_requests(&[1, 2]).await?;
+    let reviewer = TestRepo::init().await?;
+    reviewer.git(&["remote", "add", "origin", origin.root.to_str().unwrap()]);
+    let requests = vec![
+        reported_pull_request(1, &heads[0], &base),
+        reported_pull_request(2, &heads[1], &base),
+    ];
+    git::prefetch_pull_requests(&reviewer.root, &requests[..1])
+        .await
+        .expect("first prefetch runs");
+
+    // Only the missing row is fetched: no ref of the local one is rewritten.
+    let first_head_ref = reviewer.git(&["rev-parse", "refs/vigil/pr/1/head"]);
+    let report = git::prefetch_pull_requests(&reviewer.root, &requests)
+        .await
+        .expect("second prefetch runs");
+    assert_eq!(report.fetches, 1);
+    assert_eq!(report.outcome(1), Some(git::PrefetchOutcome::AlreadyLocal));
+    assert_eq!(report.outcome(2), Some(git::PrefetchOutcome::Fetched));
+    assert_eq!(
+        reviewer.git(&["rev-parse", "refs/vigil/pr/1/head"]),
+        first_head_ref
+    );
+    assert_eq!(
+        vigil_refs(&reviewer),
+        vec![
+            "refs/vigil/base/main",
+            "refs/vigil/pr/1/head",
+            "refs/vigil/pr/2/head"
+        ],
+        "the base branch was already fetched for #1"
+    );
+
+    // Once everything is local nothing touches the network: with the remote
+    // gone the batch still succeeds, without a fetch.
+    reviewer.git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "/nonexistent/vigil-origin.git",
+    ]);
+    let report = git::prefetch_pull_requests(&reviewer.root, &requests)
+        .await
+        .expect("an all-local batch needs no remote access");
+    assert_eq!(report.fetches, 0);
+    assert_eq!(
+        report.outcomes,
+        vec![
+            (1, git::PrefetchOutcome::AlreadyLocal),
+            (2, git::PrefetchOutcome::AlreadyLocal),
+        ]
+    );
+
+    // Ending a review deletes its refs, and a new session prunes them all,
+    // but the commits stay: reopening resolves locally and writes the head
+    // ref again.
+    assert_eq!(git::delete_pull_request_refs(&reviewer.root, 1).await?, 1);
+    assert!(
+        vigil_refs(&reviewer).contains(&git::shared_base_ref("main")),
+        "the shared base branch outlives the review"
+    );
+    let reopened = git::resolve_local_pull_request(&reviewer.root, &requests[0])
+        .await
+        .expect("reopening after the review ended is still local");
+    assert_eq!(reopened.head_oid, heads[0]);
+    assert_eq!(
+        reviewer.git(&["rev-parse", "refs/vigil/pr/1/head"]).trim(),
+        heads[0]
+    );
+    git::prune_pull_request_refs(&reviewer.root).await?;
+    assert!(
+        vigil_refs(&reviewer).is_empty(),
+        "the startup prune clears all"
+    );
+    assert!(
+        git::resolve_local_pull_request(&reviewer.root, &requests[1])
+            .await
+            .is_some()
+    );
+    Ok(())
+}
+
+/// An ssh remote that refuses the key: a prefetch reports it as an access
+/// failure, which the app stops retrying, not as an ordinary fetch failure.
+/// The user's own `core.sshCommand` stands in for ssh, and is used as is.
+#[tokio::test]
+async fn pull_request_prefetch_reports_refused_ssh_access() -> Result<()> {
+    let reviewer = TestRepo::init().await?;
+    reviewer.git(&[
+        "remote",
+        "add",
+        "origin",
+        "ssh://git@example.invalid/acme/widgets.git",
+    ]);
+    reviewer.git(&[
+        "config",
+        "core.sshCommand",
+        "echo 'git@example.invalid: Permission denied (publickey).' >&2; exit 255; :",
+    ]);
+    let request = reported_pull_request(1, MISSING_OID, MISSING_OID);
+
+    let prefetched =
+        git::prefetch_pull_requests(&reviewer.root, std::slice::from_ref(&request)).await;
+    assert!(
+        matches!(&prefetched, Err(git::PullRequestFetchError::Access { remote, .. }) if remote == "origin"),
+        "{prefetched:?}"
+    );
+    let fetched = git::fetch_pull_request(&reviewer.root, &request).await;
+    assert!(
+        matches!(fetched, Err(git::PullRequestFetchError::Access { .. })),
+        "{fetched:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn pull_request_prefetch_fetches_a_missing_base_from_its_branch() -> Result<()> {
+    let (author, origin, base, heads) = remote_with_pull_requests(&[1]).await?;
+    let reviewer = TestRepo::init().await?;
+    reviewer.git(&["remote", "add", "origin", origin.root.to_str().unwrap()]);
+    git::prefetch_pull_requests(
+        &reviewer.root,
+        &[reported_pull_request(1, &heads[0], &base)],
+    )
+    .await
+    .expect("prefetch runs");
+    git::delete_pull_request_refs(&reviewer.root, 1).await?;
+
+    // The base branch moves on; GitHub now diffs against its new tip, which
+    // the reviewer lacks while the head is still local.
+    author.write("app.txt", "base\nmain moved\n");
+    author.commit_all("Main moves", "2024-01-03T00:00:00Z");
+    author.git(&["push", "--quiet", "origin", "main"]);
+    let moved_base = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    let request = reported_pull_request(1, &heads[0], &moved_base);
+    assert_eq!(
+        git::resolve_local_pull_request(&reviewer.root, &request).await,
+        None
+    );
+
+    let report = git::prefetch_pull_requests(&reviewer.root, std::slice::from_ref(&request))
+        .await
+        .expect("prefetch runs");
+    assert_eq!(report.fetches, 1);
+    assert_eq!(report.outcome(1), Some(git::PrefetchOutcome::Fetched));
+    assert_eq!(
+        vigil_refs(&reviewer),
+        vec!["refs/vigil/base/main"],
+        "only the base branch is fetched, into its shared ref"
+    );
+    assert_eq!(
+        reviewer
+            .git(&["rev-parse", &git::shared_base_ref("main")])
+            .trim(),
+        moved_base
+    );
+    assert!(
+        git::resolve_local_pull_request(&reviewer.root, &request)
+            .await
+            .is_some()
+    );
+
+    // A head pushed after GitHub reported it is fetched but still not the
+    // reported one, so opening will fetch as usual.
+    let behind = reported_pull_request(1, MISSING_OID, &moved_base);
+    let report = git::prefetch_pull_requests(&reviewer.root, &[behind])
+        .await
+        .expect("prefetch runs");
+    assert_eq!(report.outcome(1), Some(git::PrefetchOutcome::Incomplete));
+
+    // A pull request the remote does not have fails the batch's fetch.
+    let missing = reported_pull_request(9, MISSING_OID, &moved_base);
+    assert!(matches!(
+        git::prefetch_pull_requests(&reviewer.root, &[missing]).await,
+        Err(git::PullRequestFetchError::Fetch { .. })
+    ));
     Ok(())
 }
 

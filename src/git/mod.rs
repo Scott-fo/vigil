@@ -89,8 +89,9 @@ pub use highlight::{HighlightRegistry, clear_exact_highlight_cache, prewarm_high
 pub(crate) use highlight::{SyntaxToken, highlight_markdown_line};
 pub use merge::prepare_branch_merge;
 pub use pull_request::{
-    FetchedPullRequest, PullRequestFetch, PullRequestFetchError, delete_pull_request_refs,
-    fetch_pull_request, prune_pull_request_refs, pull_request_head_ref, resolve_local_pull_request,
+    FetchedPullRequest, PREFETCH_FETCH_TIMEOUT, PrefetchOutcome, PrefetchReport, PullRequestFetch,
+    PullRequestFetchError, delete_pull_request_refs, fetch_pull_request, prefetch_pull_requests,
+    prune_pull_request_refs, pull_request_head_ref, resolve_local_pull_request, shared_base_ref,
 };
 pub use refs::{list_comparable_refs, load_branch_compare_refs, load_files_with_branch_diff};
 pub(crate) use remote::{Remote, list_remotes, parse_remote_url};
