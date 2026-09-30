@@ -194,6 +194,18 @@ impl App {
         list.finish_load(id, filter, Ok(page));
     }
 
+    /// Like [`Self::show_pull_request_list_for_test`], showing `saved` from
+    /// the forge cache while the live load still runs.
+    pub(crate) fn show_saved_pull_request_list_for_test(
+        &mut self,
+        saved: Snapshot<PullRequestList>,
+    ) {
+        self.show_empty_pull_request_list_for_test();
+        let list = self.pull_requests.list_mut();
+        let (_, filter) = list.begin_load();
+        list.show_saved(filter, saved);
+    }
+
     fn show_empty_pull_request_list_for_test(&mut self) {
         self.pull_requests
             .connect_for_test(crate::forge::GitHub::new(

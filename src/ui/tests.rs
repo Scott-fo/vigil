@@ -435,6 +435,49 @@ mod pull_requests {
         }
     }
 
+    /// Saved data says how old it is while the live load runs; live data
+    /// says nothing.
+    #[test]
+    fn saved_list_pages_and_details_show_their_age_while_refreshing() {
+        use crate::forge::{Snapshot, Timestamp};
+
+        let saved_at = Timestamp::new("2026-09-01T00:00:00Z");
+        let mut app = build_test_app();
+        app.show_saved_pull_request_list_for_test(Snapshot::new(
+            fixtures::pull_request_list(&[5, 17], 2),
+            saved_at.clone(),
+        ));
+        let text = buffer_text(&render_to_buffer(&mut app, 140, 20));
+        print(&text);
+        assert!(text.contains("Pull request number 17"));
+        let footer = text.lines().last().unwrap();
+        assert!(footer.contains(" Saved "), "{footer}");
+        assert!(footer.contains(" ago · refreshing…"), "{footer}");
+
+        let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-ui-tests"));
+        app.open_pull_request_with_saved_detail_for_test(
+            fixtures::summary(17),
+            Snapshot::new(fixtures::pull_request(17, Vec::new()), saved_at),
+            vec![fixtures::file("src/app.rs")],
+        );
+        let text = buffer_text(&render_to_buffer(&mut app, 140, 30));
+        print(&text);
+        let header = text
+            .lines()
+            .find(|line| line.contains("Overview  #17"))
+            .expect("overview header");
+        assert!(header.contains("#17  · saved "), "{header}");
+        assert!(header.contains(" ago · refreshing…"), "{header}");
+        assert!(text.contains("REVIEWS"), "the saved detail is drawn");
+
+        let text = buffer_text(&render_to_buffer(
+            &mut pull_request_app(Vec::new()),
+            140,
+            30,
+        ));
+        assert!(!text.contains("saved"), "live data carries no age");
+    }
+
     #[test]
     fn pull_request_list_renders_tabs_rows_and_truncation_where_clicks_land() {
         use crate::{forge::PullRequestListFilter, ui::PullRequestListTarget};
