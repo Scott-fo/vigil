@@ -190,7 +190,7 @@ impl App {
     pub(crate) fn show_pull_request_list_for_test(&mut self, page: PullRequestList) {
         self.show_empty_pull_request_list_for_test();
         let list = self.pull_requests.list_mut();
-        let (id, filter) = list.begin_load();
+        let (id, filter) = list.begin_load(std::time::Instant::now());
         list.finish_load(id, filter, Ok(page));
     }
 
@@ -202,7 +202,7 @@ impl App {
     ) {
         self.show_empty_pull_request_list_for_test();
         let list = self.pull_requests.list_mut();
-        let (_, filter) = list.begin_load();
+        let (_, filter) = list.begin_load(std::time::Instant::now());
         list.show_saved(filter, saved);
     }
 

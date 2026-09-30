@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
@@ -8,7 +8,7 @@ use crate::{
     event::Event,
     forge::{
         ForgeError, PullRequestList, PullRequestListFilter, PullRequestSummary, RepositoryRef,
-        Timestamp,
+        Snapshot, Timestamp,
     },
     ui::{self, PullRequestListTarget},
 };
@@ -17,6 +17,7 @@ use super::{
     super::{App, Screen, SnackbarVariant, input::is_plain_text_key},
     PullRequestEvent, PullRequestTimer,
     list::{PULL_REQUEST_LIST_FILTERS, QueryInput},
+    saved::{Freshness, request_time},
     state::{ConnectReason, ForgeConnection, ReviewOrigin},
     task::spawn_ticker,
 };
@@ -150,7 +151,7 @@ impl App {
         let Some(github) = self.pull_requests.github().cloned() else {
             return;
         };
-        let (request_id, filter) = self.pull_requests.list_mut().begin_load();
+        let (request_id, filter) = self.pull_requests.list_mut().begin_load(Instant::now());
         let sender = self.events.sender();
         let handle = task::spawn(async move {
             let result = github.list_pull_requests(filter).await;
@@ -180,15 +181,15 @@ impl App {
         result: Result<PullRequestList, ForgeError>,
     ) -> bool {
         let live = result.as_ref().ok().cloned();
-        if !self
-            .pull_requests
-            .list_mut()
-            .finish_load(request_id, filter, result)
-        {
+        let list = self.pull_requests.list_mut();
+        if !list.finish_load(request_id, filter, result) {
             return false;
         }
-        if let Some(list) = live {
-            self.save_pull_request_list(filter, list);
+        if let (Some(page), Some(Freshness::Live { requested_at })) =
+            (live, list.page_freshness(filter))
+        {
+            let snapshot = Snapshot::new(page, request_time(*requested_at));
+            self.save_pull_request_list(filter, snapshot);
         }
         self.screen == Screen::PullRequestList
     }

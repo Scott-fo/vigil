@@ -51,6 +51,15 @@ impl Timestamp {
         &self.0
     }
 
+    /// The current time, as the start of a request whose answer should be
+    /// dated.
+    pub fn now() -> Self {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs() as i64);
+        Self::from_unix_seconds(seconds)
+    }
+
     /// The UTC timestamp `seconds` after the Unix epoch, in GitHub's format.
     pub fn from_unix_seconds(seconds: i64) -> Self {
         let days = seconds.div_euclid(86_400);

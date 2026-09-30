@@ -136,15 +136,21 @@ pub(in crate::app) enum PollOutcome {
     Updated,
 }
 
+/// The detail a review shows, and whether it came from GitHub in this
+/// session or from the cache.
+#[derive(Debug)]
+struct ShownDetail {
+    value: PullRequest,
+    freshness: Freshness,
+}
+
 /// The pull request under review.
 #[derive(Debug)]
 pub(in crate::app) struct OpenPullRequest {
     summary: PullRequestSummary,
     /// The head commit the review shows.
     reviewed_head: String,
-    detail: Option<PullRequest>,
-    /// Whether `detail` came from GitHub in this session or from the cache.
-    detail_freshness: Freshness,
+    detail: Option<ShownDetail>,
     detail_error: Option<ForgeError>,
     threads: ReviewThreads,
     page: PullRequestPage,
@@ -164,7 +170,6 @@ impl OpenPullRequest {
             summary,
             reviewed_head,
             detail: None,
-            detail_freshness: Freshness::Live,
             detail_error: None,
             threads: ReviewThreads::default(),
             page: PullRequestPage::Overview,
@@ -209,7 +214,7 @@ impl OpenPullRequest {
         let review_threads = self
             .detail
             .as_ref()
-            .map_or(&[][..], |detail| detail.review_threads.as_slice());
+            .map_or(&[][..], |shown| shown.value.review_threads.as_slice());
         let head = self.reviewed_head.as_str();
         self.threads = ReviewThreads::with_drafts(
             review_threads,
@@ -227,20 +232,23 @@ impl OpenPullRequest {
     /// The detail shown, live or saved. Fine for display; decisions that
     /// write to GitHub need [`Self::live_detail`].
     pub(in crate::app) fn detail(&self) -> Option<&PullRequest> {
-        self.detail.as_ref()
+        self.detail.as_ref().map(|shown| &shown.value)
     }
 
     /// The detail, once GitHub has confirmed it in this session.
     pub(in crate::app) fn live_detail(&self) -> Option<&PullRequest> {
         self.detail
             .as_ref()
-            .filter(|_| self.detail_freshness.is_live())
+            .filter(|shown| shown.freshness.is_live())
+            .map(|shown| &shown.value)
     }
 
     /// When GitHub reported the detail shown, if it is a saved snapshot no
     /// load has confirmed yet.
     pub(in crate::app) fn detail_saved_at(&self) -> Option<&Timestamp> {
-        self.detail.as_ref().and(self.detail_freshness.saved_at())
+        self.detail
+            .as_ref()
+            .and_then(|shown| shown.freshness.saved_at())
     }
 
     pub(in crate::app) fn detail_error(&self) -> Option<&ForgeError> {
@@ -269,8 +277,9 @@ impl OpenPullRequest {
 
     /// Shows a live detail. A head other than the reviewed one means the
     /// review is behind, as when it was opened from a saved list row;
-    /// returns true the first time that head is seen.
-    fn apply_detail(&mut self, detail: PullRequest) -> bool {
+    /// returns true the first time that head is seen. `requested_at` is
+    /// when the load started.
+    fn apply_detail(&mut self, detail: PullRequest, requested_at: Instant) -> bool {
         let head = &detail.summary.head_oid;
         let first_notice =
             *head != self.reviewed_head && self.newer_head.as_deref() != Some(head.as_str());
@@ -278,8 +287,10 @@ impl OpenPullRequest {
             self.newer_head = Some(head.clone());
         }
         self.summary = detail.summary.clone();
-        self.detail = Some(detail);
-        self.detail_freshness = Freshness::Live;
+        self.detail = Some(ShownDetail {
+            value: detail,
+            freshness: Freshness::Live { requested_at },
+        });
         self.detail_error = None;
         self.rebuild_threads();
         first_notice
@@ -295,10 +306,12 @@ impl OpenPullRequest {
         {
             return false;
         }
-        self.detail = Some(snapshot.value);
-        self.detail_freshness = Freshness::Saved {
-            fetched_at: snapshot.fetched_at,
-        };
+        self.detail = Some(ShownDetail {
+            value: snapshot.value,
+            freshness: Freshness::Saved {
+                fetched_at: snapshot.fetched_at,
+            },
+        });
         self.rebuild_threads();
         true
     }
@@ -324,6 +337,8 @@ pub(in crate::app) struct PullRequests {
     fetch: RequestSlot,
     detail: RequestSlot,
     detail_number: Option<u64>,
+    /// When the latest detail load started.
+    detail_requested_at: Instant,
     /// Detail that arrived while its pull request was still being fetched.
     early_detail: Option<Result<PullRequest, ForgeError>>,
     /// A saved detail read while its pull request was still being fetched.
@@ -389,6 +404,7 @@ impl PullRequests {
             fetch: RequestSlot::default(),
             detail: RequestSlot::default(),
             detail_number: None,
+            detail_requested_at: Instant::now(),
             early_detail: None,
             early_saved_detail: None,
             open: None,
@@ -628,6 +644,7 @@ impl PullRequests {
         self.early_saved_detail = None;
         self.opening = Some(summary);
         self.opening_origin = origin;
+        self.detail_requested_at = Instant::now();
         (self.fetch.begin(), self.detail.begin())
     }
 
@@ -759,6 +776,11 @@ impl PullRequests {
         false
     }
 
+    /// When the latest detail load started: the time its answer is as of.
+    pub(in crate::app) fn detail_requested_at(&self) -> Instant {
+        self.detail_requested_at
+    }
+
     /// Whether a detail load for the open pull request is running.
     pub(in crate::app) fn detail_refreshing(&self) -> bool {
         self.detail.in_flight()
@@ -788,12 +810,13 @@ impl PullRequests {
     }
 
     fn apply_detail_result(&mut self, result: Result<PullRequest, ForgeError>) -> DetailOutcome {
+        let requested_at = self.detail_requested_at;
         let Some(open) = self.open.as_mut() else {
             return DetailOutcome::Applied;
         };
         match result {
             Ok(detail) if detail.summary.number == open.summary.number => {
-                if open.apply_detail(detail) {
+                if open.apply_detail(detail, requested_at) {
                     DetailOutcome::HeadMoved
                 } else {
                     DetailOutcome::Applied
@@ -811,6 +834,7 @@ impl PullRequests {
     pub(in crate::app) fn begin_detail_reload(&mut self) -> Option<(u64, u64)> {
         let number = self.open.as_ref()?.summary.number;
         self.detail_number = Some(number);
+        self.detail_requested_at = Instant::now();
         Some((self.detail.begin(), number))
     }
 
@@ -982,7 +1006,7 @@ impl PullRequests {
         open.newer_head = None;
         // GitHub computes mergeability in the background without touching
         // `updated_at`, so an unknown answer is worth asking again.
-        let mergeability_pending = open.detail.as_ref().is_some_and(|detail| {
+        let mergeability_pending = open.detail().is_some_and(|detail| {
             detail.summary.state == PullRequestState::Open
                 && detail.mergeable == Mergeability::Unknown
         });

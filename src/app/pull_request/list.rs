@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use nucleo_matcher::{
     Config as MatcherConfig, Matcher,
@@ -49,6 +49,8 @@ pub(in crate::app) struct PullRequestListState {
     error: Option<(PullRequestListFilter, ForgeError)>,
     request: RequestSlot,
     requested_filter: Option<PullRequestListFilter>,
+    /// When the running or last load started.
+    requested_at: Option<Instant>,
     /// Indices into the current filter's page that match the query.
     visible: Vec<usize>,
     selected: usize,
@@ -67,6 +69,7 @@ impl Default for PullRequestListState {
             error: None,
             request: RequestSlot::default(),
             requested_filter: None,
+            requested_at: None,
             visible: Vec::new(),
             selected: 0,
             scroll: 0,
@@ -117,8 +120,10 @@ impl PullRequestListState {
         self.set_filter(PULL_REQUEST_LIST_FILTERS[next])
     }
 
-    pub(in crate::app) fn begin_load(&mut self) -> (u64, PullRequestListFilter) {
+    /// Starts loading the shown tab at `now`, which dates its answer.
+    pub(in crate::app) fn begin_load(&mut self, now: Instant) -> (u64, PullRequestListFilter) {
         self.requested_filter = Some(self.filter);
+        self.requested_at = Some(now);
         (self.request.begin(), self.filter)
     }
 
@@ -144,11 +149,12 @@ impl PullRequestListState {
         let selected_number = self.selected_summary().map(|summary| summary.number);
         match result {
             Ok(list) => {
+                let requested_at = self.requested_at.unwrap_or_else(Instant::now);
                 self.loaded.insert(
                     filter,
                     LoadedPage {
                         list,
-                        freshness: Freshness::Live,
+                        freshness: Freshness::Live { requested_at },
                     },
                 );
                 if self
@@ -218,7 +224,15 @@ impl PullRequestListState {
 
     /// How current the shown tab's rows are; `None` when it has none.
     pub(in crate::app) fn freshness(&self) -> Option<&Freshness> {
-        self.loaded.get(&self.filter).map(|page| &page.freshness)
+        self.page_freshness(self.filter)
+    }
+
+    /// How current `filter`'s rows are; `None` when it has none.
+    pub(in crate::app) fn page_freshness(
+        &self,
+        filter: PullRequestListFilter,
+    ) -> Option<&Freshness> {
+        self.loaded.get(&filter).map(|page| &page.freshness)
     }
 
     pub(in crate::app) fn error(&self) -> Option<&ForgeError> {

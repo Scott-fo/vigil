@@ -4,13 +4,14 @@ use tokio::task;
 
 use crate::{
     event::Event,
-    forge::{ForgeError, PullRequest, PullRequestSummary},
+    forge::{ForgeError, PullRequest, PullRequestSummary, Snapshot},
     git::{self, FetchedPullRequest, PullRequestFetch, PullRequestFetchError},
 };
 
 use super::{
     super::{ActivePane, App, ReviewMode, Screen, SnackbarVariant},
     PullRequestEvent, PullRequestSelection, PullRequestTimer,
+    saved::request_time,
     state::{DetailOutcome, PollOutcome, PullRequestPage, ReviewOrigin},
     task::spawn_ticker,
 };
@@ -231,11 +232,12 @@ impl App {
         result: Result<PullRequest, ForgeError>,
     ) -> bool {
         let live = result.as_ref().ok().cloned();
+        let requested_at = self.pull_requests.detail_requested_at();
         let Some(outcome) = self.pull_requests.finish_detail(request_id, result) else {
             return false;
         };
         if let Some(detail) = live {
-            self.save_pull_request(detail);
+            self.save_pull_request(Snapshot::new(detail, request_time(requested_at)));
         }
         if outcome == DetailOutcome::HeadMoved
             && let Some(number) = self.pull_requests.open_number()

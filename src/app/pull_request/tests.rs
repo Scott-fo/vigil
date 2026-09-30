@@ -905,7 +905,10 @@ fn failed_current_branch_lookups_wait_out_the_interval_too() {
 async fn a_list_load_that_finds_gh_logged_out_explains_it_on_the_list() {
     let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
     app.show_pull_request_list_for_test(fixtures::pull_request_list(&[1], 1));
-    let (request_id, filter) = app.pull_requests.list_mut().begin_load();
+    let (request_id, filter) = app
+        .pull_requests
+        .list_mut()
+        .begin_load(std::time::Instant::now());
     let error = ForgeError::NotAuthenticated {
         message: "no token".to_string(),
     };
@@ -930,7 +933,7 @@ fn row_numbers(list: &PullRequestListState) -> Vec<u64> {
 
 fn loaded_list(numbers: &[u64]) -> PullRequestListState {
     let mut list = PullRequestListState::default();
-    let (id, filter) = list.begin_load();
+    let (id, filter) = list.begin_load(std::time::Instant::now());
     list.finish_load(
         id,
         filter,
@@ -942,11 +945,11 @@ fn loaded_list(numbers: &[u64]) -> PullRequestListState {
 #[test]
 fn list_tabs_keep_their_pages_and_drop_stale_loads() {
     let mut list = PullRequestListState::default();
-    let (needs_review, filter) = list.begin_load();
+    let (needs_review, filter) = list.begin_load(std::time::Instant::now());
     assert_eq!(filter, PullRequestListFilter::NeedsMyReview);
 
     assert!(list.set_filter(PullRequestListFilter::Mine));
-    let (mine, filter) = list.begin_load();
+    let (mine, filter) = list.begin_load(std::time::Instant::now());
     assert_eq!(filter, PullRequestListFilter::Mine);
     assert!(
         !list.finish_load(
@@ -1006,7 +1009,7 @@ fn list_selection_follows_its_pull_request_across_reloads() {
     list.move_selection(1);
     assert_eq!(list.selected_summary().map(|row| row.number), Some(17));
 
-    let (id, filter) = list.begin_load();
+    let (id, filter) = list.begin_load(std::time::Instant::now());
     list.finish_load(id, filter, Ok(fixtures::pull_request_list(&[99, 17], 2)));
     assert_eq!(list.selected_summary().map(|row| row.number), Some(17));
     assert_eq!(list.selected(), 1);

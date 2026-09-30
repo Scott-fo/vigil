@@ -7,7 +7,7 @@
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -47,7 +47,10 @@ fn list_app() -> (App, u64, PullRequestListFilter) {
     app.pull_requests
         .connect_for_test(GitHub::new(app.repo_root.clone(), repository()));
     app.screen = Screen::PullRequestList;
-    let (request_id, filter) = app.pull_requests.list_mut().begin_load();
+    let (request_id, filter) = app
+        .pull_requests
+        .list_mut()
+        .begin_load(std::time::Instant::now());
     (app, request_id, filter)
 }
 
@@ -467,6 +470,33 @@ async fn eventually<T>(mut read: impl FnMut() -> Option<T>) -> T {
     panic!("nothing was saved");
 }
 
+/// A live result is dated by when its request started, not when it was
+/// saved, so a slow answer never passes for newer than one requested after
+/// it.
+#[tokio::test]
+async fn saved_results_are_dated_by_when_their_request_started() {
+    let (cache, path) = temp_cache();
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-saved-tests"));
+    app.pull_requests
+        .connect_for_test(GitHub::new(app.repo_root.clone(), repository()));
+    app.use_forge_cache_for_test(cache.clone());
+    let started = Instant::now()
+        .checked_sub(Duration::from_secs(120))
+        .expect("the clock has run for two minutes");
+    let (request_id, filter) = app.pull_requests.list_mut().begin_load(started);
+
+    app.handle_pull_request_list_loaded(
+        request_id,
+        filter,
+        Ok(fixtures::pull_request_list(&[4], 1)),
+    );
+
+    let saved = eventually(|| cache.pull_request_list(&repository(), filter)).await;
+    let age = Timestamp::now().unix_seconds().unwrap() - saved.fetched_at.unix_seconds().unwrap();
+    assert!((119..=125).contains(&age), "dated {age}s ago");
+    remove(&path);
+}
+
 #[tokio::test]
 async fn live_results_are_saved_and_the_next_session_shows_them() {
     let (cache, path) = temp_cache();
@@ -518,5 +548,5 @@ fn saves_are_dropped_without_a_cache() {
             total_count: 0,
         }),
     );
-    app.save_pull_request(fixtures::pull_request(18, Vec::new()));
+    app.save_pull_request(saved(fixtures::pull_request(18, Vec::new())));
 }

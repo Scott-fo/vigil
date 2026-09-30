@@ -18,7 +18,10 @@
 //! miss and is never reported. Tests get [`SavedSnapshots::off`] through
 //! `PullRequests::disabled`, and never touch the user's cache file.
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    sync::{Arc, OnceLock},
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use tokio::{sync::mpsc, task};
 
@@ -35,8 +38,9 @@ use super::{super::App, PullRequestEvent};
 /// How current pull request data on screen is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::app) enum Freshness {
-    /// Loaded from GitHub in this session.
-    Live,
+    /// Loaded from GitHub in this session, by a request that started at
+    /// `requested_at`.
+    Live { requested_at: Instant },
     /// Read from the forge cache: what GitHub said at `fetched_at`, not yet
     /// confirmed by a live load.
     Saved { fetched_at: Timestamp },
@@ -45,14 +49,27 @@ pub(in crate::app) enum Freshness {
 impl Freshness {
     pub(in crate::app) fn saved_at(&self) -> Option<&Timestamp> {
         match self {
-            Self::Live => None,
+            Self::Live { .. } => None,
             Self::Saved { fetched_at } => Some(fetched_at),
         }
     }
 
     pub(in crate::app) fn is_live(&self) -> bool {
-        *self == Self::Live
+        matches!(self, Self::Live { .. })
     }
+}
+
+/// The wall-clock time of `requested_at`, to date a live result by when its
+/// request started.
+pub(in crate::app) fn request_time(requested_at: Instant) -> Timestamp {
+    let started = SystemTime::now()
+        .checked_sub(requested_at.elapsed())
+        .unwrap_or(UNIX_EPOCH);
+    Timestamp::from_unix_seconds(
+        started
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs() as i64),
+    )
 }
 
 /// Which cache snapshots come from.
@@ -245,11 +262,11 @@ impl App {
         self.pull_requests.list_mut().show_saved(filter, snapshot)
     }
 
-    /// Saves a live list page.
+    /// Saves a live list page, dated by when its request started.
     pub(super) fn save_pull_request_list(
         &mut self,
         filter: PullRequestListFilter,
-        list: PullRequestList,
+        snapshot: Snapshot<PullRequestList>,
     ) {
         let Some(repository) = self.saved_snapshot_repository() else {
             return;
@@ -257,7 +274,7 @@ impl App {
         self.pull_requests.saved_mut().queue(SnapshotSave::List {
             repository,
             filter,
-            snapshot: Snapshot::fetched_now(list),
+            snapshot,
         });
     }
 
@@ -309,10 +326,11 @@ impl App {
         self.pull_requests.show_saved_detail(number, *snapshot)
     }
 
-    /// Saves a pull request's detail as just fetched from GitHub. Details
-    /// loaded outside the review, such as by a prefetch, go through here
-    /// too.
-    pub(in crate::app) fn save_pull_request(&mut self, detail: PullRequest) {
+    /// Saves a pull request's detail from GitHub, dated by when its request
+    /// started (take [`Timestamp::now`] before sending it), so the cache
+    /// keeps the newest of racing saves. Details loaded outside the review,
+    /// such as by a prefetch, go through here too.
+    pub(in crate::app) fn save_pull_request(&mut self, snapshot: Snapshot<PullRequest>) {
         let Some(repository) = self.saved_snapshot_repository() else {
             return;
         };
@@ -320,7 +338,7 @@ impl App {
             .saved_mut()
             .queue(SnapshotSave::PullRequest {
                 repository,
-                snapshot: Box::new(Snapshot::fetched_now(detail)),
+                snapshot: Box::new(snapshot),
             });
     }
 

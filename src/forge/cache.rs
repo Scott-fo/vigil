@@ -29,11 +29,16 @@
 //!   report a fetch time up to 15 minutes older than the last confirmation;
 //!   it never overstates freshness.
 //!
+//! Snapshots are dated by when their request started, so "newest" means
+//! the answer GitHub gave last. A row dated in the future (a clock that ran
+//! ahead) is not trusted to be newer: any save replaces it.
+//!
 //! Growth is bounded when the cache opens, never on a save: rows not
 //! refreshed for 14 days are deleted (so repositories no longer used drop
-//! out), and only the 300 most recently refreshed pull request details are
-//! kept. Opening a cache of another format version empties it. Nothing
-//! vacuums the file; later rows reuse freed pages.
+//! out), as are rows dated more than a day ahead, and only the 300 most
+//! recently refreshed pull request details are kept. Opening a cache of
+//! another format version empties it. Nothing vacuums the file; later rows
+//! reuse freed pages.
 //!
 //! # Cost and failure
 //!
@@ -62,10 +67,17 @@ const CACHE_VERSION: i64 = 1;
 /// one is this far behind.
 const REFRESH_GRANULARITY: Duration = Duration::from_secs(15 * 60);
 
+/// Rows dated further ahead than this are deleted on open.
+const CLOCK_SKEW_ALLOWANCE: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// How long a call waits for another vigil's write to finish.
 const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// A value as GitHub reported it at `fetched_at`.
+///
+/// `fetched_at` is when the request that returned `value` started, taken
+/// with [`Timestamp::now`] before sending it: GitHub's answer is at least
+/// that current, so ordering snapshots by it keeps the newest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot<T> {
     pub value: T,
@@ -75,11 +87,6 @@ pub struct Snapshot<T> {
 impl<T> Snapshot<T> {
     pub fn new(value: T, fetched_at: Timestamp) -> Self {
         Self { value, fetched_at }
-    }
-
-    /// `value`, fetched just now.
-    pub fn fetched_now(value: T) -> Self {
-        Self::new(value, Timestamp::from_unix_seconds(now_unix_seconds()))
     }
 }
 
@@ -274,8 +281,17 @@ impl ForgeCache {
             connection.pragma_update(None, "user_version", CACHE_VERSION)?;
         }
 
-        let cutoff = now_unix_seconds().saturating_sub(retention.max_age.as_secs() as i64);
-        connection.execute("delete from snapshots where fetched_at < ?1", [cutoff])?;
+        // Rows dated more than a day ahead were written under a skewed
+        // clock; they would otherwise outlive every age cutoff.
+        let now = now_unix_seconds();
+        let cutoff = now.saturating_sub(retention.max_age.as_secs() as i64);
+        connection.execute(
+            "delete from snapshots where fetched_at < ?1 or fetched_at > ?2",
+            [
+                cutoff,
+                now.saturating_add(CLOCK_SKEW_ALLOWANCE.as_secs() as i64),
+            ],
+        )?;
         connection.execute(
             "delete from snapshots
              where kind = 'pull_request' and rowid not in (
@@ -335,7 +351,17 @@ impl ForgeCache {
                 |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
             )
             .optional()?;
+        // A row dated in the future came from a skewed clock and is not
+        // trusted to be newer than anything.
+        let now = now_unix_seconds();
         let outcome = match saved {
+            Some((saved_at, saved_hash)) if saved_at > now => {
+                if saved_hash == content_hash {
+                    SaveOutcome::Refreshed
+                } else {
+                    SaveOutcome::Stored
+                }
+            }
             Some((saved_at, _)) if saved_at > fetched_at => SaveOutcome::Unchanged,
             Some((saved_at, saved_hash)) if saved_hash == content_hash => {
                 if fetched_at - saved_at < REFRESH_GRANULARITY.as_secs() as i64 {
@@ -352,8 +378,10 @@ impl ForgeCache {
                 connection.execute(
                     "update snapshots set fetched_at = ?6
                      where host = ?1 and owner = ?2 and name = ?3 and kind = ?4 and key = ?5
-                       and fetched_at < ?6",
-                    params![key.host, key.owner, key.name, key.kind, key.key, fetched_at],
+                       and (fetched_at < ?6 or fetched_at > ?7)",
+                    params![
+                        key.host, key.owner, key.name, key.kind, key.key, fetched_at, now
+                    ],
                 )?;
             }
             SaveOutcome::Stored => {
@@ -365,7 +393,8 @@ impl ForgeCache {
                      set fetched_at = excluded.fetched_at,
                          content_hash = excluded.content_hash,
                          body = excluded.body
-                     where excluded.fetched_at >= snapshots.fetched_at",
+                     where excluded.fetched_at >= snapshots.fetched_at
+                        or snapshots.fetched_at > ?9",
                     params![
                         key.host,
                         key.owner,
@@ -374,7 +403,8 @@ impl ForgeCache {
                         key.key,
                         fetched_at,
                         content_hash,
-                        body
+                        body,
+                        now
                     ],
                 )?;
             }
@@ -740,6 +770,34 @@ mod tests {
             "changed content is written at once"
         );
         assert_eq!(cache.pull_request(&vigil, 17).unwrap().value, changed);
+        remove(&path);
+    }
+
+    /// A row stamped under a clock that ran ahead must not block every
+    /// later save, nor outlive pruning.
+    #[test]
+    fn a_row_dated_in_the_future_is_replaced_and_pruned() {
+        let (cache, path) = temp_cache("future");
+        let vigil = repository("Scott-fo", "vigil");
+        let mut skewed = detail(17);
+        skewed.body = "from a fast clock".to_string();
+        cache
+            .save_detail(&vigil, &Snapshot::new(skewed, at(-3600)))
+            .unwrap();
+
+        let current = Snapshot::new(detail(17), at(5));
+        assert_eq!(
+            cache.save_detail(&vigil, &current).unwrap(),
+            SaveOutcome::Stored
+        );
+        assert_eq!(cache.pull_request(&vigil, 17), Some(current));
+
+        cache
+            .save_detail(&vigil, &Snapshot::new(detail(18), at(-3 * 86_400)))
+            .unwrap();
+        let reopened = ForgeCache::open(path.clone()).unwrap();
+        assert_eq!(reopened.pull_request(&vigil, 18), None);
+        assert!(reopened.pull_request(&vigil, 17).is_some());
         remove(&path);
     }
 
