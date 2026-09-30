@@ -11,6 +11,7 @@ mod merge;
 mod parse;
 mod pull_request;
 mod refs;
+mod remote;
 mod repo;
 mod status;
 mod types;
@@ -89,9 +90,10 @@ pub(crate) use highlight::{SyntaxToken, highlight_markdown_line};
 pub use merge::prepare_branch_merge;
 pub use pull_request::{
     FetchedPullRequest, PullRequestFetch, PullRequestFetchError, delete_pull_request_refs,
-    fetch_pull_request, prune_pull_request_refs, pull_request_head_ref,
+    fetch_pull_request, prune_pull_request_refs, pull_request_head_ref, resolve_local_pull_request,
 };
 pub use refs::{list_comparable_refs, load_branch_compare_refs, load_files_with_branch_diff};
+pub use remote::{Remote, list_remotes, parse_remote_url};
 pub use repo::{
     init_repo, load_revision_file_bytes, resolve_repo_root, resolve_repo_root_from,
     revision_matches_head,

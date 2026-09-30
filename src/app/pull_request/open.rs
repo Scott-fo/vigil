@@ -37,6 +37,7 @@ impl App {
         let request = PullRequestFetch {
             repository: github.repository().clone(),
             number,
+            head_oid: summary.head_oid.clone(),
             base_oid: summary.base_oid.clone(),
             base_ref_name: summary.base_ref_name.clone(),
         };

@@ -14,13 +14,23 @@
 //! command here it runs with `GIT_TERMINAL_PROMPT=0`, so a remote that needs
 //! credentials fails instead of prompting.
 //!
-//! This is network I/O: seconds on a slow link. Interactive callers should run
-//! it in the background and treat the result as a snapshot of the pull
-//! request at fetch time.
+//! This is network I/O: seconds on a slow link, and over a second even when
+//! nothing new arrives. Interactive callers should run it in the background
+//! and treat the result as a snapshot of the pull request at fetch time.
+//!
+//! [`resolve_local_pull_request`] is the local-only counterpart: when the
+//! head and base commits GitHub last reported are already in the object store
+//! (a previous fetch, a prefetch, or the author's own branch), it points the
+//! same vigil-private ref at the head and returns what a fetch would have,
+//! in a few milliseconds and without touching the network. Callers try it
+//! first and fetch only when it returns `None`.
 
 use std::{fmt, path::Path};
 
-use super::command::{git_output, git_output_raw, git_output_with_stdin};
+use super::{
+    command::{git_output, git_output_raw, git_output_with_stdin},
+    remote::{Remote, list_remotes, parse_remote_url},
+};
 use crate::forge::RepositoryRef;
 
 /// What to fetch for one pull request.
@@ -29,6 +39,9 @@ pub struct PullRequestFetch {
     /// The repository that owns the pull request, used to pick a remote.
     pub repository: RepositoryRef,
     pub number: u64,
+    /// The head commit GitHub last reported. A fetch takes whatever the head
+    /// is now; [`resolve_local_pull_request`] accepts only this commit.
+    pub head_oid: String,
     /// The base commit GitHub computed the diff against.
     pub base_oid: String,
     /// The base branch name, fetched when `base_oid` is missing locally.
@@ -139,6 +152,52 @@ pub async fn fetch_pull_request(
     })
 }
 
+/// The pull request as [`fetch_pull_request`] would leave it, built from
+/// commits already in the object store. Runs a few local git commands and
+/// never touches the network.
+///
+/// Succeeds when `request.head_oid` and `request.base_oid` both resolve to
+/// local commits and a remote can be picked the way a fetch picks one. If
+/// [`pull_request_head_ref`] does not already point at the head, it is
+/// written there, so the commits stay reachable exactly as after a fetch.
+/// Returns `None`, touching nothing, when either commit is missing (or
+/// another command fails); the caller should fetch instead.
+///
+/// The result is only as fresh as `request.head_oid`: commits pushed since
+/// GitHub reported it are not picked up.
+pub async fn resolve_local_pull_request(
+    repo_root: &Path,
+    request: &PullRequestFetch,
+) -> Option<FetchedPullRequest> {
+    let head_ref = pull_request_head_ref(request.number);
+    let head_oid = request.head_oid.trim();
+    let base_oid = request.base_oid.trim();
+    if head_oid.is_empty() || base_oid.is_empty() {
+        return None;
+    }
+    let (remote, ref_target, head, base) = tokio::join!(
+        select_remote(repo_root, &request.repository),
+        resolve_commit(repo_root, &head_ref),
+        resolve_commit(repo_root, head_oid),
+        resolve_commit(repo_root, base_oid),
+    );
+    let remote = remote.ok()?;
+    // Full ids only: an abbreviated id could resolve to a different commit.
+    let head = head.filter(|head| head.eq_ignore_ascii_case(head_oid))?;
+    let base = base.filter(|base| base.eq_ignore_ascii_case(base_oid))?;
+    if ref_target.as_deref() != Some(head.as_str()) {
+        git_output(repo_root, &["update-ref", &head_ref, &head])
+            .await
+            .ok()?;
+    }
+    Some(FetchedPullRequest {
+        remote,
+        head_ref,
+        head_oid: head,
+        base_oid: base,
+    })
+}
+
 /// Every vigil-private ref lives under this prefix; cleanup never deletes a
 /// ref outside it.
 const PULL_REQUEST_REFS: &str = "refs/vigil/pr/";
@@ -232,36 +291,22 @@ async fn select_remote(
     repo_root: &Path,
     repository: &RepositoryRef,
 ) -> Result<String, PullRequestFetchError> {
-    // `git config` exits 1 when nothing matches, which means no remotes.
-    let remotes = git_output(repo_root, &["config", "--get-regexp", r"^remote\..*\.url$"])
-        .await
-        .unwrap_or_default();
-    choose_remote(&parse_remote_urls(&remotes), repository).ok_or_else(|| {
-        PullRequestFetchError::NoRemote {
-            repository: repository.name_with_owner(),
-        }
+    // Unreadable remotes are treated as none, so the error names the
+    // repository rather than the git failure.
+    let remotes = list_remotes(repo_root).await.unwrap_or_default();
+    choose_remote(&remotes, repository).ok_or_else(|| PullRequestFetchError::NoRemote {
+        repository: repository.name_with_owner(),
     })
 }
 
-/// `(name, url)` pairs from `git config --get-regexp '^remote\..*\.url$'`.
-fn parse_remote_urls(output: &str) -> Vec<(String, String)> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let (key, url) = line.split_once(' ')?;
-            let name = key.strip_prefix("remote.")?.strip_suffix(".url")?;
-            Some((name.to_string(), url.trim().to_string()))
-        })
-        .collect()
-}
-
 /// The remote pointing at `repository`, preferring `origin` then `upstream`
-/// when several do; otherwise `origin` if it exists.
-fn choose_remote(remotes: &[(String, String)], repository: &RepositoryRef) -> Option<String> {
+/// when several do; otherwise `origin` if it exists. Matches URLs as
+/// configured, before `insteadOf` rewrites.
+fn choose_remote(remotes: &[Remote], repository: &RepositoryRef) -> Option<String> {
     let matching = remotes
         .iter()
-        .filter(|(_, url)| url_points_at(url, repository))
-        .map(|(name, _)| name.as_str())
+        .filter(|remote| url_points_at(&remote.url, repository))
+        .map(|remote| remote.name.as_str())
         .collect::<Vec<_>>();
     let preferred = ["origin", "upstream"]
         .into_iter()
@@ -271,46 +316,20 @@ fn choose_remote(remotes: &[(String, String)], repository: &RepositoryRef) -> Op
         .or_else(|| {
             remotes
                 .iter()
-                .any(|(name, _)| name == "origin")
+                .any(|remote| remote.name == "origin")
                 .then_some("origin")
         })
         .map(str::to_string)
 }
 
-/// Whether a remote URL names `repository`, in any of git's URL forms:
-/// `git@host:owner/name.git`, `ssh://git@host[:port]/owner/name`,
-/// `https://[user@]host/owner/name[.git]`, or `git://host/owner/name`.
+/// Whether a remote URL names `repository`, in any of git's URL forms and
+/// ignoring case.
 fn url_points_at(url: &str, repository: &RepositoryRef) -> bool {
-    let Some((host, path)) = split_remote_url(url) else {
-        return false;
-    };
-    let path = path.trim_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    let Some((owner, name)) = path.split_once('/') else {
-        return false;
-    };
-    host.eq_ignore_ascii_case(&repository.host)
-        && owner.eq_ignore_ascii_case(&repository.owner)
-        && name.eq_ignore_ascii_case(&repository.name)
-}
-
-/// `(host, path)` of a remote URL, with any user and port removed.
-fn split_remote_url(url: &str) -> Option<(&str, &str)> {
-    let url = url.trim();
-    if let Some((_, rest)) = url.split_once("://") {
-        let (authority, path) = rest.split_once('/')?;
-        let host = authority.rsplit('@').next()?;
-        let host = host.split(':').next()?;
-        return Some((host, path));
-    }
-    // scp-like syntax: `[user@]host:path`. A local path has no colon before
-    // its first slash.
-    let (authority, path) = url.split_once(':')?;
-    if authority.contains('/') {
-        return None;
-    }
-    let host = authority.rsplit('@').next()?;
-    Some((host, path))
+    parse_remote_url(url).is_some_and(|named| {
+        named.host.eq_ignore_ascii_case(&repository.host)
+            && named.owner.eq_ignore_ascii_case(&repository.owner)
+            && named.name.eq_ignore_ascii_case(&repository.name)
+    })
 }
 
 #[cfg(test)]
@@ -354,33 +373,58 @@ mod tests {
         }
     }
 
+    fn remotes(pairs: &[(&str, &str)]) -> Vec<Remote> {
+        pairs
+            .iter()
+            .map(|(name, url)| Remote {
+                name: name.to_string(),
+                url: url.to_string(),
+                fetch_url: url.to_string(),
+                gh_resolved: None,
+            })
+            .collect()
+    }
+
     #[test]
     fn chooses_matching_remote_and_falls_back_to_origin() {
-        let remotes = parse_remote_urls(
-            "remote.origin.url git@github.com:me/vigil.git\n\
-             remote.upstream.url https://github.com/Scott-fo/vigil.git\n",
-        );
+        let matching = remotes(&[
+            ("origin", "git@github.com:me/vigil.git"),
+            ("upstream", "https://github.com/Scott-fo/vigil.git"),
+        ]);
         assert_eq!(
-            choose_remote(&remotes, &vigil()).as_deref(),
+            choose_remote(&matching, &vigil()).as_deref(),
             Some("upstream")
         );
 
-        let unrelated = parse_remote_urls("remote.origin.url /tmp/remote.git\n");
+        let unrelated = remotes(&[("origin", "/tmp/remote.git")]);
         assert_eq!(
             choose_remote(&unrelated, &vigil()).as_deref(),
             Some("origin")
         );
 
-        let no_origin = parse_remote_urls("remote.mirror.url /tmp/remote.git\n");
+        let no_origin = remotes(&[("mirror", "/tmp/remote.git")]);
         assert_eq!(choose_remote(&no_origin, &vigil()), None);
     }
 
     #[test]
     fn prefers_origin_when_several_remotes_match() {
-        let remotes = parse_remote_urls(
-            "remote.fork.url git@github.com:Scott-fo/vigil.git\n\
-             remote.origin.url https://github.com/Scott-fo/vigil\n",
+        let matching = remotes(&[
+            ("fork", "git@github.com:Scott-fo/vigil.git"),
+            ("origin", "https://github.com/Scott-fo/vigil"),
+        ]);
+        assert_eq!(
+            choose_remote(&matching, &vigil()).as_deref(),
+            Some("origin")
         );
-        assert_eq!(choose_remote(&remotes, &vigil()).as_deref(), Some("origin"));
+    }
+
+    #[test]
+    fn remotes_match_by_configured_url_not_the_rewritten_one() {
+        let mut rewritten = remotes(&[("upstream", "git@github.com:Scott-fo/vigil.git")]);
+        rewritten[0].fetch_url = "/srv/mirror/vigil.git".to_string();
+        assert_eq!(
+            choose_remote(&rewritten, &vigil()).as_deref(),
+            Some("upstream")
+        );
     }
 }

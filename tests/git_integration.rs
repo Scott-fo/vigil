@@ -1144,13 +1144,144 @@ fn acme_widgets() -> RepositoryRef {
     }
 }
 
+/// A request whose head GitHub never reported; a fetch takes whatever the
+/// head is.
 fn pull_request_fetch(number: u64, base_oid: &str) -> git::PullRequestFetch {
     git::PullRequestFetch {
         repository: acme_widgets(),
         number,
+        head_oid: String::new(),
         base_oid: base_oid.to_string(),
         base_ref_name: "main".to_string(),
     }
+}
+
+/// A request for pull request `number` as GitHub reports it: `head` on
+/// `base`.
+fn reported_pull_request(number: u64, head_oid: &str, base_oid: &str) -> git::PullRequestFetch {
+    git::PullRequestFetch {
+        head_oid: head_oid.to_string(),
+        ..pull_request_fetch(number, base_oid)
+    }
+}
+
+const MISSING_OID: &str = "0123456789abcdef0123456789abcdef01234567";
+
+#[tokio::test]
+async fn pull_request_already_fetched_opens_without_the_network() -> Result<()> {
+    let author = TestRepo::init().await?;
+    author.write("app.txt", "base\n");
+    author.commit_all("Base", "2024-01-01T00:00:00Z");
+    author.rename_branch("main");
+    let (origin, _teammate) = author.with_origin();
+    author.git(&["push", "--quiet", "origin", "main"]);
+    let base = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    author.checkout_new_branch("contribution");
+    author.write("app.txt", "base\nchange\n");
+    author.commit_all("Contribution", "2024-01-02T00:00:00Z");
+    let head = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    author.git(&["push", "--quiet", "origin", "contribution:refs/pull/1/head"]);
+
+    let reviewer = TestRepo::init().await?;
+    reviewer.git(&["remote", "add", "origin", origin.root.to_str().unwrap()]);
+    let fetched = git::fetch_pull_request(&reviewer.root, &pull_request_fetch(1, &base))
+        .await
+        .expect("pull request fetches");
+
+    // The remote goes away: any fetch now fails, so success below proves
+    // the local path never needed it.
+    reviewer.git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "/nonexistent/vigil-origin.git",
+    ]);
+    let request = reported_pull_request(1, &head, &base);
+    assert!(
+        git::fetch_pull_request(&reviewer.root, &request)
+            .await
+            .is_err()
+    );
+    let local = git::resolve_local_pull_request(&reviewer.root, &request)
+        .await
+        .expect("fetched commits resolve locally");
+    assert_eq!(local, fetched);
+    assert_eq!(local.remote, "origin");
+
+    // A head GitHub reports but the reviewer lacks needs a fetch, and the
+    // ref keeps pointing at the commits the review had.
+    let moved = reported_pull_request(1, MISSING_OID, &base);
+    assert_eq!(
+        git::resolve_local_pull_request(&reviewer.root, &moved).await,
+        None
+    );
+    assert_eq!(
+        reviewer.git(&["rev-parse", "refs/vigil/pr/1/head"]).trim(),
+        head
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn pull_request_commits_already_local_get_the_review_ref_without_a_fetch() -> Result<()> {
+    // The author reviews their own pull request: both commits are local,
+    // but nothing fetched `refs/pull/<n>/head`.
+    let author = TestRepo::init().await?;
+    author.write("app.txt", "base\n");
+    author.commit_all("Base", "2024-01-01T00:00:00Z");
+    author.rename_branch("main");
+    author.git(&["remote", "add", "origin", "/nonexistent/vigil-origin.git"]);
+    let base = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+    author.checkout_new_branch("feature");
+    author.write("app.txt", "base\nfeature\n");
+    author.commit_all("Feature", "2024-01-02T00:00:00Z");
+    let head = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+
+    let local =
+        git::resolve_local_pull_request(&author.root, &reported_pull_request(4, &head, &base))
+            .await
+            .expect("local commits resolve");
+    assert_eq!(local.remote, "origin");
+    assert_eq!(local.head_ref, git::pull_request_head_ref(4));
+    assert_eq!(local.head_oid, head);
+    assert_eq!(local.base_oid, base);
+    assert_eq!(
+        author.git(&["rev-parse", "refs/vigil/pr/4/head"]).trim(),
+        head,
+        "the head is kept reachable as a fetch would keep it"
+    );
+
+    // Missing commits, or ids too short to trust, fall through to a fetch
+    // and write nothing.
+    for (head_oid, base_oid) in [
+        (MISSING_OID, base.as_str()),
+        (head.as_str(), MISSING_OID),
+        (&head[..12], base.as_str()),
+        ("", base.as_str()),
+    ] {
+        let request = reported_pull_request(5, head_oid, base_oid);
+        assert_eq!(
+            git::resolve_local_pull_request(&author.root, &request).await,
+            None,
+            "head {head_oid:?} base {base_oid:?}"
+        );
+    }
+    assert!(
+        !author
+            .try_git(&["rev-parse", "--verify", "--quiet", "refs/vigil/pr/5/head"])
+            .status
+            .success()
+    );
+
+    // Without a remote to name, the review could not refetch or check out,
+    // so resolution defers to the fetch and its error.
+    author.git(&["remote", "remove", "origin"]);
+    assert_eq!(
+        git::resolve_local_pull_request(&author.root, &reported_pull_request(4, &head, &base))
+            .await,
+        None
+    );
+    Ok(())
 }
 
 #[tokio::test]
