@@ -1386,6 +1386,55 @@ async fn pull_request_fetch_brings_in_fork_heads_without_touching_branches() -> 
 }
 
 #[tokio::test]
+async fn pull_request_base_fetch_leaves_remote_tracking_branches_alone() -> Result<()> {
+    let author = TestRepo::init().await?;
+    author.write("app.txt", "base\n");
+    author.commit_all("Base", "2024-01-01T00:00:00Z");
+    author.rename_branch("main");
+    let (origin, _teammate) = author.with_origin();
+    author.git(&["push", "--quiet", "origin", "main"]);
+
+    // The reviewer tracks `origin/main` as a normal clone would.
+    let reviewer = TestRepo::init().await?;
+    reviewer.git(&["remote", "add", "origin", origin.root.to_str().unwrap()]);
+    reviewer.git(&["fetch", "--quiet", "origin"]);
+    let tracked = reviewer
+        .git(&["rev-parse", "refs/remotes/origin/main"])
+        .trim()
+        .to_string();
+
+    // The pull request branches off the old base, then `main` moves on: the
+    // base GitHub reports is on neither the reviewer's refs nor the pull
+    // request head, so the fetch has to pull `main` in.
+    author.checkout_new_branch("contribution");
+    author.write("new.txt", "new\n");
+    author.commit_all("Contribution", "2024-01-02T00:00:00Z");
+    author.git(&["push", "--quiet", "origin", "contribution:refs/pull/6/head"]);
+    author.checkout("main");
+    author.write("app.txt", "base\nmoved\n");
+    author.commit_all("Move base", "2024-01-03T00:00:00Z");
+    author.git(&["push", "--quiet", "origin", "main"]);
+    let base = author.git(&["rev-parse", "HEAD"]).trim().to_string();
+
+    let fetched = git::fetch_pull_request(&reviewer.root, &pull_request_fetch(6, &base))
+        .await
+        .expect("pull request and base fetch");
+    assert_eq!(fetched.base_oid, base);
+    assert_eq!(
+        reviewer.git(&["rev-parse", "refs/vigil/pr/6/base"]).trim(),
+        base
+    );
+    assert_eq!(
+        reviewer
+            .git(&["rev-parse", "refs/remotes/origin/main"])
+            .trim(),
+        tracked,
+        "the remote-tracking branch stays where the user's last fetch left it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn pull_request_fetch_falls_back_to_origin_and_needs_a_remote() -> Result<()> {
     let author = TestRepo::init().await?;
     author.write("app.txt", "base\n");

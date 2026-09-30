@@ -257,6 +257,10 @@ async fn fetch_refspec(
             "--no-tags",
             "--no-write-fetch-head",
             "--no-recurse-submodules",
+            // Without this, fetching `refs/heads/<base>` also moves the
+            // remote-tracking branch the remote's configured refspec maps it
+            // to; only the explicit refspec may be written.
+            "--refmap=",
             remote,
             refspec,
         ],
