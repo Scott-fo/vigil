@@ -4,7 +4,10 @@ use std::{
 };
 
 use crate::{
-    forge::{ForgeError, GitHub, Mergeability, PullRequest, PullRequestState, PullRequestSummary},
+    forge::{
+        ForgeError, GitHub, Mergeability, PullRequest, PullRequestState, PullRequestSummary,
+        Snapshot, Timestamp,
+    },
     review::ReviewThreads,
 };
 
@@ -13,6 +16,7 @@ use super::{
     gateway::{ForgeGateway, ForgeMutation},
     list::PullRequestListState,
     modal::PullRequestModal,
+    saved::{Freshness, SavedSnapshots},
     task::{OwnedTask, RequestSlot},
 };
 
@@ -109,6 +113,15 @@ pub(in crate::app) enum ConnectOutcome {
     },
 }
 
+/// What a finished detail load did to the review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum DetailOutcome {
+    Applied,
+    /// The detail reports a head the review does not show, seen for the
+    /// first time; the reviewer should hear about it once.
+    HeadMoved,
+}
+
 /// What a poll of the open pull request found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::app) enum PollOutcome {
@@ -130,6 +143,8 @@ pub(in crate::app) struct OpenPullRequest {
     /// The head commit the review shows.
     reviewed_head: String,
     detail: Option<PullRequest>,
+    /// Whether `detail` came from GitHub in this session or from the cache.
+    detail_freshness: Freshness,
     detail_error: Option<ForgeError>,
     threads: ReviewThreads,
     page: PullRequestPage,
@@ -149,6 +164,7 @@ impl OpenPullRequest {
             summary,
             reviewed_head,
             detail: None,
+            detail_freshness: Freshness::Live,
             detail_error: None,
             threads: ReviewThreads::default(),
             page: PullRequestPage::Overview,
@@ -208,8 +224,23 @@ impl OpenPullRequest {
         &self.summary
     }
 
+    /// The detail shown, live or saved. Fine for display; decisions that
+    /// write to GitHub need [`Self::live_detail`].
     pub(in crate::app) fn detail(&self) -> Option<&PullRequest> {
         self.detail.as_ref()
+    }
+
+    /// The detail, once GitHub has confirmed it in this session.
+    pub(in crate::app) fn live_detail(&self) -> Option<&PullRequest> {
+        self.detail
+            .as_ref()
+            .filter(|_| self.detail_freshness.is_live())
+    }
+
+    /// When GitHub reported the detail shown, if it is a saved snapshot no
+    /// load has confirmed yet.
+    pub(in crate::app) fn detail_saved_at(&self) -> Option<&Timestamp> {
+        self.detail.as_ref().and(self.detail_freshness.saved_at())
     }
 
     pub(in crate::app) fn detail_error(&self) -> Option<&ForgeError> {
@@ -236,11 +267,40 @@ impl OpenPullRequest {
         self.ticker = Some(ticker);
     }
 
-    fn apply_detail(&mut self, detail: PullRequest) {
+    /// Shows a live detail. A head other than the reviewed one means the
+    /// review is behind, as when it was opened from a saved list row;
+    /// returns true the first time that head is seen.
+    fn apply_detail(&mut self, detail: PullRequest) -> bool {
+        let head = &detail.summary.head_oid;
+        let first_notice =
+            *head != self.reviewed_head && self.newer_head.as_deref() != Some(head.as_str());
+        if first_notice {
+            self.newer_head = Some(head.clone());
+        }
         self.summary = detail.summary.clone();
         self.detail = Some(detail);
+        self.detail_freshness = Freshness::Live;
         self.detail_error = None;
         self.rebuild_threads();
+        first_notice
+    }
+
+    /// Shows a saved detail while nothing else is shown. Only a snapshot of
+    /// the reviewed head is used, so its threads and checks match the diff.
+    /// The summary is kept: the one the review opened with is newer.
+    fn apply_saved_detail(&mut self, snapshot: Snapshot<PullRequest>) -> bool {
+        if self.detail.is_some()
+            || snapshot.value.summary.number != self.summary.number
+            || snapshot.value.summary.head_oid != self.reviewed_head
+        {
+            return false;
+        }
+        self.detail = Some(snapshot.value);
+        self.detail_freshness = Freshness::Saved {
+            fetched_at: snapshot.fetched_at,
+        };
+        self.rebuild_threads();
+        true
     }
 }
 
@@ -266,6 +326,8 @@ pub(in crate::app) struct PullRequests {
     detail_number: Option<u64>,
     /// Detail that arrived while its pull request was still being fetched.
     early_detail: Option<Result<PullRequest, ForgeError>>,
+    /// A saved detail read while its pull request was still being fetched.
+    early_saved_detail: Option<Snapshot<PullRequest>>,
     open: Option<OpenPullRequest>,
     list: PullRequestListState,
     /// A pull request looked up by number before it opens.
@@ -279,22 +341,37 @@ pub(in crate::app) struct PullRequests {
     gateway: ForgeGateway,
     draft_persistence: DraftPersistence,
     draft_writer: Option<DraftWriter>,
+    saved: SavedSnapshots,
 }
 
 impl Default for PullRequests {
     fn default() -> Self {
-        Self::with_connection(ForgeConnection::Idle, DraftPersistence::Database)
+        Self::with_connection(
+            ForgeConnection::Idle,
+            DraftPersistence::Database,
+            SavedSnapshots::user_cache(),
+        )
     }
 }
 
 impl PullRequests {
-    /// State that never spawns `gh` or touches the review database.
+    /// State that never spawns `gh` or touches the review database or the
+    /// forge cache.
     pub(in crate::app) fn disabled() -> Self {
-        Self::with_connection(ForgeConnection::Disabled, DraftPersistence::Off)
+        Self::with_connection(
+            ForgeConnection::Disabled,
+            DraftPersistence::Off,
+            SavedSnapshots::off(),
+        )
     }
 
-    fn with_connection(connection: ForgeConnection, draft_persistence: DraftPersistence) -> Self {
+    fn with_connection(
+        connection: ForgeConnection,
+        draft_persistence: DraftPersistence,
+        saved: SavedSnapshots,
+    ) -> Self {
         Self {
+            saved,
             opening_origin: ReviewOrigin::Elsewhere,
             modal: None,
             mutation: RequestSlot::default(),
@@ -313,6 +390,7 @@ impl PullRequests {
             detail: RequestSlot::default(),
             detail_number: None,
             early_detail: None,
+            early_saved_detail: None,
             open: None,
             list: PullRequestListState::default(),
             lookup: RequestSlot::default(),
@@ -547,6 +625,7 @@ impl PullRequests {
     ) -> (u64, u64) {
         self.detail_number = Some(summary.number);
         self.early_detail = None;
+        self.early_saved_detail = None;
         self.opening = Some(summary);
         self.opening_origin = origin;
         (self.fetch.begin(), self.detail.begin())
@@ -622,6 +701,7 @@ impl PullRequests {
         reviewed_head: String,
     ) -> Option<u64> {
         let early_detail = self.early_detail.take();
+        let early_saved_detail = self.early_saved_detail.take();
         let origin = self.opening_origin;
         let mut replaced = None;
         match self.open.as_mut() {
@@ -640,42 +720,90 @@ impl PullRequests {
                 self.open = Some(OpenPullRequest::new(summary, reviewed_head, origin));
             }
         }
+        if let (Some(snapshot), Some(open)) = (early_saved_detail, self.open.as_mut()) {
+            open.apply_saved_detail(snapshot);
+        }
         if let Some(result) = early_detail {
             self.apply_detail_result(result);
         }
         replaced
     }
 
+    /// Whether a saved detail of `number` could still be shown: its review
+    /// is not open yet, or has no detail.
+    pub(in crate::app) fn wants_saved_detail(&self, number: u64) -> bool {
+        match self.open.as_ref() {
+            Some(open) if open.summary.number == number => open.detail.is_none(),
+            _ => true,
+        }
+    }
+
+    /// Shows a saved detail of `number` if its review, open or opening, has
+    /// no detail yet. Returns whether anything visible changed; a snapshot
+    /// that arrives after the live detail is dropped.
+    pub(in crate::app) fn show_saved_detail(
+        &mut self,
+        number: u64,
+        snapshot: Snapshot<PullRequest>,
+    ) -> bool {
+        if let Some(open) = self
+            .open
+            .as_mut()
+            .filter(|open| open.summary.number == number)
+        {
+            return open.apply_saved_detail(snapshot);
+        }
+        if self.opening_number() == Some(number) && !matches!(self.early_detail, Some(Ok(_))) {
+            self.early_saved_detail = Some(snapshot);
+        }
+        false
+    }
+
+    /// Whether a detail load for the open pull request is running.
+    pub(in crate::app) fn detail_refreshing(&self) -> bool {
+        self.detail.in_flight()
+            && self.detail_number.is_some()
+            && self.detail_number == self.open_number()
+    }
+
     /// Records a finished detail load for the open (or opening) pull request.
-    /// Returns false for stale responses.
+    /// `None` for stale responses.
     pub(in crate::app) fn finish_detail(
         &mut self,
         id: u64,
         result: Result<PullRequest, ForgeError>,
-    ) -> bool {
+    ) -> Option<DetailOutcome> {
         if !self.detail.complete(id) {
-            return false;
+            return None;
         }
         let number = self.detail_number;
         if self.opening.as_ref().map(|summary| summary.number) == number {
             self.early_detail = Some(result);
-            return true;
+            return Some(DetailOutcome::Applied);
         }
         if self.open.as_ref().map(|open| open.summary.number) != number {
-            return false;
+            return None;
         }
-        self.apply_detail_result(result);
-        true
+        Some(self.apply_detail_result(result))
     }
 
-    fn apply_detail_result(&mut self, result: Result<PullRequest, ForgeError>) {
+    fn apply_detail_result(&mut self, result: Result<PullRequest, ForgeError>) -> DetailOutcome {
         let Some(open) = self.open.as_mut() else {
-            return;
+            return DetailOutcome::Applied;
         };
         match result {
-            Ok(detail) if detail.summary.number == open.summary.number => open.apply_detail(detail),
-            Ok(_) => {}
-            Err(error) => open.detail_error = Some(error),
+            Ok(detail) if detail.summary.number == open.summary.number => {
+                if open.apply_detail(detail) {
+                    DetailOutcome::HeadMoved
+                } else {
+                    DetailOutcome::Applied
+                }
+            }
+            Ok(_) => DetailOutcome::Applied,
+            Err(error) => {
+                open.detail_error = Some(error);
+                DetailOutcome::Applied
+            }
         }
     }
 
@@ -710,6 +838,7 @@ impl PullRequests {
         self.detail.cancel();
         self.detail_number = None;
         self.early_detail = None;
+        self.early_saved_detail = None;
         self.modal = None;
         Some(closed.summary.number)
     }
@@ -767,6 +896,14 @@ impl PullRequests {
 
     pub(in crate::app) fn gateway_mut(&mut self) -> &mut ForgeGateway {
         &mut self.gateway
+    }
+
+    pub(in crate::app) fn saved(&self) -> &SavedSnapshots {
+        &self.saved
+    }
+
+    pub(in crate::app) fn saved_mut(&mut self) -> &mut SavedSnapshots {
+        &mut self.saved
     }
 
     pub(in crate::app) fn draft_persistence(&self) -> DraftPersistence {

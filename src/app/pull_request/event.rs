@@ -1,6 +1,7 @@
 use crate::{
     forge::{
-        ForgeError, GitHub, PullRequest, PullRequestList, PullRequestListFilter, PullRequestSummary,
+        ForgeError, GitHub, PullRequest, PullRequestList, PullRequestListFilter,
+        PullRequestSummary, RepositoryRef, Snapshot,
     },
     git::{FetchedPullRequest, PullRequestFetchError},
     review::DraftComment,
@@ -49,6 +50,18 @@ pub enum PullRequestEvent {
         filter: PullRequestListFilter,
         result: Result<PullRequestList, ForgeError>,
     },
+    /// A list page read from the forge cache; `None` on a miss.
+    SavedListRead {
+        repository: RepositoryRef,
+        filter: PullRequestListFilter,
+        snapshot: Option<Snapshot<PullRequestList>>,
+    },
+    /// A pull request's detail read from the forge cache; `None` on a miss.
+    SavedDetailRead {
+        repository: RepositoryRef,
+        number: u64,
+        snapshot: Option<Box<Snapshot<PullRequest>>>,
+    },
     /// A pull request looked up by number from the list's query.
     LookedUp {
         request_id: u64,
@@ -84,6 +97,8 @@ impl PullRequestEvent {
             Self::Connected { .. }
             | Self::FetchStarted { .. }
             | Self::Fetched { .. }
+            | Self::SavedListRead { .. }
+            | Self::SavedDetailRead { .. }
             | Self::DraftsLoaded { .. }
             | Self::DraftWriteFailed(_)
             | Self::Tick(_) => None,

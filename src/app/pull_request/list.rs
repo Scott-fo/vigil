@@ -5,10 +5,13 @@ use nucleo_matcher::{
     pattern::{CaseMatching, Normalization, Pattern},
 };
 
-use crate::forge::{ForgeError, PullRequestList, PullRequestListFilter, PullRequestSummary};
+use crate::forge::{
+    ForgeError, PullRequestList, PullRequestListFilter, PullRequestSummary, Snapshot,
+};
 
 use super::{
     super::navigation::{clamp_index, move_index},
+    saved::Freshness,
     task::{OwnedTask, RequestSlot},
 };
 
@@ -28,12 +31,21 @@ pub enum QueryInput {
     Editing,
 }
 
+/// A tab's rows and how current they are.
+#[derive(Debug)]
+struct LoadedPage {
+    list: PullRequestList,
+    freshness: Freshness,
+}
+
 /// State behind the pull request list screen. Loaded pages are kept per
-/// filter so switching tabs shows the last page at once while it reloads.
+/// filter so switching tabs shows the last page at once while it reloads;
+/// a tab with nothing loaded yet can show a saved page until its first
+/// load lands.
 #[derive(Debug)]
 pub(in crate::app) struct PullRequestListState {
     filter: PullRequestListFilter,
-    loaded: HashMap<PullRequestListFilter, PullRequestList>,
+    loaded: HashMap<PullRequestListFilter, LoadedPage>,
     error: Option<(PullRequestListFilter, ForgeError)>,
     request: RequestSlot,
     requested_filter: Option<PullRequestListFilter>,
@@ -132,7 +144,13 @@ impl PullRequestListState {
         let selected_number = self.selected_summary().map(|summary| summary.number);
         match result {
             Ok(list) => {
-                self.loaded.insert(filter, list);
+                self.loaded.insert(
+                    filter,
+                    LoadedPage {
+                        list,
+                        freshness: Freshness::Live,
+                    },
+                );
                 if self
                     .error
                     .as_ref()
@@ -152,6 +170,37 @@ impl PullRequestListState {
         true
     }
 
+    /// Shows a saved page for `filter` if the tab has nothing yet. Returns
+    /// whether the page was taken; it never replaces a loaded page, so a
+    /// saved page that arrives after the live one is dropped.
+    pub(in crate::app) fn show_saved(
+        &mut self,
+        filter: PullRequestListFilter,
+        snapshot: Snapshot<PullRequestList>,
+    ) -> bool {
+        if self.loaded.contains_key(&filter) {
+            return false;
+        }
+        self.loaded.insert(
+            filter,
+            LoadedPage {
+                list: snapshot.value,
+                freshness: Freshness::Saved {
+                    fetched_at: snapshot.fetched_at,
+                },
+            },
+        );
+        if filter == self.filter {
+            self.refilter();
+        }
+        true
+    }
+
+    /// Whether `filter`'s tab has rows to show, live or saved.
+    pub(in crate::app) fn has_page(&self, filter: PullRequestListFilter) -> bool {
+        self.loaded.contains_key(&filter)
+    }
+
     /// Stops a running load and periodic refresh, as when the screen closes.
     pub(in crate::app) fn stop(&mut self) {
         self.request.cancel();
@@ -164,7 +213,12 @@ impl PullRequestListState {
     }
 
     pub(in crate::app) fn page(&self) -> Option<&PullRequestList> {
-        self.loaded.get(&self.filter)
+        self.loaded.get(&self.filter).map(|page| &page.list)
+    }
+
+    /// How current the shown tab's rows are; `None` when it has none.
+    pub(in crate::app) fn freshness(&self) -> Option<&Freshness> {
+        self.loaded.get(&self.filter).map(|page| &page.freshness)
     }
 
     pub(in crate::app) fn error(&self) -> Option<&ForgeError> {
@@ -176,7 +230,7 @@ impl PullRequestListState {
 
     /// Total count GitHub reported for `filter`'s last load.
     pub(in crate::app) fn total_count(&self, filter: PullRequestListFilter) -> Option<u64> {
-        self.loaded.get(&filter).map(|list| list.total_count)
+        self.loaded.get(&filter).map(|page| page.list.total_count)
     }
 
     pub(in crate::app) fn visible_rows(&self) -> Vec<&PullRequestSummary> {
@@ -275,7 +329,7 @@ impl PullRequestListState {
     }
 
     fn refilter(&mut self) {
-        let Some(page) = self.loaded.get(&self.filter) else {
+        let Some(page) = self.loaded.get(&self.filter).map(|page| &page.list) else {
             self.visible.clear();
             self.selected = 0;
             return;

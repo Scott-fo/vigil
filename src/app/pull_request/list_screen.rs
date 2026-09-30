@@ -6,7 +6,10 @@ use tokio::task;
 
 use crate::{
     event::Event,
-    forge::{ForgeError, PullRequestListFilter, PullRequestSummary, RepositoryRef},
+    forge::{
+        ForgeError, PullRequestList, PullRequestListFilter, PullRequestSummary, RepositoryRef,
+        Timestamp,
+    },
     ui::{self, PullRequestListTarget},
 };
 
@@ -47,6 +50,9 @@ pub struct PullRequestListView<'a> {
     pub status: PullRequestListStatus<'a>,
     /// A reload is running while older rows show.
     pub refreshing: bool,
+    /// When GitHub reported the rows shown, if they are a snapshot saved by
+    /// an earlier session that no load has confirmed yet.
+    pub saved_at: Option<&'a Timestamp>,
     /// The last reload failed; the rows shown are older.
     pub stale_error: Option<&'a ForgeError>,
     /// Rows shown and the total GitHub matched, when capped.
@@ -95,6 +101,12 @@ impl App {
             scroll: list.scroll(),
             status,
             refreshing: list.loading() && page.is_some(),
+            // Only rows on screen have an age: when GitHub is unavailable
+            // the list explains that instead of drawing its saved rows.
+            saved_at: list
+                .freshness()
+                .and_then(|freshness| freshness.saved_at())
+                .filter(|_| status == PullRequestListStatus::Ready),
             stale_error: page.and(list.error()),
             truncated: page
                 .filter(|page| page.is_truncated())
@@ -132,7 +144,8 @@ impl App {
         self.pull_requests.list_mut().stop();
     }
 
-    /// Loads the shown tab from GitHub, superseding a running load.
+    /// Loads the shown tab from GitHub, superseding a running load. A tab
+    /// with nothing to show yet shows its saved page, if any, meanwhile.
     pub(in crate::app) fn load_pull_request_list(&mut self) {
         let Some(github) = self.pull_requests.github().cloned() else {
             return;
@@ -150,6 +163,7 @@ impl App {
         self.pull_requests
             .list_mut()
             .attach_load(request_id, handle);
+        self.read_saved_pull_request_list(filter);
     }
 
     /// Follow-up once GitHub connects: the list loads if it is waiting.
@@ -163,12 +177,20 @@ impl App {
         &mut self,
         request_id: u64,
         filter: PullRequestListFilter,
-        result: Result<crate::forge::PullRequestList, ForgeError>,
+        result: Result<PullRequestList, ForgeError>,
     ) -> bool {
-        self.pull_requests
+        let live = result.as_ref().ok().cloned();
+        if !self
+            .pull_requests
             .list_mut()
             .finish_load(request_id, filter, result)
-            && self.screen == Screen::PullRequestList
+        {
+            return false;
+        }
+        if let Some(list) = live {
+            self.save_pull_request_list(filter, list);
+        }
+        self.screen == Screen::PullRequestList
     }
 
     pub(super) fn handle_pull_request_list_tick(&mut self) -> bool {

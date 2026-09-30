@@ -6,7 +6,7 @@ use crate::{
         Check, CheckCounts, CheckRollup, CheckState, CommentState, ConversationComment, DiffSide,
         MergeMethod, MergeSettings, MergeStateStatus, Mergeability, PullRequest, PullRequestList,
         PullRequestState, PullRequestSummary, Review, ReviewDecision, ReviewState, ReviewThread,
-        ThreadComment, ThreadId, ThreadSubject, Timestamp, Viewer,
+        Snapshot, ThreadComment, ThreadId, ThreadSubject, Timestamp, Viewer,
     },
     git::{
         BranchEntry, BranchLocation, BranchSnapshot, BranchTip, FetchedPullRequest, FileEntry,
@@ -188,6 +188,13 @@ impl App {
     /// if GitHub had answered. Nothing is spawned; keys that reload must not
     /// be pressed afterwards.
     pub(crate) fn show_pull_request_list_for_test(&mut self, page: PullRequestList) {
+        self.show_empty_pull_request_list_for_test();
+        let list = self.pull_requests.list_mut();
+        let (id, filter) = list.begin_load();
+        list.finish_load(id, filter, Ok(page));
+    }
+
+    fn show_empty_pull_request_list_for_test(&mut self) {
         self.pull_requests
             .connect_for_test(crate::forge::GitHub::new(
                 self.repo_root.clone(),
@@ -197,9 +204,6 @@ impl App {
                     name: "vigil".to_string(),
                 },
             ));
-        let list = self.pull_requests.list_mut();
-        let (id, filter) = list.begin_load();
-        list.finish_load(id, filter, Ok(page));
         self.screen = crate::app::Screen::PullRequestList;
     }
 
@@ -247,14 +251,40 @@ impl App {
         origin: super::state::ReviewOrigin,
     ) {
         let summary = detail.summary.clone();
+        let (_, detail_id) = self.pull_requests.begin_open(summary.clone(), origin);
+        self.pull_requests.finish_detail(detail_id, Ok(detail));
+        self.enter_pull_request_for_test(summary, files);
+    }
+
+    /// Opens `summary`'s review as if its commits were fetched, with
+    /// `saved` read from the forge cache during the fetch and the live
+    /// detail still loading. Returns the detail request id, to deliver the
+    /// live detail with.
+    pub(crate) fn open_pull_request_with_saved_detail_for_test(
+        &mut self,
+        summary: PullRequestSummary,
+        saved: Snapshot<PullRequest>,
+        files: Vec<FileEntry>,
+    ) -> u64 {
+        let (fetch_id, detail_id) = self
+            .pull_requests
+            .begin_open(summary.clone(), super::state::ReviewOrigin::Elsewhere);
+        self.pull_requests.show_saved_detail(summary.number, saved);
+        let summary = self
+            .pull_requests
+            .finish_fetch(fetch_id)
+            .expect("the fetch is current");
+        self.enter_pull_request_for_test(summary, files);
+        detail_id
+    }
+
+    fn enter_pull_request_for_test(&mut self, summary: PullRequestSummary, files: Vec<FileEntry>) {
         let fetched = FetchedPullRequest {
             remote: "origin".to_string(),
             head_ref: crate::git::pull_request_head_ref(summary.number),
             head_oid: summary.head_oid.clone(),
             base_oid: summary.base_oid.clone(),
         };
-        let (_, detail_id) = self.pull_requests.begin_open(summary.clone(), origin);
-        self.pull_requests.finish_detail(detail_id, Ok(detail));
         self.pull_requests
             .enter(summary.clone(), fetched.head_oid.clone());
         self.review_mode = ReviewMode::PullRequest(PullRequestSelection::new(&summary, &fetched));

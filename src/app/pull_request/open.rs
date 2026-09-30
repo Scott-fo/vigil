@@ -11,7 +11,7 @@ use crate::{
 use super::{
     super::{ActivePane, App, ReviewMode, Screen, SnackbarVariant},
     PullRequestEvent, PullRequestSelection, PullRequestTimer,
-    state::{PollOutcome, PullRequestPage, ReviewOrigin},
+    state::{DetailOutcome, PollOutcome, PullRequestPage, ReviewOrigin},
     task::spawn_ticker,
 };
 
@@ -32,7 +32,8 @@ impl App {
     /// Opens `summary` in the review screen. When its head and base commits
     /// are already local the review switches over in milliseconds; otherwise
     /// they are fetched first, and until the fetch lands the current review
-    /// stays up. `origin` decides where Esc goes back to.
+    /// stays up. Its saved detail, if any, shows until the live one loads.
+    /// `origin` decides where Esc goes back to.
     pub(in crate::app) fn open_pull_request(
         &mut self,
         summary: PullRequestSummary,
@@ -86,6 +87,7 @@ impl App {
         });
         self.pull_requests.attach_fetch(fetch_id, fetch);
         self.spawn_pull_request_detail_load(github, detail_id, number);
+        self.read_saved_pull_request(number);
     }
 
     /// The commits were not local, so opening waits on the network: say so.
@@ -186,8 +188,14 @@ impl App {
     ) -> color_eyre::Result<()> {
         let selection = PullRequestSelection::new(&summary, &fetched);
         let reloading = self.pull_requests.open_number() == Some(summary.number);
+        let number = summary.number;
         if let Some(replaced) = self.pull_requests.enter(summary, fetched.head_oid.clone()) {
             self.spawn_pull_request_ref_cleanup(replaced);
+        }
+        // Detail that landed during the fetch may already know of a newer
+        // head; `enter` clears the notice otherwise.
+        if self.pull_request_has_newer_head() {
+            self.announce_newer_head(number);
         }
         if !reloading {
             self.load_pull_request_drafts();
@@ -222,8 +230,17 @@ impl App {
         request_id: u64,
         result: Result<PullRequest, ForgeError>,
     ) -> bool {
-        if !self.pull_requests.finish_detail(request_id, result) {
+        let live = result.as_ref().ok().cloned();
+        let Some(outcome) = self.pull_requests.finish_detail(request_id, result) else {
             return false;
+        };
+        if let Some(detail) = live {
+            self.save_pull_request(detail);
+        }
+        if outcome == DetailOutcome::HeadMoved
+            && let Some(number) = self.pull_requests.open_number()
+        {
+            self.announce_newer_head(number);
         }
         if let Some(error) = self
             .pull_requests
@@ -283,10 +300,7 @@ impl App {
             None | Some(PollOutcome::Unchanged) => false,
             Some(PollOutcome::HeadMoved { first_notice }) => {
                 if first_notice && let Some(number) = self.pull_requests.open_number() {
-                    self.show_snackbar(
-                        format!("pull request #{number} has new commits · r to reload"),
-                        SnackbarVariant::Info,
-                    );
+                    self.announce_newer_head(number);
                 }
                 true
             }
@@ -295,6 +309,13 @@ impl App {
                 true
             }
         }
+    }
+
+    fn announce_newer_head(&mut self, number: u64) {
+        self.show_snackbar(
+            format!("pull request #{number} has new commits · r to reload"),
+            SnackbarVariant::Info,
+        );
     }
 
     /// Reloads reviews, comments, and checks for the pull request under

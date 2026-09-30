@@ -172,7 +172,11 @@ fn detail_that_arrives_before_the_fetch_applies_when_the_review_opens() {
         DiffSide::Right,
         Some(3),
     )];
-    assert!(state.finish_detail(detail_id, Ok(fixtures::pull_request(17, threads))));
+    assert!(
+        state
+            .finish_detail(detail_id, Ok(fixtures::pull_request(17, threads)))
+            .is_some()
+    );
     assert!(state.open().is_none(), "nothing opens before the fetch");
 
     let summary = state.finish_fetch(fetch_id).expect("fetch is current");
@@ -191,7 +195,11 @@ fn stale_fetches_and_details_are_dropped() {
     let (new_fetch, _) = state.begin_open(fixtures::summary(2), ReviewOrigin::Elsewhere);
 
     assert!(state.finish_fetch(old_fetch).is_none());
-    assert!(!state.finish_detail(old_detail, Ok(fixtures::pull_request(1, Vec::new()))));
+    assert!(
+        state
+            .finish_detail(old_detail, Ok(fixtures::pull_request(1, Vec::new())))
+            .is_none()
+    );
     assert_eq!(state.finish_fetch(new_fetch).map(|pr| pr.number), Some(2));
 }
 
@@ -277,7 +285,11 @@ fn closing_ends_the_review_and_drops_late_details() {
     state.close();
 
     assert!(state.open().is_none());
-    assert!(!state.finish_detail(id, Ok(fixtures::pull_request(17, Vec::new()))));
+    assert!(
+        state
+            .finish_detail(id, Ok(fixtures::pull_request(17, Vec::new())))
+            .is_none()
+    );
 }
 
 #[test]

@@ -36,6 +36,12 @@
 //!   per tab, filtered by typed text, and reloaded every 60 seconds while on
 //!   screen. Enter opens the selected row; a query such as `#17` opens that
 //!   pull request by number even when it is closed or merged.
+//! - **Saved snapshots.** A tab with nothing loaded, and a review opened
+//!   without its detail, show the last page or detail saved in the forge
+//!   cache, marked with its age, until the live load replaces it; every live
+//!   result is saved in turn (see [`saved`]). Writes to GitHub that depend
+//!   on what the detail says (merging, state changes) wait for the live
+//!   detail.
 //! - **Reviewing and acting on it.** Draft comments (`c`) are local and
 //!   persisted in the review database until a review (`S`) sends them;
 //!   replies (`R`), resolving (`T`), conversation comments (`C`), merging
@@ -61,6 +67,7 @@ mod list_screen;
 mod merge;
 mod modal;
 mod open;
+mod saved;
 mod selection;
 mod state;
 mod submit;
@@ -123,6 +130,16 @@ impl App {
                 filter,
                 result,
             } => Ok(self.handle_pull_request_list_loaded(request_id, filter, result)),
+            PullRequestEvent::SavedListRead {
+                repository,
+                filter,
+                snapshot,
+            } => Ok(self.handle_saved_pull_request_list(&repository, filter, snapshot)),
+            PullRequestEvent::SavedDetailRead {
+                repository,
+                number,
+                snapshot,
+            } => Ok(self.handle_saved_pull_request(&repository, number, snapshot)),
             PullRequestEvent::LookedUp { request_id, result } => {
                 Ok(self.handle_pull_request_looked_up(request_id, result))
             }
@@ -147,5 +164,7 @@ impl App {
 pub(crate) mod fixtures;
 #[cfg(test)]
 mod review_tests;
+#[cfg(test)]
+mod saved_tests;
 #[cfg(test)]
 mod tests;

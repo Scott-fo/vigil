@@ -113,7 +113,13 @@ impl App {
             return;
         };
         let number = open.summary().number;
-        let Some(detail) = open.detail() else {
+        // State changes are offered from what GitHub says now, never from a
+        // saved snapshot.
+        if let Some(blocker) = self.unconfirmed_detail_blocker() {
+            self.show_snackbar(blocker.to_string(), SnackbarVariant::Info);
+            return;
+        }
+        let Some(detail) = open.live_detail() else {
             self.show_snackbar(
                 "pull request details are still loading".to_string(),
                 SnackbarVariant::Info,

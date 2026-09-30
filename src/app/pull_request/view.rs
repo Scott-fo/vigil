@@ -1,6 +1,6 @@
 use crate::{
     app::{DiffViewMode, ReviewMode},
-    forge::{ForgeError, PullRequest, PullRequestSummary},
+    forge::{ForgeError, PullRequest, PullRequestSummary, Timestamp},
     git,
     review::{DisplayThread, ThreadRow, UnplacedReason},
 };
@@ -18,8 +18,13 @@ pub struct PullRequestOverview<'a> {
     /// The latest summary: from the list or branch lookup, then from each
     /// detail load and poll.
     pub summary: &'a PullRequestSummary,
-    /// `None` until the first detail load finishes.
+    /// `None` until the first detail load finishes, or a saved one is read.
     pub detail: Option<&'a PullRequest>,
+    /// When GitHub reported `detail`, if it is a snapshot saved by an
+    /// earlier session that no load has confirmed yet.
+    pub saved_at: Option<&'a Timestamp>,
+    /// A detail load is running.
+    pub refreshing: bool,
     pub detail_error: Option<&'a ForgeError>,
     /// Threads the diff cannot show, with why.
     pub unplaced_threads: Vec<(UnplacedReason, &'a DisplayThread)>,
@@ -100,6 +105,8 @@ impl App {
             selection,
             summary: open.summary(),
             detail: open.detail(),
+            saved_at: open.detail_saved_at(),
+            refreshing: self.pull_requests.detail_refreshing(),
             detail_error: open.detail_error(),
             unplaced_threads,
             drafts: self.draft_entries(),
