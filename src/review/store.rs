@@ -1,18 +1,15 @@
 //! The on-disk review database.
 //!
-//! [`ReviewStore`] opens (creating if needed) a SQLite database under the XDG
-//! data directory and migrates it to the current schema. Feature modules such
-//! as [`super::viewed`] and [`super::drafts`] add their own queries on top of
-//! [`ReviewStore`].
+//! [`ReviewStore`] opens (creating if needed) a SQLite database in vigil's
+//! per-user data directory and migrates it to the current schema. Feature
+//! modules such as [`super::viewed`] and [`super::drafts`] add their own
+//! queries on top of [`ReviewStore`].
 //!
 //! Migrations are additive and idempotent: every table is created if missing,
 //! so opening a database of any earlier version brings it to the current
 //! schema without touching the rows it already holds.
 
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 use color_eyre::eyre::WrapErr;
 use rusqlite::Connection;
@@ -102,31 +99,7 @@ impl ReviewStore {
 }
 
 fn default_database_path() -> PathBuf {
-    data_dir().join("reviews.sqlite3")
-}
-
-fn data_dir() -> PathBuf {
-    if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
-        let trimmed = xdg_data_home.trim();
-        if !trimmed.is_empty() {
-            return database_dir_from_data_home(Path::new(trimmed));
-        }
-    }
-
-    database_dir_from_data_home(
-        &home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".local")
-            .join("share"),
-    )
-}
-
-fn database_dir_from_data_home(data_home: &Path) -> PathBuf {
-    data_home.join("vigil")
-}
-
-fn home_dir() -> Option<PathBuf> {
-    env::var_os("HOME").map(PathBuf::from)
+    crate::user_data::data_dir().join("reviews.sqlite3")
 }
 
 pub(super) fn now_ms_i64() -> i64 {
@@ -140,6 +113,8 @@ pub(super) fn now_ms_i64() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use rusqlite::params;
 
     use super::*;
@@ -163,13 +138,6 @@ mod tests {
             .expect("query")
             .collect::<Result<_, _>>()
             .expect("rows")
-    }
-
-    #[test]
-    fn database_directory_uses_xdg_data_home_style_location() {
-        let path = database_dir_from_data_home(Path::new("/tmp/vigil-xdg-data"));
-
-        assert_eq!(path, PathBuf::from("/tmp/vigil-xdg-data").join("vigil"));
     }
 
     /// Databases written before the AI review tables were removed must keep
