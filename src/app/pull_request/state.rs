@@ -255,6 +255,8 @@ pub(in crate::app) struct PullRequests {
     connection: ForgeConnection,
     connect: RequestSlot,
     connect_reason: ConnectReason,
+    /// Asks GitHub for the canonical name of a locally resolved repository.
+    confirm: RequestSlot,
     pending: Option<PendingAction>,
     current_branch: CurrentBranch,
     /// The pull request being fetched before its review opens.
@@ -303,6 +305,7 @@ impl PullRequests {
             connection,
             connect: RequestSlot::default(),
             connect_reason: ConnectReason::Background,
+            confirm: RequestSlot::default(),
             pending: None,
             current_branch: CurrentBranch::default(),
             opening: None,
@@ -401,10 +404,48 @@ impl PullRequests {
         if let ForgeConnection::Connected(github) = &self.connection
             && github.repo_root() != repo_root
         {
-            let repository = github.repository().clone();
-            self.connection = ForgeConnection::Connected(GitHub::new(repo_root, repository));
+            self.connection = ForgeConnection::Connected(github.with_repo_root(repo_root));
             self.current_branch = CurrentBranch::default();
         }
+    }
+
+    /// Starts confirming a locally resolved repository's canonical name.
+    /// Returns the request id and the client to ask with, or `None` when
+    /// nothing needs confirming.
+    pub(in crate::app) fn begin_confirm(&mut self) -> Option<(u64, GitHub)> {
+        let github = self
+            .github()
+            .filter(|github| !github.is_repository_confirmed())?
+            .clone();
+        Some((self.confirm.begin(), github))
+    }
+
+    pub(in crate::app) fn attach_confirm(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {
+        self.confirm.attach(id, handle);
+    }
+
+    /// Switches to the confirmed client. Returns whether the repository was
+    /// renamed or transferred (not merely spelled in another case), so
+    /// results loaded under the old name are stale; false for stale or
+    /// failed confirmations, which keep the local name.
+    pub(in crate::app) fn finish_confirm(
+        &mut self,
+        id: u64,
+        result: Result<GitHub, ForgeError>,
+    ) -> bool {
+        if !self.confirm.complete(id) {
+            return false;
+        }
+        let (Ok(confirmed), ForgeConnection::Connected(github)) = (result, &self.connection) else {
+            return false;
+        };
+        let (old, new) = (github.repository(), confirmed.repository());
+        let renamed = !(old.host.eq_ignore_ascii_case(&new.host)
+            && old.owner.eq_ignore_ascii_case(&new.owner)
+            && old.name.eq_ignore_ascii_case(&new.name));
+        self.connection =
+            ForgeConnection::Connected(confirmed.with_repo_root(github.repo_root().to_path_buf()));
+        renamed
     }
 
     pub(in crate::app) fn set_pending(&mut self, action: PendingAction) {

@@ -11,7 +11,9 @@
 //!   click on the footer chip, the list) retries and explains why. Since
 //!   connecting may not run `gh`, a missing or logged-out `gh`, or a
 //!   repository `gh` cannot see, is often found by the first request
-//!   instead, which turns the connection off the same way.
+//!   instead, which turns the connection off the same way. A repository
+//!   named by its remote URL is confirmed with GitHub in the background;
+//!   after a rename the client switches and a shown list reloads.
 //! - **The current branch's pull request**, shown as a footer chip. It is
 //!   looked up again whenever the branch snapshot reloads, at most every few
 //!   seconds for the same branch tip.
@@ -97,6 +99,9 @@ impl App {
         match event {
             PullRequestEvent::Connected { request_id, result } => {
                 Ok(self.handle_forge_connected(request_id, result))
+            }
+            PullRequestEvent::RepositoryConfirmed { request_id, result } => {
+                Ok(self.handle_repository_confirmed(request_id, result))
             }
             PullRequestEvent::FetchStarted { request_id } => {
                 Ok(self.handle_pull_request_fetch_started(request_id))

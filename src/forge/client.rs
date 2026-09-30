@@ -36,6 +36,8 @@ use super::{
 pub struct GitHub {
     repo_root: PathBuf,
     repository: RepositoryRef,
+    /// Whether GitHub itself named `repository`, rather than a remote URL.
+    confirmed: bool,
 }
 
 impl GitHub {
@@ -49,6 +51,10 @@ impl GitHub {
     /// as [`ForgeError::GhNotInstalled`] or [`ForgeError::NotAuthenticated`]
     /// from the first request. Otherwise it asks `gh repo view`.
     ///
+    /// A locally resolved repository is named as the remote URL spells it,
+    /// which is stale after a rename or transfer; see
+    /// [`Self::is_repository_confirmed`] and [`Self::confirm_repository`].
+    ///
     /// Fails with [`ForgeError::NotGitHubRepository`] when no remote points
     /// at a GitHub host, which callers should treat as "PR features are
     /// unavailable" rather than as an error to report.
@@ -58,6 +64,7 @@ impl GitHub {
             return Ok(Self {
                 repo_root,
                 repository,
+                confirmed: false,
             });
         }
         let args = strings(&["repo", "view", "--json", "nameWithOwner,url"]);
@@ -66,14 +73,36 @@ impl GitHub {
         Ok(Self {
             repo_root,
             repository: repository_ref(&view)?,
+            confirmed: true,
         })
     }
 
-    /// A client for a known repository, skipping remote resolution.
+    /// A client for a known repository, skipping remote resolution. The
+    /// caller vouches for `repository`, so it counts as confirmed.
     pub fn new(repo_root: impl Into<PathBuf>, repository: RepositoryRef) -> Self {
         Self {
             repo_root: repo_root.into(),
             repository,
+            confirmed: true,
+        }
+    }
+
+    /// A client left as a local [`Self::connect`] leaves it: `repository` as
+    /// a remote URL spells it, not yet confirmed.
+    #[cfg(test)]
+    pub(crate) fn unconfirmed(repo_root: impl Into<PathBuf>, repository: RepositoryRef) -> Self {
+        Self {
+            confirmed: false,
+            ..Self::new(repo_root, repository)
+        }
+    }
+
+    /// The same client for another checkout of the repository, such as a
+    /// worktree.
+    pub fn with_repo_root(&self, repo_root: impl Into<PathBuf>) -> Self {
+        Self {
+            repo_root: repo_root.into(),
+            ..self.clone()
         }
     }
 
@@ -83,6 +112,34 @@ impl GitHub {
 
     pub fn repo_root(&self) -> &Path {
         &self.repo_root
+    }
+
+    /// Whether GitHub itself named [`Self::repository`]. False after a
+    /// [`Self::connect`] that resolved it from a remote URL alone.
+    pub fn is_repository_confirmed(&self) -> bool {
+        self.confirmed
+    }
+
+    /// This client with GitHub's canonical `owner/name`, which follows
+    /// renames and transfers. One small GraphQL request.
+    ///
+    /// Most requests follow renames on their own, but GitHub search does
+    /// not: [`Self::list_pull_requests`] under an old name finds nothing.
+    /// Callers that connected locally should confirm in the background and
+    /// switch to the returned client if its repository differs.
+    pub async fn confirm_repository(&self) -> Result<Self, ForgeError> {
+        let request = GraphqlRequest::new(
+            documents::REPOSITORY,
+            json!({ "owner": self.repository.owner, "name": self.repository.name }),
+        );
+        let data = self.query("repository", &request).await?;
+        let view: RepositoryView =
+            decode_value("repository", take_at("repository", data, "/repository")?)?;
+        Ok(Self {
+            repo_root: self.repo_root.clone(),
+            repository: repository_ref(&view)?,
+            confirmed: true,
+        })
     }
 
     /// The pull request for the checked-out branch, found the way
@@ -640,6 +697,29 @@ mod tests {
                 matches!(missing, ForgeError::NotFound { .. }),
                 "{missing:?}"
             );
+        }
+
+        #[tokio::test]
+        #[ignore = "talks to github.com through gh"]
+        async fn confirming_follows_a_rename_that_search_does_not() {
+            // rust-lang/rustup was once rust-lang/rustup.rs.
+            let old_name = GitHub::unconfirmed(
+                repo_root(),
+                RepositoryRef {
+                    host: "github.com".into(),
+                    owner: "rust-lang".into(),
+                    name: "rustup.rs".into(),
+                },
+            );
+            let confirmed = old_name.confirm_repository().await.unwrap();
+            assert_eq!(confirmed.repository().name_with_owner(), "rust-lang/rustup");
+            assert!(confirmed.is_repository_confirmed());
+
+            let filter = PullRequestListFilter::AllOpen;
+            let stale = old_name.list_pull_requests(filter).await.unwrap();
+            assert_eq!(stale.total_count, 0, "search does not follow renames");
+            let current = confirmed.list_pull_requests(filter).await.unwrap();
+            assert!(current.total_count > 0);
         }
 
         #[tokio::test]

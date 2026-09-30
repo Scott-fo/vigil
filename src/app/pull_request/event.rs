@@ -17,6 +17,11 @@ pub enum PullRequestEvent {
         request_id: u64,
         result: Result<GitHub, ForgeError>,
     },
+    /// GitHub's canonical name for a repository resolved from its remotes.
+    RepositoryConfirmed {
+        request_id: u64,
+        result: Result<GitHub, ForgeError>,
+    },
     CurrentBranchLoaded {
         request_id: u64,
         result: Result<Option<PullRequestSummary>, ForgeError>,
@@ -70,6 +75,7 @@ impl PullRequestEvent {
     /// is left out: its failures are handled as connection state.
     pub(super) fn request_error(&self) -> Option<&ForgeError> {
         match self {
+            Self::RepositoryConfirmed { result, .. } => result.as_ref().err(),
             Self::CurrentBranchLoaded { result, .. } => result.as_ref().err(),
             Self::DetailLoaded { result, .. } => result.as_ref().as_ref().err(),
             Self::Polled { result, .. } | Self::LookedUp { result, .. } => result.as_ref().err(),

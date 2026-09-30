@@ -72,6 +72,7 @@ impl App {
         match outcome {
             ConnectOutcome::Connected => {
                 self.pull_requests.rebind_repo_root(&self.repo_root);
+                self.confirm_forge_repository();
                 let user_waiting =
                     self.pull_requests.pending() == Some(PendingAction::OpenCurrentBranch);
                 self.refresh_current_branch_pull_request(user_waiting);
@@ -87,6 +88,40 @@ impl App {
                 }
             }
         }
+        true
+    }
+}
+
+impl App {
+    /// Asks GitHub, in the background, for the canonical name of a
+    /// repository resolved from its remote URL. The connection is used
+    /// meanwhile; a rename or transfer switches it when the answer lands.
+    fn confirm_forge_repository(&mut self) {
+        let Some((request_id, github)) = self.pull_requests.begin_confirm() else {
+            return;
+        };
+        let sender = self.events.sender();
+        let handle = task::spawn(async move {
+            let result = github.confirm_repository().await;
+            let _ = sender.send(Event::PullRequest(PullRequestEvent::RepositoryConfirmed {
+                request_id,
+                result,
+            }));
+        });
+        self.pull_requests.attach_confirm(request_id, handle);
+    }
+
+    /// GitHub search does not follow renames, so a list loaded under the old
+    /// name is reloaded under the new one.
+    pub(super) fn handle_repository_confirmed(
+        &mut self,
+        request_id: u64,
+        result: Result<GitHub, ForgeError>,
+    ) -> bool {
+        if !self.pull_requests.finish_confirm(request_id, result) {
+            return false;
+        }
+        self.load_pull_request_list_if_shown();
         true
     }
 }

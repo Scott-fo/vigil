@@ -29,6 +29,15 @@
 //! path does not run `gh`, a missing or logged-out `gh` first shows up as
 //! the error of the first request rather than of `connect`.
 //!
+//! The fast path names the repository as the remote URL spells it, which is
+//! stale after a rename or transfer. Most requests follow renames anyway,
+//! but GitHub search does not, so a list under the old name comes back
+//! empty. [`GitHub::confirm_repository`] asks GitHub for the canonical name
+//! in one small GraphQL request (about one rate-limit point); run it in the
+//! background after a local connect ([`GitHub::is_repository_confirmed`] is
+//! false) and switch clients if the name changed. The client is usable
+//! before it answers.
+//!
 //! Every other operation is async and spawns `gh` (tens to hundreds of
 //! milliseconds plus network). Nothing is cached: each result is a
 //! snapshot, and callers that display long-lived state own refreshing it.

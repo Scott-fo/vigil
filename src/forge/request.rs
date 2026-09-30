@@ -50,6 +50,7 @@ pub(super) mod documents {
     pub const CHECKS_PAGE: &str = document!("checks_page", "check_fields");
     pub const PULL_REQUEST_ID: &str = document!("pull_request_id");
     pub const MERGE_TARGET: &str = document!("merge_target");
+    pub const REPOSITORY: &str = document!("repository");
 
     pub const MERGE: &str = document!("merge");
     pub const ENABLE_AUTO_MERGE: &str = document!("enable_auto_merge");
@@ -77,6 +78,7 @@ pub(super) mod documents {
         ("CHECKS_PAGE", CHECKS_PAGE),
         ("PULL_REQUEST_ID", PULL_REQUEST_ID),
         ("MERGE_TARGET", MERGE_TARGET),
+        ("REPOSITORY", REPOSITORY),
     ];
 
     /// Every mutation document, for live schema validation.

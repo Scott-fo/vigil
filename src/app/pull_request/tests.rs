@@ -783,6 +783,90 @@ async fn a_lookup_that_cannot_see_the_repository_stops_background_lookups() {
     app.quit();
 }
 
+fn repository(owner: &str, name: &str) -> RepositoryRef {
+    RepositoryRef {
+        host: "github.com".to_string(),
+        owner: owner.to_string(),
+        name: name.to_string(),
+    }
+}
+
+/// State connected to `scott-fo/VIGIL` as a remote URL spells it.
+fn connected_locally() -> PullRequests {
+    let mut state = PullRequests::default();
+    let id = state.begin_connect(ConnectReason::Background).unwrap();
+    state.finish_connect(
+        id,
+        Ok(GitHub::unconfirmed(
+            "/tmp/vigil-pr-tests",
+            repository("scott-fo", "VIGIL"),
+        )),
+    );
+    state
+}
+
+#[test]
+fn only_locally_resolved_repositories_are_confirmed() {
+    assert!(connected().begin_confirm().is_none());
+
+    let mut state = connected_locally();
+    let (id, github) = state.begin_confirm().expect("a local connect is confirmed");
+    assert_eq!(github.repository(), &repository("scott-fo", "VIGIL"));
+    // A spelling difference adopts GitHub's name without calling the
+    // repository renamed.
+    let canonical = GitHub::new("/elsewhere", repository("Scott-fo", "vigil"));
+    assert!(!state.finish_confirm(id, Ok(canonical)));
+    let github = state.github().unwrap();
+    assert_eq!(github.repository(), &repository("Scott-fo", "vigil"));
+    assert_eq!(github.repo_root(), Path::new("/tmp/vigil-pr-tests"));
+    assert!(github.is_repository_confirmed());
+    assert!(state.begin_confirm().is_none());
+}
+
+#[test]
+fn a_renamed_repository_switches_the_client_once_confirmed() {
+    let mut state = connected_locally();
+    let (stale, _) = state.begin_confirm().unwrap();
+    let (id, _) = state.begin_confirm().unwrap();
+    let renamed = GitHub::new("/tmp/vigil-pr-tests", repository("Scott-fo", "vigil-next"));
+    assert!(!state.finish_confirm(stale, Ok(renamed.clone())));
+    assert!(state.finish_confirm(id, Ok(renamed)));
+    assert_eq!(
+        state.github().unwrap().repository(),
+        &repository("Scott-fo", "vigil-next")
+    );
+
+    // A failed confirmation keeps the name the remote gave.
+    let mut state = connected_locally();
+    let (id, _) = state.begin_confirm().unwrap();
+    assert!(!state.finish_confirm(id, Err(ForgeError::GhNotInstalled)));
+    assert_eq!(
+        state.github().unwrap().repository(),
+        &repository("scott-fo", "VIGIL")
+    );
+}
+
+#[tokio::test]
+async fn confirming_a_repository_gh_cannot_see_turns_the_connection_off() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.pull_requests = connected_locally();
+    let (request_id, _) = app.pull_requests.begin_confirm().unwrap();
+    app.handle_pull_request_event(PullRequestEvent::RepositoryConfirmed {
+        request_id,
+        result: Err(ForgeError::NotFound {
+            message: "Could not resolve to a Repository with the name 'scott-fo/VIGIL'."
+                .to_string(),
+        }),
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        app.pull_requests.connection(),
+        ForgeConnection::Unavailable(ForgeError::NotFound { .. })
+    ));
+    app.quit();
+}
+
 #[test]
 fn failed_current_branch_lookups_wait_out_the_interval_too() {
     let mut state = connected();
