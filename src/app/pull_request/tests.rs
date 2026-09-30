@@ -1080,6 +1080,38 @@ async fn a_confirmed_rename_forgets_every_tab_loaded_under_the_old_name() {
     app.quit();
 }
 
+/// One transient failure must not leave a renamed repository's list
+/// empty for the session, nor may retries hammer GitHub.
+#[test]
+fn a_failed_confirmation_is_retried_at_most_once_a_minute() {
+    let mut state = connected_locally();
+    let (id, _) = state.begin_confirm().unwrap();
+    let later = Instant::now() + Duration::from_secs(120);
+    assert!(
+        state.begin_confirm_retry(later).is_none(),
+        "not while one runs"
+    );
+    assert!(!state.finish_confirm(id, Err(ForgeError::GhNotInstalled)));
+
+    let soon = Instant::now() + Duration::from_secs(10);
+    assert!(
+        state.begin_confirm_retry(soon).is_none(),
+        "not within a minute"
+    );
+    let (retry, github) = state
+        .begin_confirm_retry(later)
+        .expect("retried after a minute");
+    assert_eq!(github.repository(), &repository("scott-fo", "VIGIL"));
+    let canonical = GitHub::new("/tmp/vigil-pr-tests", repository("Scott-fo", "vigil"));
+    state.finish_confirm(retry, Ok(canonical));
+    assert!(
+        state
+            .begin_confirm_retry(later + Duration::from_secs(3600))
+            .is_none(),
+        "a confirmed name is never asked about again"
+    );
+}
+
 #[tokio::test]
 async fn confirming_a_repository_gh_cannot_see_turns_the_connection_off() {
     let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));

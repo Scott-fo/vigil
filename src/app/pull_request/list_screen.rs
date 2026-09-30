@@ -131,6 +131,7 @@ impl App {
         self.clear_diff_text_selection();
         self.find_prefix_pending = false;
         if self.ensure_forge_connection(ConnectReason::UserRequest) {
+            self.retry_forge_repository_confirm();
             self.load_pull_request_list();
         }
         let ticker = spawn_ticker(self.events.sender(), LIST_POLL_INTERVAL, || {
@@ -201,6 +202,7 @@ impl App {
 
     pub(super) fn handle_pull_request_list_tick(&mut self) -> bool {
         if self.screen == Screen::PullRequestList && !self.pull_requests.list().loading() {
+            self.retry_forge_repository_confirm();
             self.load_pull_request_list();
             return true;
         }

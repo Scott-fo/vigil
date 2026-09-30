@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use tokio::task;
 
 use crate::{
@@ -97,9 +99,21 @@ impl App {
     /// repository resolved from its remote URL. The connection is used
     /// meanwhile; a rename or transfer switches it when the answer lands.
     fn confirm_forge_repository(&mut self) {
-        let Some((request_id, github)) = self.pull_requests.begin_confirm() else {
-            return;
-        };
+        if let Some((request_id, github)) = self.pull_requests.begin_confirm() {
+            self.spawn_repository_confirm(request_id, github);
+        }
+    }
+
+    /// Retries a confirmation that failed, so one transient error does not
+    /// leave a renamed repository's list empty for the session. Rate
+    /// limited; called when the list opens and on its refresh ticks.
+    pub(super) fn retry_forge_repository_confirm(&mut self) {
+        if let Some((request_id, github)) = self.pull_requests.begin_confirm_retry(Instant::now()) {
+            self.spawn_repository_confirm(request_id, github);
+        }
+    }
+
+    fn spawn_repository_confirm(&mut self, request_id: u64, github: GitHub) {
         let sender = self.events.sender();
         let handle = task::spawn(async move {
             let result = github.confirm_repository().await;

@@ -45,6 +45,10 @@ pub(in crate::app) enum DraftLoad {
 /// tree change, and each lookup spends two `gh` calls.
 const CURRENT_BRANCH_RELOAD_INTERVAL: Duration = Duration::from_secs(15);
 
+/// A repository name left unconfirmed, as after a failed confirmation, is
+/// asked about again at most this often.
+const CONFIRM_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Whether vigil can talk to GitHub for this repository.
 #[derive(Debug)]
 pub(in crate::app) enum ForgeConnection {
@@ -389,6 +393,8 @@ pub(in crate::app) struct PullRequests {
     connect_reason: ConnectReason,
     /// Asks GitHub for the canonical name of a locally resolved repository.
     confirm: RequestSlot,
+    /// When the repository name was last sent to GitHub to confirm.
+    last_confirm_attempt: Option<Instant>,
     pending: Option<PendingAction>,
     current_branch: CurrentBranch,
     /// The pull request being fetched before its review opens.
@@ -459,6 +465,7 @@ impl PullRequests {
             connect: RequestSlot::default(),
             connect_reason: ConnectReason::Background,
             confirm: RequestSlot::default(),
+            last_confirm_attempt: None,
             pending: None,
             current_branch: CurrentBranch::default(),
             opening: None,
@@ -569,10 +576,28 @@ impl PullRequests {
     /// Returns the request id and the client to ask with, or `None` when
     /// nothing needs confirming.
     pub(in crate::app) fn begin_confirm(&mut self) -> Option<(u64, GitHub)> {
+        self.begin_confirm_at(Instant::now())
+    }
+
+    /// Asks again about a name still unconfirmed, as after a failed
+    /// confirmation left a renamed repository's list empty: never while an
+    /// attempt runs, and at most once per [`CONFIRM_RETRY_INTERVAL`].
+    pub(in crate::app) fn begin_confirm_retry(&mut self, now: Instant) -> Option<(u64, GitHub)> {
+        let recent = self
+            .last_confirm_attempt
+            .is_some_and(|at| now.saturating_duration_since(at) < CONFIRM_RETRY_INTERVAL);
+        if self.confirm.in_flight() || recent {
+            return None;
+        }
+        self.begin_confirm_at(now)
+    }
+
+    fn begin_confirm_at(&mut self, now: Instant) -> Option<(u64, GitHub)> {
         let github = self
             .github()
             .filter(|github| !github.is_repository_confirmed())?
             .clone();
+        self.last_confirm_attempt = Some(now);
         Some((self.confirm.begin(), github))
     }
 
