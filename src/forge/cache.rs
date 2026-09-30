@@ -16,6 +16,11 @@
 //! Saving never replaces a snapshot with an older one, so writers that race
 //! (a live load and a background prefetch) keep the newest.
 //!
+//! [`ForgeCache::stale_pull_requests`] answers the opposite question for a
+//! prefetch: which list rows have no saved detail for the `updated_at`,
+//! head, and check rollup they report, and so are worth loading. It reads
+//! only three columns stored beside each detail, never the detail itself.
+//!
 //! # Write policy
 //!
 //! Callers save every live result; the cache decides what reaches the disk,
@@ -57,11 +62,16 @@ use color_eyre::eyre::WrapErr;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::types::{PullRequest, PullRequestList, PullRequestListFilter, RepositoryRef, Timestamp};
+use super::types::{
+    CheckRollup, PullRequest, PullRequestList, PullRequestListFilter, PullRequestSummary,
+    RepositoryRef, Timestamp,
+};
 
 /// The encoding of saved rows. Bump it whenever a cached domain type
 /// changes shape or meaning; opening a cache of another version empties it.
-const CACHE_VERSION: i64 = 1;
+/// Version 2 adds the `updated_at`, `head_oid`, and `checks` columns of
+/// details.
+const CACHE_VERSION: i64 = 2;
 
 /// Confirming unchanged content moves its fetch time only once the saved
 /// one is this far behind.
@@ -165,6 +175,23 @@ impl RowKey {
     }
 }
 
+/// What a saved detail was current for, stored in columns of its own so
+/// [`ForgeCache::stale_pull_requests`] can compare it with a list row
+/// without decoding the detail.
+#[derive(Debug, Clone, Copy)]
+struct DetailFacts<'a> {
+    updated_at: &'a str,
+    head_oid: &'a str,
+    /// [`checks_fact`] of the summary's check rollup.
+    checks: &'a str,
+}
+
+/// A check rollup as stored for comparison. CI finishing does not move a
+/// pull request's `updated_at`, so the rollup is compared on its own.
+fn checks_fact(checks: &Option<CheckRollup>) -> String {
+    serde_json::to_string(checks).unwrap_or_default()
+}
+
 /// Handle to the forge cache file. Cheap to clone; each call opens its own
 /// blocking SQLite connection.
 #[derive(Debug, Clone)]
@@ -230,7 +257,7 @@ impl ForgeCache {
         filter: PullRequestListFilter,
         snapshot: &Snapshot<PullRequestList>,
     ) -> color_eyre::Result<SaveOutcome> {
-        self.store(RowKey::new(repository, Entry::List(filter)), snapshot)
+        self.store(RowKey::new(repository, Entry::List(filter)), snapshot, None)
     }
 
     /// The last saved detail of `repository`'s pull request `number`.
@@ -257,8 +284,65 @@ impl ForgeCache {
         repository: &RepositoryRef,
         snapshot: &Snapshot<PullRequest>,
     ) -> color_eyre::Result<SaveOutcome> {
-        let entry = Entry::PullRequest(snapshot.value.summary.number);
-        self.store(RowKey::new(repository, entry), snapshot)
+        let summary = &snapshot.value.summary;
+        let checks = checks_fact(&summary.checks);
+        let facts = DetailFacts {
+            updated_at: summary.updated_at.as_str(),
+            head_oid: &summary.head_oid,
+            checks: &checks,
+        };
+        let entry = Entry::PullRequest(summary.number);
+        self.store(RowKey::new(repository, entry), snapshot, Some(facts))
+    }
+
+    /// The numbers of `rows` whose saved detail is missing, or was saved
+    /// for a different `updated_at`, head, or check rollup than the row
+    /// reports, in row order. A detail saved for exactly what a row reports
+    /// is as current as GitHub's list says, so loading it again would
+    /// change little. Checks count separately because CI finishing does
+    /// not move `updated_at`.
+    ///
+    /// Looks each row up by primary key and reads three short columns
+    /// stored beside the detail, never the detail itself, so checking a
+    /// list page costs one indexed lookup per row. Unlike the reads above
+    /// it reports failure, so a caller can tell "everything is stale" from
+    /// "the cache cannot answer".
+    pub fn stale_pull_requests(
+        &self,
+        repository: &RepositoryRef,
+        rows: &[PullRequestSummary],
+    ) -> color_eyre::Result<Vec<u64>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "select updated_at, head_oid, checks from snapshots
+             where host = ?1 and owner = ?2 and name = ?3 and kind = ?4 and key = ?5",
+        )?;
+        let mut stale = Vec::new();
+        for row in rows {
+            let key = RowKey::new(repository, Entry::PullRequest(row.number));
+            let saved = statement
+                .query_row(
+                    params![key.host, key.owner, key.name, key.kind, key.key],
+                    |saved| {
+                        Ok((
+                            saved.get::<_, Option<String>>(0)?,
+                            saved.get::<_, Option<String>>(1)?,
+                            saved.get::<_, Option<String>>(2)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let checks = checks_fact(&row.checks);
+            let current = saved.is_some_and(|(updated_at, head_oid, saved_checks)| {
+                updated_at.as_deref() == Some(row.updated_at.as_str())
+                    && head_oid.as_deref() == Some(row.head_oid.as_str())
+                    && saved_checks.as_deref() == Some(checks.as_str())
+            });
+            if !current && !stale.contains(&row.number) {
+                stale.push(row.number);
+            }
+        }
+        Ok(stale)
     }
 
     fn initialize(&self, retention: Retention) -> color_eyre::Result<()> {
@@ -280,6 +364,9 @@ impl ForgeCache {
                     fetched_at integer not null,
                     content_hash integer not null,
                     body text not null,
+                    updated_at text,
+                    head_oid text,
+                    checks text,
                     primary key (host, owner, name, kind, key)
                 );
                 ",
@@ -341,6 +428,7 @@ impl ForgeCache {
         &self,
         key: RowKey,
         snapshot: &Snapshot<T>,
+        facts: Option<DetailFacts<'_>>,
     ) -> color_eyre::Result<SaveOutcome> {
         let fetched_at = snapshot
             .fetched_at
@@ -393,14 +481,18 @@ impl ForgeCache {
             SaveOutcome::Stored => {
                 connection.execute(
                     "insert into snapshots
-                         (host, owner, name, kind, key, fetched_at, content_hash, body)
-                     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                         (host, owner, name, kind, key, fetched_at, content_hash, body,
+                          updated_at, head_oid, checks)
+                     values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                      on conflict (host, owner, name, kind, key) do update
                      set fetched_at = excluded.fetched_at,
                          content_hash = excluded.content_hash,
-                         body = excluded.body
+                         body = excluded.body,
+                         updated_at = excluded.updated_at,
+                         head_oid = excluded.head_oid,
+                         checks = excluded.checks
                      where excluded.fetched_at >= snapshots.fetched_at
-                        or snapshots.fetched_at > ?9",
+                        or snapshots.fetched_at > ?12",
                     params![
                         key.host,
                         key.owner,
@@ -410,7 +502,10 @@ impl ForgeCache {
                         fetched_at,
                         content_hash,
                         body,
-                        now
+                        facts.map(|facts| facts.updated_at),
+                        facts.map(|facts| facts.head_oid),
+                        facts.map(|facts| facts.checks),
+                        now,
                     ],
                 )?;
             }
@@ -616,6 +711,131 @@ mod tests {
         assert_eq!(cache.pull_request(&vigil, 17), Some(snapshot));
         assert_eq!(cache.pull_request(&vigil, 18), None);
         remove(&path);
+    }
+
+    #[test]
+    fn stale_pull_requests_are_those_without_a_detail_for_the_row() {
+        let (cache, path) = temp_cache("stale");
+        let vigil = repository("Scott-fo", "vigil");
+        cache
+            .store_pull_request(&vigil, &Snapshot::new(detail(4), at(60)))
+            .unwrap();
+        cache
+            .store_pull_request(&vigil, &Snapshot::new(detail(5), at(60)))
+            .unwrap();
+        // A list page is saved too, and must not count as anyone's detail.
+        cache
+            .store_pull_request_list(
+                &vigil,
+                PullRequestListFilter::Mine,
+                &Snapshot::new(list(&[6]), at(60)),
+            )
+            .unwrap();
+
+        let current = summary(4);
+        let mut updated = summary(5);
+        updated.updated_at = Timestamp::new("2026-09-29T17:00:00Z");
+        let mut pushed = summary(4);
+        pushed.head_oid = "c".repeat(40);
+        let never_saved = summary(6);
+
+        assert_eq!(
+            cache
+                .stale_pull_requests(&vigil, &[current.clone(), updated, never_saved])
+                .unwrap(),
+            vec![5, 6]
+        );
+        assert_eq!(
+            cache.stale_pull_requests(&vigil, &[pushed]).unwrap(),
+            vec![4]
+        );
+        // CI finishing moves the rollup but not `updated_at`.
+        let mut checks_finished = summary(4);
+        checks_finished.checks = Some(CheckRollup {
+            state: CheckState::Success,
+            counts: CheckCounts {
+                success: 3,
+                ..CheckCounts::default()
+            },
+        });
+        let mut checks_removed = summary(4);
+        checks_removed.checks = None;
+        assert_eq!(
+            cache
+                .stale_pull_requests(&vigil, &[checks_finished, checks_removed])
+                .unwrap(),
+            vec![4],
+            "a changed rollup is stale, once per number"
+        );
+        let mut checks_removed = summary(5);
+        checks_removed.checks = None;
+        assert_eq!(
+            cache
+                .stale_pull_requests(&vigil, &[checks_removed])
+                .unwrap(),
+            vec![5]
+        );
+        assert_eq!(
+            cache
+                .stale_pull_requests(
+                    &repository("scott-fo", "VIGIL"),
+                    std::slice::from_ref(&current)
+                )
+                .unwrap(),
+            Vec::<u64>::new(),
+            "any spelling of the repository finds its details"
+        );
+        assert_eq!(
+            cache
+                .stale_pull_requests(&repository("someone", "vigil"), &[current])
+                .unwrap(),
+            vec![4]
+        );
+        assert_eq!(
+            cache.stale_pull_requests(&vigil, &[]).unwrap(),
+            Vec::<u64>::new()
+        );
+        remove(&path);
+    }
+
+    #[test]
+    fn a_stale_check_follows_the_newest_saved_detail() {
+        let (cache, path) = temp_cache("stale-newest");
+        let vigil = repository("Scott-fo", "vigil");
+        let mut newer = detail(4);
+        newer.summary.updated_at = Timestamp::new("2026-09-29T17:00:00Z");
+        cache
+            .store_pull_request(&vigil, &Snapshot::new(newer.clone(), at(10)))
+            .unwrap();
+        // A slower load of the older detail finishes last and is dropped,
+        // so the row it would describe stays stale.
+        cache
+            .store_pull_request(&vigil, &Snapshot::new(detail(4), at(60)))
+            .unwrap();
+
+        assert_eq!(
+            cache.stale_pull_requests(&vigil, &[summary(4)]).unwrap(),
+            vec![4]
+        );
+        assert_eq!(
+            cache.stale_pull_requests(&vigil, &[newer.summary]).unwrap(),
+            Vec::<u64>::new()
+        );
+        remove(&path);
+    }
+
+    #[test]
+    fn a_stale_check_on_an_unreadable_cache_fails_rather_than_guessing() {
+        let (cache, path) = temp_cache("stale-broken");
+        remove(&path);
+        fs::create_dir_all(&path).unwrap();
+
+        assert!(
+            cache
+                .stale_pull_requests(&repository("Scott-fo", "vigil"), &[summary(4)])
+                .is_err()
+        );
+        let _ = fs::remove_dir_all(&path);
     }
 
     #[test]
