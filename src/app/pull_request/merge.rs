@@ -7,7 +7,9 @@
 //! the repository allows it and the pull request is blocked or waiting on
 //! checks, and offers to turn auto-merge off when it is on. Every merge is
 //! pinned to the head the review shows, so GitHub refuses it if the branch
-//! moved, and needs a second confirming key press.
+//! moved, and needs a second confirming key press. The form may open on a
+//! saved detail, but nothing is sent until GitHub has confirmed the detail
+//! in this session: mergeability and checks go stale quickly.
 
 use std::fmt;
 
@@ -60,6 +62,10 @@ pub enum MergeBlocker {
     ChecksPending(u32),
     /// GitHub is still computing mergeability.
     Unknown,
+    /// The detail shown is a saved snapshot and a live load is running.
+    Refreshing,
+    /// The detail shown is a saved snapshot and the live load failed.
+    Unconfirmed,
 }
 
 impl MergeBlocker {
@@ -93,6 +99,12 @@ impl fmt::Display for MergeBlocker {
                 if *count == 1 { " is" } else { "s are" }
             ),
             Self::Unknown => formatter.write_str("GitHub is still computing mergeability"),
+            Self::Refreshing => {
+                formatter.write_str("these details are saved; refreshing from GitHub…")
+            }
+            Self::Unconfirmed => {
+                formatter.write_str("these details are saved and could not refresh; r reloads")
+            }
         }
     }
 }
@@ -261,6 +273,20 @@ impl MergeForm {
 }
 
 impl App {
+    /// Why the open pull request's detail cannot back a write yet: it is a
+    /// saved snapshot GitHub has not confirmed. `None` once it is live.
+    pub(super) fn unconfirmed_detail_blocker(&self) -> Option<MergeBlocker> {
+        let open = self.pull_requests.open()?;
+        if open.detail().is_none() || open.live_detail().is_some() {
+            return None;
+        }
+        Some(if self.pull_requests.detail_refreshing() {
+            MergeBlocker::Refreshing
+        } else {
+            MergeBlocker::Unconfirmed
+        })
+    }
+
     /// `M`: opens the merge form.
     pub(in crate::app) fn open_merge_form(&mut self) {
         let Some(detail) = self.pull_requests.open().and_then(|open| open.detail()) else {
@@ -290,11 +316,24 @@ impl App {
         let detail = open.detail()?.clone();
         let number = open.summary().number;
         let head = open.reviewed_head().to_string();
+        let unconfirmed = self.unconfirmed_detail_blocker();
         let Some(PullRequestModal::Merge(form)) = self.pull_requests.modal_mut() else {
             return None;
         };
         let auto_merge = auto_merge_choice(&detail);
         form.error = None;
+        // Nothing is sent, or confirmed, on details GitHub has not
+        // confirmed in this session.
+        if let Some(blocker) = unconfirmed
+            && matches!(
+                (form.step, key_event.code),
+                (_, KeyCode::Enter) | (MergeStep::Choose, KeyCode::Char('x'))
+            )
+        {
+            form.step = MergeStep::Choose;
+            form.error = Some(blocker.to_string());
+            return Some(KeyOutcome::Handled);
+        }
         match (form.step, key_event.code) {
             (MergeStep::Choose, KeyCode::Esc) => self.pull_requests.set_modal(None),
             (_, KeyCode::Esc) => form.step = MergeStep::Choose,

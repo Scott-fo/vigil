@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
@@ -6,20 +6,24 @@ use tokio::task;
 
 use crate::{
     event::Event,
-    forge::{ForgeError, PullRequestListFilter, PullRequestSummary, RepositoryRef},
+    forge::{
+        ForgeError, PullRequestList, PullRequestListFilter, PullRequestSummary, RepositoryRef,
+        Snapshot, Timestamp,
+    },
     ui::{self, PullRequestListTarget},
 };
 
+#[cfg(test)]
+use super::gateway::ForgeCall;
 use super::{
     super::{App, Screen, SnackbarVariant, input::is_plain_text_key},
     PullRequestEvent, PullRequestTimer,
-    list::{PULL_REQUEST_LIST_FILTERS, QueryInput},
+    gateway::ForgeGateway,
+    list::{LIST_POLL_INTERVAL, PULL_REQUEST_LIST_FILTERS, QueryInput, RowCurrency},
+    saved::{Freshness, request_time},
     state::{ConnectReason, ForgeConnection, ReviewOrigin},
     task::spawn_ticker,
 };
-
-/// How often the list reloads while it is on screen.
-const LIST_POLL_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Why the list has no rows to show, or that it has them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +51,9 @@ pub struct PullRequestListView<'a> {
     pub status: PullRequestListStatus<'a>,
     /// A reload is running while older rows show.
     pub refreshing: bool,
+    /// When GitHub reported the rows shown, if they are a snapshot saved by
+    /// an earlier session that no load has confirmed yet.
+    pub saved_at: Option<&'a Timestamp>,
     /// The last reload failed; the rows shown are older.
     pub stale_error: Option<&'a ForgeError>,
     /// Rows shown and the total GitHub matched, when capped.
@@ -95,6 +102,12 @@ impl App {
             scroll: list.scroll(),
             status,
             refreshing: list.loading() && page.is_some(),
+            // Only rows on screen have an age: when GitHub is unavailable
+            // the list explains that instead of drawing its saved rows.
+            saved_at: list
+                .freshness()
+                .and_then(|freshness| freshness.saved_at())
+                .filter(|_| status == PullRequestListStatus::Ready),
             stale_error: page.and(list.error()),
             truncated: page
                 .filter(|page| page.is_truncated())
@@ -118,6 +131,7 @@ impl App {
         self.clear_diff_text_selection();
         self.find_prefix_pending = false;
         if self.ensure_forge_connection(ConnectReason::UserRequest) {
+            self.retry_forge_repository_confirm();
             self.load_pull_request_list();
         }
         let ticker = spawn_ticker(self.events.sender(), LIST_POLL_INTERVAL, || {
@@ -126,18 +140,24 @@ impl App {
         self.pull_requests.list_mut().set_ticker(ticker);
     }
 
-    /// Returns to the review screen and stops refreshing the list.
+    /// Returns to the review screen and stops refreshing the list. A lookup
+    /// started from the list is dropped: leaving means the user no longer
+    /// wants it opened.
     pub(in crate::app) fn close_pull_request_list(&mut self) {
         self.screen = Screen::Review;
         self.pull_requests.list_mut().stop();
+        if self.pull_requests.cancel_lookup() {
+            self.status_message = Some(self.current_status_message());
+        }
     }
 
-    /// Loads the shown tab from GitHub, superseding a running load.
+    /// Loads the shown tab from GitHub, superseding a running load. A tab
+    /// with nothing to show yet shows its saved page, if any, meanwhile.
     pub(in crate::app) fn load_pull_request_list(&mut self) {
         let Some(github) = self.pull_requests.github().cloned() else {
             return;
         };
-        let (request_id, filter) = self.pull_requests.list_mut().begin_load();
+        let (request_id, filter) = self.pull_requests.list_mut().begin_load(Instant::now());
         let sender = self.events.sender();
         let handle = task::spawn(async move {
             let result = github.list_pull_requests(filter).await;
@@ -150,6 +170,7 @@ impl App {
         self.pull_requests
             .list_mut()
             .attach_load(request_id, handle);
+        self.read_saved_pull_request_list(filter);
     }
 
     /// Follow-up once GitHub connects: the list loads if it is waiting.
@@ -163,16 +184,30 @@ impl App {
         &mut self,
         request_id: u64,
         filter: PullRequestListFilter,
-        result: Result<crate::forge::PullRequestList, ForgeError>,
+        result: Result<PullRequestList, ForgeError>,
     ) -> bool {
-        self.pull_requests
-            .list_mut()
-            .finish_load(request_id, filter, result)
-            && self.screen == Screen::PullRequestList
+        let live = result.as_ref().ok().cloned();
+        let list = self.pull_requests.list_mut();
+        if !list.finish_load(request_id, filter, result) {
+            return false;
+        }
+        // A live page was just accepted: prefetch its likeliest opens.
+        if let Some(page) = &live {
+            self.prefetch_listed_pull_requests(page);
+        }
+        let list = self.pull_requests.list_mut();
+        if let (Some(page), Some(Freshness::Live { requested_at })) =
+            (live, list.page_freshness(filter))
+        {
+            let snapshot = Snapshot::new(page, request_time(*requested_at));
+            self.save_pull_request_list(filter, snapshot);
+        }
+        self.screen == Screen::PullRequestList
     }
 
     pub(super) fn handle_pull_request_list_tick(&mut self) -> bool {
         if self.screen == Screen::PullRequestList && !self.pull_requests.list().loading() {
+            self.retry_forge_repository_confirm();
             self.load_pull_request_list();
             return true;
         }
@@ -192,14 +227,23 @@ impl App {
     }
 
     /// Opens the selected row, or the pull request the query names by
-    /// number when no row matches.
+    /// number when no row matches. An outdated row (see [`RowCurrency`]) is
+    /// looked up first, so the review opens on the live head and base.
     pub(in crate::app) fn open_selected_pull_request(&mut self) {
-        let list = self.pull_requests.list();
-        if let Some(summary) = list.selected_summary().cloned() {
-            self.open_pull_request(summary, ReviewOrigin::PullRequestList);
+        if let Some((summary, currency)) = self.pull_requests.selected_list_row(Instant::now()) {
+            match currency {
+                RowCurrency::Current => {
+                    let summary = summary.clone();
+                    self.open_pull_request(summary, ReviewOrigin::PullRequestList);
+                }
+                RowCurrency::Outdated => {
+                    let number = summary.number;
+                    self.look_up_pull_request(number);
+                }
+            }
             return;
         }
-        if let Some(number) = list.query_number() {
+        if let Some(number) = self.pull_requests.list().query_number() {
             self.look_up_pull_request(number);
         }
     }
@@ -213,8 +257,16 @@ impl App {
         let Some(github) = self.pull_requests.github().cloned() else {
             return;
         };
-        let request_id = self.pull_requests.begin_lookup();
+        let request_id = self.pull_requests.begin_lookup(number);
         self.status_message = Some(format!("looking up pull request #{number}…"));
+        match self.pull_requests.gateway_mut() {
+            ForgeGateway::Live => {}
+            #[cfg(test)]
+            ForgeGateway::Recording(log) => {
+                log.push(ForgeCall::LookUp(number));
+                return;
+            }
+        }
         let sender = self.events.sender();
         let handle = task::spawn(async move {
             let result = github.load_summary(number).await;
@@ -234,10 +286,10 @@ impl App {
         if !self.pull_requests.finish_lookup(request_id) {
             return false;
         }
+        self.status_message = Some(self.current_status_message());
         match result {
             Ok(summary) => self.open_pull_request(summary, ReviewOrigin::PullRequestList),
             Err(error) => {
-                self.status_message = Some(self.current_status_message());
                 self.show_snackbar(
                     format!("could not find that pull request: {error}"),
                     SnackbarVariant::Error,

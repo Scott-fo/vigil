@@ -7,16 +7,21 @@ use std::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    fixtures,
-    list::{PullRequestListState, QueryInput},
+    PullRequestEvent, PullRequestListStatus, fixtures,
+    gateway::ForgeCall,
+    list::{PullRequestListState, QueryInput, RowCurrency},
     state::{
-        BranchKey, ConnectOutcome, ConnectReason, PollOutcome, PullRequestPage, PullRequests,
-        ReviewOrigin,
+        BranchKey, ConnectOutcome, ConnectReason, ForgeConnection, PollOutcome, PullRequestPage,
+        PullRequests, ReviewOrigin,
     },
 };
 use crate::{
     app::{ActivePane, App, DiffViewMode, ReviewMode, Screen},
-    forge::{DiffSide, ForgeError, GitHub, PullRequestListFilter, RepositoryRef, Timestamp},
+    event::Event,
+    forge::{
+        DiffSide, ForgeError, GitHub, PullRequestList, PullRequestListFilter, PullRequestSummary,
+        RepositoryRef, Snapshot, Timestamp,
+    },
     git::{self, FetchedPullRequest},
     sidebar::SidebarItem,
 };
@@ -168,7 +173,11 @@ fn detail_that_arrives_before_the_fetch_applies_when_the_review_opens() {
         DiffSide::Right,
         Some(3),
     )];
-    assert!(state.finish_detail(detail_id, Ok(fixtures::pull_request(17, threads))));
+    assert!(
+        state
+            .finish_detail(detail_id, Ok(fixtures::pull_request(17, threads)))
+            .is_some()
+    );
     assert!(state.open().is_none(), "nothing opens before the fetch");
 
     let summary = state.finish_fetch(fetch_id).expect("fetch is current");
@@ -187,8 +196,36 @@ fn stale_fetches_and_details_are_dropped() {
     let (new_fetch, _) = state.begin_open(fixtures::summary(2), ReviewOrigin::Elsewhere);
 
     assert!(state.finish_fetch(old_fetch).is_none());
-    assert!(!state.finish_detail(old_detail, Ok(fixtures::pull_request(1, Vec::new()))));
+    assert!(
+        state
+            .finish_detail(old_detail, Ok(fixtures::pull_request(1, Vec::new())))
+            .is_none()
+    );
     assert_eq!(state.finish_fetch(new_fetch).map(|pr| pr.number), Some(2));
+}
+
+/// A poll or a write reloading #5's detail while #7 is being fetched must
+/// not abort #7's detail load, or #7 would open without one.
+#[test]
+fn reloading_the_open_detail_waits_while_another_pull_request_opens() {
+    let mut state = connected();
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(5), ReviewOrigin::Elsewhere);
+    state.finish_detail(detail_id, Ok(fixtures::pull_request(5, Vec::new())));
+    let summary = state.finish_fetch(fetch_id).unwrap();
+    state.enter(summary.clone(), summary.head_oid.clone());
+    assert!(state.begin_detail_reload().is_some(), "reloads when idle");
+
+    let (fetch_id, detail_id) = state.begin_open(fixtures::summary(7), ReviewOrigin::Elsewhere);
+    assert_eq!(state.begin_detail_reload(), None);
+    assert!(
+        state
+            .finish_detail(detail_id, Ok(fixtures::pull_request(7, Vec::new())))
+            .is_some(),
+        "the opening detail load still counts"
+    );
+    let summary = state.finish_fetch(fetch_id).unwrap();
+    state.enter(summary.clone(), summary.head_oid.clone());
+    assert!(state.open().unwrap().live_detail().is_some());
 }
 
 #[test]
@@ -273,7 +310,11 @@ fn closing_ends_the_review_and_drops_late_details() {
     state.close();
 
     assert!(state.open().is_none());
-    assert!(!state.finish_detail(id, Ok(fixtures::pull_request(17, Vec::new()))));
+    assert!(
+        state
+            .finish_detail(id, Ok(fixtures::pull_request(17, Vec::new())))
+            .is_none()
+    );
 }
 
 #[test]
@@ -609,13 +650,568 @@ async fn opening_a_fetched_pull_request_reviews_it_and_ctrl_l_leaves() {
     app.quit();
 }
 
+/// A repository with `main` at a base commit and `feature` one commit
+/// ahead, plus an `origin` that does not exist, so any fetch fails fast
+/// without touching the network. Returns the repository, base, and head.
+fn repo_with_local_pull_request(name: &str) -> (TempRepo, String, String) {
+    let repo = TempRepo::new(name);
+    repo.write("src/lib.rs", "fn a() {}\n");
+    let base = repo.commit("base");
+    repo.run(&["switch", "--quiet", "-c", "feature"]);
+    repo.write("src/lib.rs", "fn a() {}\nfn b() {}\n");
+    let head = repo.commit("feature");
+    repo.run(&["switch", "--quiet", "main"]);
+    repo.run(&["remote", "add", "origin", "/nonexistent/vigil-origin.git"]);
+    (repo, base, head)
+}
+
+/// An app connected to GitHub for `repo` without asking it.
+fn connected_app(repo: &TempRepo) -> App {
+    let mut app = App::new_for_benchmarks(repo.path().to_path_buf());
+    app.pull_requests.connect_for_test(GitHub::new(
+        repo.path(),
+        RepositoryRef {
+            host: "github.com".to_string(),
+            owner: "Scott-fo".to_string(),
+            name: "vigil".to_string(),
+        },
+    ));
+    app
+}
+
+/// Opens `summary` and waits for its commits, answering the fetch events,
+/// and returns what happened in order. The detail load is dropped before it
+/// runs: tests never reach GitHub.
+async fn open_and_wait_for_commits(
+    app: &mut App,
+    summary: PullRequestSummary,
+) -> Vec<&'static str> {
+    app.open_pull_request(summary, ReviewOrigin::PullRequestList);
+    wait_for_commits(app).await
+}
+
+/// Answers the events of an open already started until its commits are
+/// ready or failed, and returns what happened in order. The detail load is
+/// dropped before it runs.
+async fn wait_for_commits(app: &mut App) -> Vec<&'static str> {
+    app.pull_requests.cancel_detail_for_test();
+    let mut seen = Vec::new();
+    loop {
+        let Event::PullRequest(event) = app.events.next().await.unwrap() else {
+            continue;
+        };
+        let step = match &event {
+            PullRequestEvent::FetchStarted { .. } => "fetch started",
+            PullRequestEvent::Fetched { result: Ok(_), .. } => "commits ready",
+            PullRequestEvent::Fetched { result: Err(_), .. } => "commits failed",
+            _ => "other",
+        };
+        seen.push(step);
+        app.handle_pull_request_event(event).await.unwrap();
+        if step.starts_with("commits") {
+            return seen;
+        }
+    }
+}
+
+/// A saved list page may name a head GitHub has since moved past, whose
+/// commits are likely still local. Opening its row looks the pull request
+/// up and reviews the live head; a live page's row opens at once.
+#[tokio::test]
+async fn a_row_from_a_saved_page_is_looked_up_and_opens_the_live_head() {
+    let (repo, base, head) = repo_with_local_pull_request("open-saved-row");
+    let mut live = fixtures::summary(7);
+    live.head_oid = head.clone();
+    live.base_oid = base.clone();
+    let mut outdated = live.clone();
+    outdated.head_oid = base.clone();
+    let page = |summary: &PullRequestSummary| PullRequestList {
+        pull_requests: vec![summary.clone()],
+        total_count: 1,
+    };
+
+    let mut app = connected_app(&repo);
+    app.record_forge_calls_for_test();
+    app.screen = Screen::PullRequestList;
+    let list = app.pull_requests.list_mut();
+    let (_, filter) = list.begin_load(Instant::now());
+    list.show_saved(
+        filter,
+        Snapshot::new(page(&outdated), Timestamp::new("2026-09-29T15:00:00Z")),
+    );
+    app.open_selected_pull_request();
+    assert_eq!(app.recorded_forge_calls(), vec![ForgeCall::LookUp(7)]);
+    assert_eq!(
+        app.pull_requests.opening_number(),
+        None,
+        "nothing opens yet"
+    );
+
+    let lookup = app.pull_requests.lookup_request_id();
+    app.handle_pull_request_looked_up(lookup, Ok(live.clone()));
+    let seen = wait_for_commits(&mut app).await;
+    assert_eq!(seen, vec!["commits ready"]);
+    let ReviewMode::PullRequest(selection) = &app.review_mode else {
+        panic!("review should show the pull request: {seen:?}");
+    };
+    assert_eq!(selection.head_oid, head, "the live head, not the saved one");
+
+    let mut app = connected_app(&repo);
+    app.record_forge_calls_for_test();
+    app.screen = Screen::PullRequestList;
+    let list = app.pull_requests.list_mut();
+    let (id, filter) = list.begin_load(Instant::now());
+    list.finish_load(id, filter, Ok(page(&live)));
+    app.open_selected_pull_request();
+    let seen = wait_for_commits(&mut app).await;
+    assert_eq!(seen, vec!["commits ready"]);
+    assert!(app.recorded_forge_calls().is_empty(), "no lookup");
+}
+
+/// An app on the list screen whose selected row, #7, is outdated.
+fn app_with_outdated_row() -> App {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.record_forge_calls_for_test();
+    app.pull_requests.connect_for_test(github());
+    app.screen = Screen::PullRequestList;
+    let list = app.pull_requests.list_mut();
+    let (_, filter) = list.begin_load(Instant::now());
+    list.show_saved(
+        filter,
+        Snapshot::new(
+            fixtures::pull_request_list(&[7, 8], 2),
+            Timestamp::new("2026-09-29T15:00:00Z"),
+        ),
+    );
+    app
+}
+
+/// Enter on outdated #7 starts a lookup. Opening #8 before it answers, or
+/// leaving the list, means #7 must not open when it does.
+#[test]
+fn a_later_open_or_leaving_the_list_drops_a_running_lookup() {
+    let mut app = app_with_outdated_row();
+    app.open_selected_pull_request();
+    assert_eq!(app.recorded_forge_calls(), vec![ForgeCall::LookUp(7)]);
+    let lookup = app.pull_requests.lookup_request_id();
+    app.pull_requests
+        .begin_open(fixtures::summary(8), ReviewOrigin::PullRequestList);
+    assert!(!app.handle_pull_request_looked_up(lookup, Ok(fixtures::summary(7))));
+    assert_eq!(app.pull_requests.opening_number(), Some(8));
+
+    let mut app = app_with_outdated_row();
+    app.open_selected_pull_request();
+    let lookup = app.pull_requests.lookup_request_id();
+    app.handle_pull_request_list_key(press(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(app.screen, Screen::Review);
+    assert!(!app.handle_pull_request_looked_up(lookup, Ok(fixtures::summary(7))));
+    assert_eq!(app.pull_requests.opening_number(), None);
+    assert_ne!(
+        app.status_message.as_deref(),
+        Some("looking up pull request #7…"),
+        "the dropped lookup's status goes with it"
+    );
+}
+
+/// A list with `row` on its first tab, loaded by a request that started
+/// `age` ago.
+fn state_with_live_row(row: PullRequestSummary, age: Duration) -> PullRequests {
+    let mut state = connected();
+    let list = state.list_mut();
+    let (id, filter) = list.begin_load(Instant::now().checked_sub(age).unwrap());
+    list.finish_load(
+        id,
+        filter,
+        Ok(PullRequestList {
+            pull_requests: vec![row],
+            total_count: 1,
+        }),
+    );
+    state
+}
+
+fn selected_currency(state: &PullRequests) -> RowCurrency {
+    state.selected_list_row(Instant::now()).unwrap().1
+}
+
+#[test]
+fn list_rows_are_current_only_within_a_list_refresh_and_after_a_good_load() {
+    let row = fixtures::summary(7);
+    let state = state_with_live_row(row.clone(), Duration::ZERO);
+    assert_eq!(selected_currency(&state), RowCurrency::Current);
+
+    let state = state_with_live_row(row.clone(), Duration::from_secs(61));
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Outdated,
+        "older than a list refresh, as after the list was left and reopened"
+    );
+
+    let mut state = state_with_live_row(row, Duration::ZERO);
+    let list = state.list_mut();
+    let (id, filter) = list.begin_load(Instant::now());
+    list.finish_load(id, filter, Err(ForgeError::GhNotInstalled));
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Outdated,
+        "a failed reload leaves the rows unconfirmed"
+    );
+}
+
+/// Open #7 at H1, `r` fetches H2, Esc back to the list and Enter before
+/// the list reloads: the row still names H1, which is local.
+#[test]
+fn a_list_row_behind_this_sessions_review_is_outdated() {
+    let row = fixtures::summary(7);
+    let mut state = state_with_live_row(row.clone(), Duration::ZERO);
+    let (fetch_id, _) = state.begin_open(row.clone(), ReviewOrigin::PullRequestList);
+    let summary = state.finish_fetch(fetch_id).unwrap();
+    state.enter(summary, "2".repeat(40));
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Outdated,
+        "while open"
+    );
+
+    state.close();
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Outdated,
+        "after the review ended"
+    );
+
+    let mut newer = row;
+    newer.head_oid = "3".repeat(40);
+    newer.updated_at = Timestamp::new("2026-09-30T09:00:00Z");
+    let mut state = state_with_live_row(newer, Duration::ZERO);
+    let (fetch_id, _) = state.begin_open(fixtures::summary(7), ReviewOrigin::PullRequestList);
+    let summary = state.finish_fetch(fetch_id).unwrap();
+    state.enter(summary, "2".repeat(40));
+    state.close();
+    assert_eq!(
+        selected_currency(&state),
+        RowCurrency::Current,
+        "a row updated after the review's summary is newer than it"
+    );
+}
+
+#[tokio::test]
+async fn opening_a_pull_request_with_local_commits_reviews_it_without_fetching() {
+    let (repo, base, head) = repo_with_local_pull_request("open-local");
+    let mut app = connected_app(&repo);
+    let mut summary = fixtures::summary(7);
+    summary.head_oid = head.clone();
+    summary.base_oid = base.clone();
+
+    let seen = open_and_wait_for_commits(&mut app, summary).await;
+
+    assert_eq!(seen, vec!["commits ready"]);
+    let ReviewMode::PullRequest(selection) = &app.review_mode else {
+        panic!("review should show the pull request: {seen:?}");
+    };
+    assert_eq!(selection.number, 7);
+    assert_eq!(selection.head_oid, head);
+    assert_eq!(selection.base_oid, base);
+    assert_eq!(selection.remote, "origin");
+    assert_eq!(repo.run(&["rev-parse", "refs/vigil/pr/7/head"]), head);
+    assert!(
+        !app.status_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("fetching"),
+        "{:?}",
+        app.status_message
+    );
+    app.quit();
+}
+
+#[tokio::test]
+async fn opening_a_pull_request_without_its_commits_fetches_them() {
+    let (repo, base, _) = repo_with_local_pull_request("open-remote");
+    let mut app = connected_app(&repo);
+    let mut summary = fixtures::summary(8);
+    summary.head_oid = "0123456789abcdef0123456789abcdef01234567".to_string();
+    summary.base_oid = base;
+
+    let seen = open_and_wait_for_commits(&mut app, summary).await;
+
+    // The fetch ran (and failed: `origin` does not exist).
+    assert_eq!(seen, vec!["fetch started", "commits failed"]);
+    assert!(matches!(app.review_mode, ReviewMode::WorkingTree));
+    assert!(app.pull_requests.open().is_none());
+    app.quit();
+}
+
+#[test]
+fn only_the_current_open_reports_its_fetch() {
+    let mut state = connected();
+    let (first, _) = state.begin_open(fixtures::summary(1), ReviewOrigin::Elsewhere);
+    assert_eq!(state.fetching_number(first), Some(1));
+
+    let (second, _) = state.begin_open(fixtures::summary(2), ReviewOrigin::Elsewhere);
+    assert_eq!(state.fetching_number(first), None);
+    assert_eq!(state.fetching_number(second), Some(2));
+
+    state.finish_fetch(second);
+    assert_eq!(state.fetching_number(second), None);
+}
+
+#[test]
+fn a_request_that_finds_gh_unusable_turns_the_connection_off() {
+    let mut state = connected();
+    state.mark_unavailable(ForgeError::GhNotInstalled);
+    assert!(state.github().is_none());
+    assert!(matches!(
+        state.connection(),
+        ForgeConnection::Unavailable(ForgeError::GhNotInstalled)
+    ));
+    // Background work stays off; the user asking reconnects.
+    assert_eq!(state.begin_connect(ConnectReason::Background), None);
+    assert!(state.begin_connect(ConnectReason::UserRequest).is_some());
+
+    // Only a live connection is turned off.
+    let mut disabled = PullRequests::disabled();
+    disabled.mark_unavailable(ForgeError::GhNotInstalled);
+    assert!(matches!(disabled.connection(), ForgeConnection::Disabled));
+}
+
+#[tokio::test]
+async fn a_lookup_that_cannot_see_the_repository_stops_background_lookups() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.set_branch_snapshot(fixtures::branch_snapshot("feature"));
+    app.pull_requests.connect_for_test(github());
+    let request_id = app
+        .pull_requests
+        .begin_current_branch_load(key("feature"), true, Instant::now())
+        .unwrap();
+    app.handle_pull_request_event(PullRequestEvent::CurrentBranchLoaded {
+        request_id,
+        result: Err(ForgeError::NotFound {
+            message: "Could not resolve to a Repository with the name 'Scott-fo/vigil'."
+                .to_string(),
+        }),
+    })
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        app.pull_requests.connection(),
+        ForgeConnection::Unavailable(ForgeError::NotFound { .. })
+    ));
+    // The next branch snapshot neither looks up nor reconnects.
+    app.refresh_current_branch_pull_request(true);
+    assert!(matches!(
+        app.pull_requests.connection(),
+        ForgeConnection::Unavailable(_)
+    ));
+    assert!(app.pull_requests.github().is_none());
+    app.quit();
+}
+
+fn repository(owner: &str, name: &str) -> RepositoryRef {
+    RepositoryRef {
+        host: "github.com".to_string(),
+        owner: owner.to_string(),
+        name: name.to_string(),
+    }
+}
+
+/// State connected to `scott-fo/VIGIL` as a remote URL spells it.
+fn connected_locally() -> PullRequests {
+    let mut state = PullRequests::default();
+    let id = state.begin_connect(ConnectReason::Background).unwrap();
+    state.finish_connect(
+        id,
+        Ok(GitHub::unconfirmed(
+            "/tmp/vigil-pr-tests",
+            repository("scott-fo", "VIGIL"),
+        )),
+    );
+    state
+}
+
+#[test]
+fn only_locally_resolved_repositories_are_confirmed() {
+    assert!(connected().begin_confirm().is_none());
+
+    let mut state = connected_locally();
+    let (id, github) = state.begin_confirm().expect("a local connect is confirmed");
+    assert_eq!(github.repository(), &repository("scott-fo", "VIGIL"));
+    // A spelling difference adopts GitHub's name without calling the
+    // repository renamed.
+    let canonical = GitHub::new("/elsewhere", repository("Scott-fo", "vigil"));
+    assert!(!state.finish_confirm(id, Ok(canonical)));
+    let github = state.github().unwrap();
+    assert_eq!(github.repository(), &repository("Scott-fo", "vigil"));
+    assert_eq!(github.repo_root(), Path::new("/tmp/vigil-pr-tests"));
+    assert!(github.is_repository_confirmed());
+    assert!(state.begin_confirm().is_none());
+}
+
+#[test]
+fn a_renamed_repository_switches_the_client_once_confirmed() {
+    let mut state = connected_locally();
+    let (stale, _) = state.begin_confirm().unwrap();
+    let (id, _) = state.begin_confirm().unwrap();
+    let renamed = GitHub::new("/tmp/vigil-pr-tests", repository("Scott-fo", "vigil-next"));
+    assert!(!state.finish_confirm(stale, Ok(renamed.clone())));
+    assert!(state.finish_confirm(id, Ok(renamed)));
+    assert_eq!(
+        state.github().unwrap().repository(),
+        &repository("Scott-fo", "vigil-next")
+    );
+
+    // A failed confirmation keeps the name the remote gave.
+    let mut state = connected_locally();
+    let (id, _) = state.begin_confirm().unwrap();
+    assert!(!state.finish_confirm(id, Err(ForgeError::GhNotInstalled)));
+    assert_eq!(
+        state.github().unwrap().repository(),
+        &repository("scott-fo", "VIGIL")
+    );
+}
+
+/// Every tab loaded under the old name found nothing, since GitHub search
+/// does not follow renames; none of them may keep showing that.
+#[tokio::test]
+async fn a_confirmed_rename_forgets_every_tab_loaded_under_the_old_name() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.pull_requests = connected_locally();
+    for filter in [
+        PullRequestListFilter::NeedsMyReview,
+        PullRequestListFilter::Mine,
+    ] {
+        let list = app.pull_requests.list_mut();
+        list.set_filter(filter);
+        let (id, filter) = list.begin_load(Instant::now());
+        list.finish_load(id, filter, Ok(fixtures::pull_request_list(&[], 0)));
+    }
+    let (request_id, _) = app.pull_requests.begin_confirm().unwrap();
+
+    app.handle_pull_request_event(PullRequestEvent::RepositoryConfirmed {
+        request_id,
+        result: Ok(GitHub::new(
+            "/tmp/vigil-pr-tests",
+            repository("Scott-fo", "vigil-next"),
+        )),
+    })
+    .await
+    .unwrap();
+
+    let list = app.pull_requests.list();
+    assert!(!list.has_page(PullRequestListFilter::NeedsMyReview));
+    assert!(!list.has_page(PullRequestListFilter::Mine));
+    app.quit();
+}
+
+/// One transient failure must not leave a renamed repository's list
+/// empty for the session, nor may retries hammer GitHub.
+#[test]
+fn a_failed_confirmation_is_retried_at_most_once_a_minute() {
+    let mut state = connected_locally();
+    let (id, _) = state.begin_confirm().unwrap();
+    let later = Instant::now() + Duration::from_secs(120);
+    assert!(
+        state.begin_confirm_retry(later).is_none(),
+        "not while one runs"
+    );
+    assert!(!state.finish_confirm(id, Err(ForgeError::GhNotInstalled)));
+
+    let soon = Instant::now() + Duration::from_secs(10);
+    assert!(
+        state.begin_confirm_retry(soon).is_none(),
+        "not within a minute"
+    );
+    let (retry, github) = state
+        .begin_confirm_retry(later)
+        .expect("retried after a minute");
+    assert_eq!(github.repository(), &repository("scott-fo", "VIGIL"));
+    let canonical = GitHub::new("/tmp/vigil-pr-tests", repository("Scott-fo", "vigil"));
+    state.finish_confirm(retry, Ok(canonical));
+    assert!(
+        state
+            .begin_confirm_retry(later + Duration::from_secs(3600))
+            .is_none(),
+        "a confirmed name is never asked about again"
+    );
+}
+
+#[tokio::test]
+async fn confirming_a_repository_gh_cannot_see_turns_the_connection_off() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.pull_requests = connected_locally();
+    let (request_id, _) = app.pull_requests.begin_confirm().unwrap();
+    app.handle_pull_request_event(PullRequestEvent::RepositoryConfirmed {
+        request_id,
+        result: Err(ForgeError::NotFound {
+            message: "Could not resolve to a Repository with the name 'scott-fo/VIGIL'."
+                .to_string(),
+        }),
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        app.pull_requests.connection(),
+        ForgeConnection::Unavailable(ForgeError::NotFound { .. })
+    ));
+    app.quit();
+}
+
+#[test]
+fn failed_current_branch_lookups_wait_out_the_interval_too() {
+    let mut state = connected();
+    let now = Instant::now();
+    let id = state
+        .begin_current_branch_load(key("feature"), false, now)
+        .unwrap();
+    state.finish_current_branch_load(id, &Err(ForgeError::GhNotInstalled), now);
+
+    let soon = now + Duration::from_secs(2);
+    assert_eq!(
+        state.begin_current_branch_load(key("feature"), false, soon),
+        None
+    );
+    assert!(
+        state
+            .begin_current_branch_load(key("feature"), true, soon)
+            .is_some(),
+        "an explicit request still looks up"
+    );
+}
+
+#[tokio::test]
+async fn a_list_load_that_finds_gh_logged_out_explains_it_on_the_list() {
+    let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-pr-tests"));
+    app.show_pull_request_list_for_test(fixtures::pull_request_list(&[1], 1));
+    let (request_id, filter) = app
+        .pull_requests
+        .list_mut()
+        .begin_load(std::time::Instant::now());
+    let error = ForgeError::NotAuthenticated {
+        message: "no token".to_string(),
+    };
+    app.handle_pull_request_event(PullRequestEvent::ListLoaded {
+        request_id,
+        filter,
+        result: Err(error.clone()),
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        app.pull_request_list_view().status,
+        PullRequestListStatus::Unavailable(Some(&error))
+    );
+    app.quit();
+}
+
 fn row_numbers(list: &PullRequestListState) -> Vec<u64> {
     list.visible_rows().iter().map(|row| row.number).collect()
 }
 
 fn loaded_list(numbers: &[u64]) -> PullRequestListState {
     let mut list = PullRequestListState::default();
-    let (id, filter) = list.begin_load();
+    let (id, filter) = list.begin_load(std::time::Instant::now());
     list.finish_load(
         id,
         filter,
@@ -627,11 +1223,11 @@ fn loaded_list(numbers: &[u64]) -> PullRequestListState {
 #[test]
 fn list_tabs_keep_their_pages_and_drop_stale_loads() {
     let mut list = PullRequestListState::default();
-    let (needs_review, filter) = list.begin_load();
+    let (needs_review, filter) = list.begin_load(std::time::Instant::now());
     assert_eq!(filter, PullRequestListFilter::NeedsMyReview);
 
     assert!(list.set_filter(PullRequestListFilter::Mine));
-    let (mine, filter) = list.begin_load();
+    let (mine, filter) = list.begin_load(std::time::Instant::now());
     assert_eq!(filter, PullRequestListFilter::Mine);
     assert!(
         !list.finish_load(
@@ -691,7 +1287,7 @@ fn list_selection_follows_its_pull_request_across_reloads() {
     list.move_selection(1);
     assert_eq!(list.selected_summary().map(|row| row.number), Some(17));
 
-    let (id, filter) = list.begin_load();
+    let (id, filter) = list.begin_load(std::time::Instant::now());
     list.finish_load(id, filter, Ok(fixtures::pull_request_list(&[99, 17], 2)));
     assert_eq!(list.selected_summary().map(|row| row.number), Some(17));
     assert_eq!(list.selected(), 1);

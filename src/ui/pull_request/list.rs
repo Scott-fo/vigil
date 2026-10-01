@@ -21,8 +21,8 @@ use super::{
         text_subtle_color,
     },
     labels::{
-        check_rollup_glyph, compact_age, draft_span, faint, now_unix_seconds, short_decision_span,
-        subtle, truncate_end,
+        check_rollup_glyph, compact_age, draft_span, faint, freshness_text, now_unix_seconds,
+        short_decision_span, subtle, truncate_end,
     },
 };
 
@@ -123,7 +123,7 @@ pub(in crate::ui) fn render_pull_request_list(frame: &mut Frame, app: &mut App, 
     render_header(frame, &view, layout.header);
     render_tabs(frame, &view, layout.tabs, hovered);
     render_rows(frame, &view, layout.list, scroll, hovered, now);
-    render_footer(frame, &view, layout.footer);
+    render_footer(frame, &view, layout.footer, now);
     app.set_pull_request_list_scroll(scroll);
 }
 
@@ -371,11 +371,18 @@ fn row_line(
     Line::from(left)
 }
 
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
 fn spans_width(spans: &[Span<'_>]) -> usize {
     spans.iter().map(|span| span.content.width()).sum()
 }
 
-fn render_footer(frame: &mut Frame, view: &PullRequestListView<'_>, area: Rect) {
+fn render_footer(frame: &mut Frame, view: &PullRequestListView<'_>, area: Rect, now: i64) {
     let mut left = vec![Span::raw(" ")];
     if view.query_input == QueryInput::Editing || !view.query.is_empty() {
         left.push(Span::styled(
@@ -406,12 +413,20 @@ fn render_footer(frame: &mut Frame, view: &PullRequestListView<'_>, area: Rect) 
         )));
         left.push(faint("   "));
     }
+    if let Some(saved_at) = view.saved_at {
+        left.push(faint(capitalize(&freshness_text(
+            saved_at,
+            view.refreshing && view.stale_error.is_none(),
+            now,
+        ))));
+        left.push(faint("   "));
+    }
     if let Some(error) = view.stale_error {
         left.push(Span::styled(
             format!("Refresh failed: {error}"),
             Style::new().fg(error_color()),
         ));
-    } else if view.refreshing {
+    } else if view.refreshing && view.saved_at.is_none() {
         left.push(faint("Refreshing…"));
     }
     frame.render_widget(Block::new().style(Style::new().bg(surface_color())), area);

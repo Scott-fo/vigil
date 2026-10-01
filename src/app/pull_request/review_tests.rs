@@ -674,7 +674,7 @@ async fn esc_returns_to_the_list_when_the_review_was_opened_from_it() {
     let mut app = App::new_for_benchmarks(PathBuf::from("/tmp/vigil-review-action-tests"));
     // Loaded without connecting, so going back to the list reloads nothing.
     let list = app.pull_requests.list_mut();
-    let (id, filter) = list.begin_load();
+    let (id, filter) = list.begin_load(std::time::Instant::now());
     list.finish_load(id, filter, Ok(fixtures::pull_request_list(&[5, 17], 2)));
     list.move_selection(1);
     app.open_pull_request_from_for_test(

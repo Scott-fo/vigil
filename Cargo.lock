@@ -2577,6 +2577,7 @@ dependencies = [
  "crossterm 0.28.1",
  "devicons",
  "futures",
+ "libc",
  "memchr",
  "neo_frizbee",
  "notify",

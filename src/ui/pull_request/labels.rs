@@ -157,6 +157,17 @@ pub(in crate::ui) fn relative_time(timestamp: &Timestamp, now: i64) -> String {
     }
 }
 
+/// How old saved data on screen is: `saved 3m ago`, with `· refreshing…`
+/// while a live load runs.
+pub(in crate::ui) fn freshness_text(saved_at: &Timestamp, refreshing: bool, now: i64) -> String {
+    let age = relative_time(saved_at, now);
+    if refreshing {
+        format!("saved {age} · refreshing…")
+    } else {
+        format!("saved {age}")
+    }
+}
+
 /// `text`, cut to `max_width` columns with a trailing `…` when longer.
 pub(in crate::ui) fn truncate_end(text: &str, max_width: usize) -> String {
     let mut width = 0;
@@ -208,6 +219,22 @@ mod tests {
         assert_eq!(compact_age(&at, then + 21 * 86_400), "3w");
         assert_eq!(compact_age(&at, then + 400 * 86_400), "1y");
         assert_eq!(relative_time(&at, then + 3 * 3600), "3h ago");
+    }
+
+    #[test]
+    fn saved_data_says_how_old_it_is_and_whether_it_is_refreshing() {
+        let at = Timestamp::new("2026-09-01T00:00:00Z");
+        let then = at.unix_seconds().unwrap();
+
+        assert_eq!(
+            freshness_text(&at, true, then + 3 * 60),
+            "saved 3m ago · refreshing…"
+        );
+        assert_eq!(
+            freshness_text(&at, false, then + 2 * 86_400),
+            "saved 2d ago"
+        );
+        assert_eq!(freshness_text(&at, false, then + 10), "saved just now");
     }
 
     #[test]

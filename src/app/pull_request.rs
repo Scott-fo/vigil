@@ -4,30 +4,52 @@
 //! [`PullRequests`](state::PullRequests) value on `App`:
 //!
 //! - **The GitHub connection.** vigil connects lazily in the background the
-//!   first time a branch snapshot loads. When the repository is not on
-//!   GitHub, or `gh` is missing or logged out, pull request features stay off
-//!   quietly; only an explicit request (`O`, a click on the footer chip)
-//!   retries and explains why.
+//!   first time a branch snapshot loads; usually that reads only git config
+//!   (see [`GitHub::connect`](crate::forge::GitHub::connect)). When the
+//!   repository is not on GitHub, or `gh` is missing or logged out, pull
+//!   request features stay off quietly; only an explicit request (`O`, a
+//!   click on the footer chip, the list) retries and explains why. Since
+//!   connecting may not run `gh`, a missing or logged-out `gh`, or a
+//!   repository `gh` cannot see, is often found by the first request
+//!   instead, which turns the connection off the same way. A repository
+//!   named by its remote URL is confirmed with GitHub in the background;
+//!   after a rename the client switches and a shown list reloads.
 //! - **The current branch's pull request**, shown as a footer chip. It is
 //!   looked up again whenever the branch snapshot reloads, at most every few
 //!   seconds for the same branch tip.
-//! - **The pull request under review.** Opening one fetches its commits
-//!   (`git::fetch_pull_request`) while its detail loads, then switches to
-//!   [`ReviewMode::PullRequest`](super::ReviewMode) with a
-//!   [`PullRequestSelection`]. The sidebar pins an overview page first. While
-//!   open, it is polled every 30 seconds; new commits raise a notice and `r`
-//!   refetches and reloads. Any other review mode ends it and deletes the
-//!   refs its fetch wrote; refs left by an earlier session are pruned at
-//!   startup. Opened from the list, Esc goes back to the list. `K` checks
-//!   the reviewed head out as a local branch through the shared branch
-//!   operation (see [`PullRequestSelection::checkout`]); the review stays
-//!   open, pinned to the same commits.
+//! - **The pull request under review.** Opening one uses its head and base
+//!   commits straight from the object store when they are there
+//!   (`git::resolve_local_pull_request`), and fetches them
+//!   (`git::fetch_pull_request`) only when they are not, while its detail
+//!   loads; then it switches to [`ReviewMode::PullRequest`](super::ReviewMode)
+//!   with a [`PullRequestSelection`]. The sidebar pins an overview page
+//!   first. While open, it is polled every 30 seconds; new commits raise a
+//!   notice and `r` always refetches and reloads. Any other review mode ends
+//!   it and deletes the refs its fetch wrote; refs left by an earlier session
+//!   are pruned at startup. Opened from the list, Esc goes back to the list.
+//!   `K` checks the reviewed head out as a local branch through the shared
+//!   branch operation (see [`PullRequestSelection::checkout`]); the review
+//!   stays open, pinned to the same commits.
 //! - **The pull request list screen**
 //!   ([`Screen::PullRequestList`](super::Screen)): open pull requests per
 //!   [`PullRequestListFilter`](crate::forge::PullRequestListFilter) tab, kept
 //!   per tab, filtered by typed text, and reloaded every 60 seconds while on
 //!   screen. Enter opens the selected row; a query such as `#17` opens that
 //!   pull request by number even when it is closed or merged.
+//! - **Saved snapshots.** A tab with nothing loaded, and a review opened
+//!   without its detail, show the last page or detail saved in the forge
+//!   cache, marked with its age, until the live load replaces it; every live
+//!   result is saved in turn (see [`saved`]). Writes to GitHub that depend
+//!   on what the detail says (merging, state changes) wait for the live
+//!   detail. A list row that may be outdated (saved, older than a list
+//!   refresh, or behind this session's review) is looked up before it
+//!   opens, so a review never starts from an old head or base (see
+//!   [`RowCurrency`](list::RowCurrency)).
+//! - **Prefetching.** Once a list page loads live, the commits and detail
+//!   of its top ten rows are fetched in the background when missing or
+//!   stale, and so is the current branch's detail after each lookup, so
+//!   the likeliest opens are instant (see [`prefetch`]). Prefetching only
+//!   fills refs and the cache; it never changes the screen.
 //! - **Reviewing and acting on it.** Draft comments (`c`) are local and
 //!   persisted in the review database until a review (`S`) sends them;
 //!   replies (`R`), resolving (`T`), conversation comments (`C`), merging
@@ -53,6 +75,8 @@ mod list_screen;
 mod merge;
 mod modal;
 mod open;
+mod prefetch;
+mod saved;
 mod selection;
 mod state;
 mod submit;
@@ -83,9 +107,20 @@ impl App {
         &mut self,
         event: PullRequestEvent,
     ) -> color_eyre::Result<bool> {
+        if let Some(error) = event.request_error()
+            && error.leaves_forge_unavailable()
+        {
+            self.pull_requests.mark_unavailable(error.clone());
+        }
         match event {
             PullRequestEvent::Connected { request_id, result } => {
                 Ok(self.handle_forge_connected(request_id, result))
+            }
+            PullRequestEvent::RepositoryConfirmed { request_id, result } => {
+                Ok(self.handle_repository_confirmed(request_id, result))
+            }
+            PullRequestEvent::FetchStarted { request_id } => {
+                Ok(self.handle_pull_request_fetch_started(request_id))
             }
             PullRequestEvent::CurrentBranchLoaded { request_id, result } => {
                 Ok(self.handle_current_branch_pull_request_loaded(request_id, result))
@@ -104,6 +139,16 @@ impl App {
                 filter,
                 result,
             } => Ok(self.handle_pull_request_list_loaded(request_id, filter, result)),
+            PullRequestEvent::SavedListRead {
+                repository,
+                filter,
+                snapshot,
+            } => Ok(self.handle_saved_pull_request_list(&repository, filter, snapshot)),
+            PullRequestEvent::SavedDetailRead {
+                repository,
+                number,
+                snapshot,
+            } => Ok(self.handle_saved_pull_request(&repository, number, snapshot)),
             PullRequestEvent::LookedUp { request_id, result } => {
                 Ok(self.handle_pull_request_looked_up(request_id, result))
             }
@@ -114,6 +159,7 @@ impl App {
             PullRequestEvent::MutationFinished { request_id, result } => {
                 Ok(self.handle_mutation_finished(request_id, result))
             }
+            PullRequestEvent::Prefetch(event) => Ok(self.handle_prefetch_event(event)),
             PullRequestEvent::Tick(PullRequestTimer::OpenPullRequest) => {
                 Ok(self.handle_open_pull_request_tick())
             }
@@ -127,6 +173,10 @@ impl App {
 #[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(test)]
+mod prefetch_tests;
+#[cfg(test)]
 mod review_tests;
+#[cfg(test)]
+mod saved_tests;
 #[cfg(test)]
 mod tests;

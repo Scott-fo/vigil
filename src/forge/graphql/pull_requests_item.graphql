@@ -1,8 +1,4 @@
-query PullRequest($owner: String!, $name: String!, $number: Int!) {
-  viewer { login }
-  repository(owner: $owner, name: $name) {
-    ...MergeSettingsFields
-    pullRequest(number: $number) {
+    pr__NUMBER__: pullRequest(number: __NUMBER__) {
       ...PullRequestFields
       checks: commits(last: 1) {
         nodes {
@@ -10,12 +6,10 @@ query PullRequest($owner: String!, $name: String!, $number: Int!) {
             statusCheckRollup {
               contexts(first: 100) {
                 pageInfo { hasNextPage endCursor }
-                nodes { ...CheckFields }
+                nodes { ...CheckFields__NUMBER__ }
               }
             }
           }
         }
       }
     }
-  }
-}

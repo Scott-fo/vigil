@@ -22,7 +22,7 @@ use super::{
     },
     labels::{
         check_glyph, check_state_label, closed_state_span, colored, decision_span, draft_span,
-        faint, now_unix_seconds, relative_time, review_state_span, subtle,
+        faint, freshness_text, now_unix_seconds, relative_time, review_state_span, subtle,
     },
     markdown::markdown_lines,
 };
@@ -30,20 +30,17 @@ use super::{
 const INDENT: &str = "  ";
 const QUOTE: &str = "  │ ";
 
-/// The overview header row: `Overview · #17` on the left, `+12 −3` right.
+/// The overview header row: `Overview · #17` on the left, with how old a
+/// saved detail is, and `+12 −3` right.
 pub(in crate::ui) fn render_overview_header(frame: &mut Frame, app: &App, area: Rect) {
     let Some(overview) = app.pull_request_overview() else {
         return;
     };
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(
-                "Overview",
-                Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
-            ),
-            faint(format!("  #{}", overview.summary.number)),
-        ])),
+        Paragraph::new(Line::from(overview_header_spans(
+            &overview,
+            now_unix_seconds(),
+        ))),
         area,
     );
     let mut right = line_change_spans(
@@ -55,6 +52,24 @@ pub(in crate::ui) fn render_overview_header(frame: &mut Frame, app: &App, area: 
         Paragraph::new(Line::from(right)).alignment(Alignment::Right),
         area,
     );
+}
+
+fn overview_header_spans(overview: &PullRequestOverview<'_>, now: i64) -> Vec<Span<'static>> {
+    let mut spans = vec![
+        Span::raw(" "),
+        Span::styled(
+            "Overview",
+            Style::new().fg(text_color()).add_modifier(Modifier::BOLD),
+        ),
+        faint(format!("  #{}", overview.summary.number)),
+    ];
+    if let Some(saved_at) = overview.saved_at {
+        spans.push(faint(format!(
+            "  · {}",
+            freshness_text(saved_at, overview.refreshing, now)
+        )));
+    }
+    spans
 }
 
 /// The scrollable overview page in the diff pane body.

@@ -113,10 +113,14 @@ impl App {
             },
             PullRequestModal::Merge(form) => {
                 let detail = open.detail()?;
+                let mut blockers = merge_blockers(detail);
+                if let Some(blocker) = self.unconfirmed_detail_blocker() {
+                    blockers.insert(0, blocker);
+                }
                 PullRequestModalView::Merge {
                     form,
                     detail,
-                    blockers: merge_blockers(detail),
+                    blockers,
                     auto_merge: auto_merge_choice(detail),
                     head_oid: open.reviewed_head(),
                     has_new_commits: open.newer_head().is_some(),

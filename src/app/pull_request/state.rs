@@ -4,15 +4,20 @@ use std::{
 };
 
 use crate::{
-    forge::{ForgeError, GitHub, Mergeability, PullRequest, PullRequestState, PullRequestSummary},
+    forge::{
+        ForgeError, GitHub, Mergeability, PullRequest, PullRequestState, PullRequestSummary,
+        Snapshot, Timestamp,
+    },
     review::ReviewThreads,
 };
 
 use super::{
     drafts::{DraftBook, DraftPersistence, DraftWriter},
     gateway::{ForgeGateway, ForgeMutation},
-    list::PullRequestListState,
+    list::{LIST_POLL_INTERVAL, PullRequestListState, RowCurrency},
     modal::PullRequestModal,
+    prefetch::Prefetch,
+    saved::{Freshness, SavedSnapshots},
     task::{OwnedTask, RequestSlot},
 };
 
@@ -41,6 +46,10 @@ pub(in crate::app) enum DraftLoad {
 /// tree change, and each lookup spends two `gh` calls.
 const CURRENT_BRANCH_RELOAD_INTERVAL: Duration = Duration::from_secs(15);
 
+/// A repository name left unconfirmed, as after a failed confirmation, is
+/// asked about again at most this often.
+const CONFIRM_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Whether vigil can talk to GitHub for this repository.
 #[derive(Debug)]
 pub(in crate::app) enum ForgeConnection {
@@ -51,7 +60,9 @@ pub(in crate::app) enum ForgeConnection {
     Connecting,
     Connected(GitHub),
     /// `gh` is missing or logged out, or the repository is not on GitHub.
-    /// Retried only when the user asks for a pull request feature.
+    /// Found by connecting or, since connecting may not run `gh`, by the
+    /// first request. Retried only when the user asks for a pull request
+    /// feature.
     Unavailable(ForgeError),
 }
 
@@ -107,6 +118,19 @@ pub(in crate::app) enum ConnectOutcome {
     },
 }
 
+/// What a finished detail load did to the review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum DetailOutcome {
+    Applied,
+    /// The detail reports a head the review does not show, seen for the
+    /// first time; the reviewer should hear about it once.
+    HeadMoved,
+    /// The detail confirms the reviewed head but on another base than the
+    /// diff uses, which the review opened from an outdated summary; the
+    /// reviewer should hear about it once.
+    BaseMoved,
+}
+
 /// What a poll of the open pull request found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::app) enum PollOutcome {
@@ -121,19 +145,54 @@ pub(in crate::app) enum PollOutcome {
     Updated,
 }
 
+/// The detail a review shows, and whether it came from GitHub in this
+/// session or from the cache.
+#[derive(Debug)]
+struct ShownDetail {
+    value: PullRequest,
+    freshness: Freshness,
+}
+
+/// What an ended review knew about its pull request, so a list row opened
+/// afterwards is not trusted over it.
+#[derive(Debug)]
+struct EndedReview {
+    summary: PullRequestSummary,
+    /// The newest head the review knew: the reviewed one, or a newer one
+    /// GitHub reported.
+    head: String,
+}
+
+impl EndedReview {
+    fn of(open: &OpenPullRequest) -> Self {
+        Self {
+            summary: open.summary.clone(),
+            head: open.known_head().to_string(),
+        }
+    }
+}
+
 /// The pull request under review.
 #[derive(Debug)]
 pub(in crate::app) struct OpenPullRequest {
     summary: PullRequestSummary,
     /// The head commit the review shows.
     reviewed_head: String,
-    detail: Option<PullRequest>,
+    detail: Option<ShownDetail>,
     detail_error: Option<ForgeError>,
     threads: ReviewThreads,
     page: PullRequestPage,
     overview_scroll: usize,
     /// A newer head GitHub reported since the review was fetched.
     newer_head: Option<String>,
+    /// The base the diff uses, while it came from a summary of another
+    /// head: the commits were fetched past what the summary described, so
+    /// the base may be one the head has since been rebased off. The first
+    /// live detail of the reviewed head confirms it or moves it.
+    unconfirmed_base: Option<String>,
+    /// A base GitHub reported for the reviewed head that the diff does not
+    /// use, so the diff may show base-branch commits as changes.
+    moved_base: Option<String>,
     poll: RequestSlot,
     ticker: Option<OwnedTask>,
     origin: ReviewOrigin,
@@ -152,6 +211,8 @@ impl OpenPullRequest {
             page: PullRequestPage::Overview,
             overview_scroll: 0,
             newer_head: None,
+            unconfirmed_base: None,
+            moved_base: None,
             poll: RequestSlot::default(),
             ticker: None,
             origin,
@@ -191,7 +252,7 @@ impl OpenPullRequest {
         let review_threads = self
             .detail
             .as_ref()
-            .map_or(&[][..], |detail| detail.review_threads.as_slice());
+            .map_or(&[][..], |shown| shown.value.review_threads.as_slice());
         let head = self.reviewed_head.as_str();
         self.threads = ReviewThreads::with_drafts(
             review_threads,
@@ -206,8 +267,26 @@ impl OpenPullRequest {
         &self.summary
     }
 
+    /// The detail shown, live or saved. Fine for display; decisions that
+    /// write to GitHub need [`Self::live_detail`].
     pub(in crate::app) fn detail(&self) -> Option<&PullRequest> {
-        self.detail.as_ref()
+        self.detail.as_ref().map(|shown| &shown.value)
+    }
+
+    /// The detail, once GitHub has confirmed it in this session.
+    pub(in crate::app) fn live_detail(&self) -> Option<&PullRequest> {
+        self.detail
+            .as_ref()
+            .filter(|shown| shown.freshness.is_live())
+            .map(|shown| &shown.value)
+    }
+
+    /// When GitHub reported the detail shown, if it is a saved snapshot no
+    /// load has confirmed yet.
+    pub(in crate::app) fn detail_saved_at(&self) -> Option<&Timestamp> {
+        self.detail
+            .as_ref()
+            .and_then(|shown| shown.freshness.saved_at())
     }
 
     pub(in crate::app) fn detail_error(&self) -> Option<&ForgeError> {
@@ -222,6 +301,26 @@ impl OpenPullRequest {
         self.newer_head.as_deref()
     }
 
+    /// The newest head the review knows: a newer one GitHub reported, else
+    /// the reviewed one.
+    fn known_head(&self) -> &str {
+        self.newer_head.as_deref().unwrap_or(&self.reviewed_head)
+    }
+
+    /// A base GitHub reports for the reviewed head that the diff does not
+    /// use; `r` reloads onto it.
+    pub(in crate::app) fn moved_base(&self) -> Option<&str> {
+        self.moved_base.as_deref()
+    }
+
+    /// Records which base the diff uses: `summary`'s, which is only
+    /// trustworthy if `summary` described the reviewed head.
+    fn diff_base_from(&mut self, summary: &PullRequestSummary) {
+        self.unconfirmed_base =
+            (summary.head_oid != self.reviewed_head).then(|| summary.base_oid.clone());
+        self.moved_base = None;
+    }
+
     pub(in crate::app) fn overview_scroll(&self) -> usize {
         self.overview_scroll
     }
@@ -234,11 +333,51 @@ impl OpenPullRequest {
         self.ticker = Some(ticker);
     }
 
-    fn apply_detail(&mut self, detail: PullRequest) {
+    /// Shows a live detail, loaded by a request that started at
+    /// `requested_at`. Reports, once each, a head other than the reviewed
+    /// one, and a base the diff should have used for the reviewed head.
+    fn apply_detail(&mut self, detail: PullRequest, requested_at: Instant) -> DetailOutcome {
+        let summary = &detail.summary;
+        let mut outcome = DetailOutcome::Applied;
+        if summary.head_oid != self.reviewed_head {
+            if self.newer_head.as_deref() != Some(summary.head_oid.as_str()) {
+                self.newer_head = Some(summary.head_oid.clone());
+                outcome = DetailOutcome::HeadMoved;
+            }
+        } else if let Some(base) = self.unconfirmed_base.take()
+            && base != summary.base_oid
+        {
+            self.moved_base = Some(summary.base_oid.clone());
+            outcome = DetailOutcome::BaseMoved;
+        }
         self.summary = detail.summary.clone();
-        self.detail = Some(detail);
+        self.detail = Some(ShownDetail {
+            value: detail,
+            freshness: Freshness::Live { requested_at },
+        });
         self.detail_error = None;
         self.rebuild_threads();
+        outcome
+    }
+
+    /// Shows a saved detail while nothing else is shown. Only a snapshot of
+    /// the reviewed head is used, so its threads and checks match the diff.
+    /// The summary is kept: the one the review opened with is newer.
+    fn apply_saved_detail(&mut self, snapshot: Snapshot<PullRequest>) -> bool {
+        if self.detail.is_some()
+            || snapshot.value.summary.number != self.summary.number
+            || snapshot.value.summary.head_oid != self.reviewed_head
+        {
+            return false;
+        }
+        self.detail = Some(ShownDetail {
+            value: snapshot.value,
+            freshness: Freshness::Saved {
+                fetched_at: snapshot.fetched_at,
+            },
+        });
+        self.rebuild_threads();
+        true
     }
 }
 
@@ -253,6 +392,10 @@ pub(in crate::app) struct PullRequests {
     connection: ForgeConnection,
     connect: RequestSlot,
     connect_reason: ConnectReason,
+    /// Asks GitHub for the canonical name of a locally resolved repository.
+    confirm: RequestSlot,
+    /// When the repository name was last sent to GitHub to confirm.
+    last_confirm_attempt: Option<Instant>,
     pending: Option<PendingAction>,
     current_branch: CurrentBranch,
     /// The pull request being fetched before its review opens.
@@ -260,12 +403,20 @@ pub(in crate::app) struct PullRequests {
     fetch: RequestSlot,
     detail: RequestSlot,
     detail_number: Option<u64>,
+    /// When the latest detail load started.
+    detail_requested_at: Instant,
     /// Detail that arrived while its pull request was still being fetched.
     early_detail: Option<Result<PullRequest, ForgeError>>,
+    /// A saved detail read while its pull request was still being fetched.
+    early_saved_detail: Option<Snapshot<PullRequest>>,
     open: Option<OpenPullRequest>,
+    /// The last review that ended this session.
+    ended_review: Option<EndedReview>,
     list: PullRequestListState,
     /// A pull request looked up by number before it opens.
     lookup: RequestSlot,
+    /// The number `lookup` is for.
+    lookup_number: Option<u64>,
     opening_origin: ReviewOrigin,
     /// The review-action modal on screen, if any.
     modal: Option<PullRequestModal>,
@@ -275,22 +426,40 @@ pub(in crate::app) struct PullRequests {
     gateway: ForgeGateway,
     draft_persistence: DraftPersistence,
     draft_writer: Option<DraftWriter>,
+    saved: SavedSnapshots,
+    /// Background prefetches of listed pull requests.
+    prefetch: Prefetch,
 }
 
 impl Default for PullRequests {
     fn default() -> Self {
-        Self::with_connection(ForgeConnection::Idle, DraftPersistence::Database)
+        Self::with_connection(
+            ForgeConnection::Idle,
+            DraftPersistence::Database,
+            SavedSnapshots::user_cache(),
+        )
     }
 }
 
 impl PullRequests {
-    /// State that never spawns `gh` or touches the review database.
+    /// State that never spawns `gh` or touches the review database or the
+    /// forge cache.
     pub(in crate::app) fn disabled() -> Self {
-        Self::with_connection(ForgeConnection::Disabled, DraftPersistence::Off)
+        Self::with_connection(
+            ForgeConnection::Disabled,
+            DraftPersistence::Off,
+            SavedSnapshots::off(),
+        )
     }
 
-    fn with_connection(connection: ForgeConnection, draft_persistence: DraftPersistence) -> Self {
+    fn with_connection(
+        connection: ForgeConnection,
+        draft_persistence: DraftPersistence,
+        saved: SavedSnapshots,
+    ) -> Self {
         Self {
+            saved,
+            prefetch: Prefetch::default(),
             opening_origin: ReviewOrigin::Elsewhere,
             modal: None,
             mutation: RequestSlot::default(),
@@ -301,16 +470,22 @@ impl PullRequests {
             connection,
             connect: RequestSlot::default(),
             connect_reason: ConnectReason::Background,
+            confirm: RequestSlot::default(),
+            last_confirm_attempt: None,
             pending: None,
             current_branch: CurrentBranch::default(),
             opening: None,
             fetch: RequestSlot::default(),
             detail: RequestSlot::default(),
             detail_number: None,
+            detail_requested_at: Instant::now(),
             early_detail: None,
+            early_saved_detail: None,
             open: None,
+            ended_review: None,
             list: PullRequestListState::default(),
             lookup: RequestSlot::default(),
+            lookup_number: None,
         }
     }
 
@@ -382,16 +557,83 @@ impl PullRequests {
         }
     }
 
+    /// Records that a request found GitHub unable to serve this checkout
+    /// (`gh` missing or logged out, repository not visible) after a
+    /// connection that never ran `gh`. Background work stops as if
+    /// connecting had failed, and the next user request reconnects and
+    /// retries.
+    pub(in crate::app) fn mark_unavailable(&mut self, error: ForgeError) {
+        if matches!(self.connection, ForgeConnection::Connected(_)) {
+            self.connection = ForgeConnection::Unavailable(error);
+        }
+    }
+
     /// Keeps the client pointed at the checkout vigil shows. Worktrees of one
     /// repository share its GitHub identity, so no new probe is needed.
     pub(in crate::app) fn rebind_repo_root(&mut self, repo_root: &Path) {
         if let ForgeConnection::Connected(github) = &self.connection
             && github.repo_root() != repo_root
         {
-            let repository = github.repository().clone();
-            self.connection = ForgeConnection::Connected(GitHub::new(repo_root, repository));
+            self.connection = ForgeConnection::Connected(github.with_repo_root(repo_root));
             self.current_branch = CurrentBranch::default();
         }
+    }
+
+    /// Starts confirming a locally resolved repository's canonical name.
+    /// Returns the request id and the client to ask with, or `None` when
+    /// nothing needs confirming.
+    pub(in crate::app) fn begin_confirm(&mut self) -> Option<(u64, GitHub)> {
+        self.begin_confirm_at(Instant::now())
+    }
+
+    /// Asks again about a name still unconfirmed, as after a failed
+    /// confirmation left a renamed repository's list empty: never while an
+    /// attempt runs, and at most once per [`CONFIRM_RETRY_INTERVAL`].
+    pub(in crate::app) fn begin_confirm_retry(&mut self, now: Instant) -> Option<(u64, GitHub)> {
+        let recent = self
+            .last_confirm_attempt
+            .is_some_and(|at| now.saturating_duration_since(at) < CONFIRM_RETRY_INTERVAL);
+        if self.confirm.in_flight() || recent {
+            return None;
+        }
+        self.begin_confirm_at(now)
+    }
+
+    fn begin_confirm_at(&mut self, now: Instant) -> Option<(u64, GitHub)> {
+        let github = self
+            .github()
+            .filter(|github| !github.is_repository_confirmed())?
+            .clone();
+        self.last_confirm_attempt = Some(now);
+        Some((self.confirm.begin(), github))
+    }
+
+    pub(in crate::app) fn attach_confirm(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {
+        self.confirm.attach(id, handle);
+    }
+
+    /// Switches to the confirmed client. Returns whether the repository was
+    /// renamed or transferred (not merely spelled in another case), so
+    /// results loaded under the old name are stale; false for stale or
+    /// failed confirmations, which keep the local name.
+    pub(in crate::app) fn finish_confirm(
+        &mut self,
+        id: u64,
+        result: Result<GitHub, ForgeError>,
+    ) -> bool {
+        if !self.confirm.complete(id) {
+            return false;
+        }
+        let (Ok(confirmed), ForgeConnection::Connected(github)) = (result, &self.connection) else {
+            return false;
+        };
+        let (old, new) = (github.repository(), confirmed.repository());
+        let renamed = !(old.host.eq_ignore_ascii_case(&new.host)
+            && old.owner.eq_ignore_ascii_case(&new.owner)
+            && old.name.eq_ignore_ascii_case(&new.name));
+        self.connection =
+            ForgeConnection::Connected(confirmed.with_repo_root(github.repo_root().to_path_buf()));
+        renamed
     }
 
     pub(in crate::app) fn set_pending(&mut self, action: PendingAction) {
@@ -467,8 +709,10 @@ impl PullRequests {
         if let Ok(summary) = result {
             current.branch = Some(key.branch.clone());
             current.summary = summary.clone();
-            current.last_load = Some((key, now));
         }
+        // A failed lookup waits out the interval too, so a failing `gh` is
+        // not rerun on every working tree change.
+        current.last_load = Some((key, now));
         true
     }
 
@@ -482,17 +726,22 @@ impl PullRequests {
 
     // Opening a pull request -------------------------------------------------
 
-    /// Starts fetching `summary`'s commits and loading its detail. Returns the
-    /// fetch and detail request ids.
+    /// Starts getting `summary`'s commits and loading its detail. Returns the
+    /// fetch and detail request ids. An explicit open wins over a lookup
+    /// still running, which would otherwise open its own pull request when
+    /// it answers.
     pub(in crate::app) fn begin_open(
         &mut self,
         summary: PullRequestSummary,
         origin: ReviewOrigin,
     ) -> (u64, u64) {
+        self.lookup.cancel();
         self.detail_number = Some(summary.number);
         self.early_detail = None;
+        self.early_saved_detail = None;
         self.opening = Some(summary);
         self.opening_origin = origin;
+        self.detail_requested_at = Instant::now();
         (self.fetch.begin(), self.detail.begin())
     }
 
@@ -501,8 +750,61 @@ impl PullRequests {
         self.opening.as_ref().map(|summary| summary.number)
     }
 
+    /// The number of the pull request being opened by request `id`, unless
+    /// that request was superseded or finished.
+    pub(in crate::app) fn fetching_number(&self, id: u64) -> Option<u64> {
+        self.fetch
+            .is_current(id)
+            .then(|| self.opening_number())
+            .flatten()
+    }
+
+    /// Drops the detail load an open started, so a test never reaches
+    /// GitHub.
+    #[cfg(test)]
+    pub(in crate::app) fn cancel_detail_for_test(&mut self) {
+        self.detail.cancel();
+    }
+
     pub(in crate::app) fn list(&self) -> &PullRequestListState {
         &self.list
+    }
+
+    /// The list's selected row, and whether it is current enough at `now`
+    /// to open from (see [`RowCurrency`]).
+    pub(in crate::app) fn selected_list_row(
+        &self,
+        now: Instant,
+    ) -> Option<(&PullRequestSummary, RowCurrency)> {
+        let row = self.list.selected_summary()?;
+        let page_current = match self.list.freshness()? {
+            Freshness::Live { requested_at } => {
+                now.saturating_duration_since(*requested_at) < LIST_POLL_INTERVAL
+                    && self.list.error().is_none()
+            }
+            Freshness::Saved { .. } => false,
+        };
+        // A review this session may know a newer head than the row, as
+        // after `r` fetched new commits, until a list load catches up.
+        let known = match self.open.as_ref() {
+            Some(open) if open.summary.number == row.number => {
+                Some((&open.summary, open.known_head()))
+            }
+            _ => self
+                .ended_review
+                .as_ref()
+                .filter(|ended| ended.summary.number == row.number)
+                .map(|ended| (&ended.summary, ended.head.as_str())),
+        };
+        let behind_review = known.is_some_and(|(summary, head)| {
+            head != row.head_oid && row.updated_at <= summary.updated_at
+        });
+        let currency = if page_current && !behind_review {
+            RowCurrency::Current
+        } else {
+            RowCurrency::Outdated
+        };
+        Some((row, currency))
     }
 
     pub(in crate::app) fn list_mut(&mut self) -> &mut PullRequestListState {
@@ -511,8 +813,14 @@ impl PullRequests {
 
     /// Starts looking up a pull request by number, superseding any earlier
     /// lookup.
-    pub(in crate::app) fn begin_lookup(&mut self) -> u64 {
+    pub(in crate::app) fn begin_lookup(&mut self, number: u64) -> u64 {
+        self.lookup_number = Some(number);
         self.lookup.begin()
+    }
+
+    /// The pull request a running lookup is about to open.
+    pub(in crate::app) fn looking_up_number(&self) -> Option<u64> {
+        self.lookup_number.filter(|_| self.lookup_in_flight())
     }
 
     pub(in crate::app) fn attach_lookup(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {
@@ -521,6 +829,23 @@ impl PullRequests {
 
     pub(in crate::app) fn finish_lookup(&mut self, id: u64) -> bool {
         self.lookup.complete(id)
+    }
+
+    pub(in crate::app) fn lookup_in_flight(&self) -> bool {
+        self.lookup.in_flight()
+    }
+
+    /// Drops a running lookup, as when the list it was started from
+    /// closes. Returns whether one was running.
+    pub(in crate::app) fn cancel_lookup(&mut self) -> bool {
+        let running = self.lookup.in_flight();
+        self.lookup.cancel();
+        running
+    }
+
+    #[cfg(test)]
+    pub(in crate::app) fn lookup_request_id(&self) -> u64 {
+        self.lookup.current_id()
     }
 
     pub(in crate::app) fn attach_fetch(&mut self, id: u64, handle: tokio::task::JoinHandle<()>) {
@@ -542,20 +867,32 @@ impl PullRequests {
 
     /// Makes `summary` the pull request under review at `reviewed_head`. A
     /// reload of the same pull request keeps its page, scroll, detail, and
-    /// drafts; a newly opened one starts on the overview. Returns the number
-    /// of a different pull request this replaced, whose review ended.
+    /// drafts, except a saved detail of another head, whose threads would
+    /// not match the new diff; a newly opened one starts on the overview.
+    /// Returns the number of a different pull request this replaced, whose
+    /// review ended.
     pub(in crate::app) fn enter(
         &mut self,
         summary: PullRequestSummary,
         reviewed_head: String,
     ) -> Option<u64> {
         let early_detail = self.early_detail.take();
+        let early_saved_detail = self.early_saved_detail.take();
         let origin = self.opening_origin;
         let mut replaced = None;
         match self.open.as_mut() {
             Some(open) if open.summary.number == summary.number => {
-                open.summary = summary;
+                if open.reviewed_head != reviewed_head
+                    && open
+                        .detail
+                        .as_ref()
+                        .is_some_and(|shown| !shown.freshness.is_live())
+                {
+                    open.detail = None;
+                }
                 open.reviewed_head = reviewed_head;
+                open.diff_base_from(&summary);
+                open.summary = summary;
                 open.newer_head = None;
                 if origin == ReviewOrigin::PullRequestList {
                     open.origin = origin;
@@ -563,10 +900,18 @@ impl PullRequests {
                 open.rebuild_threads();
             }
             previous => {
-                replaced = previous.map(|open| open.summary.number);
+                if let Some(previous) = previous {
+                    self.ended_review = Some(EndedReview::of(previous));
+                }
+                replaced = self.open.as_ref().map(|open| open.summary.number);
                 self.modal = None;
-                self.open = Some(OpenPullRequest::new(summary, reviewed_head, origin));
+                let mut open = OpenPullRequest::new(summary.clone(), reviewed_head, origin);
+                open.diff_base_from(&summary);
+                self.open = Some(open);
             }
+        }
+        if let (Some(snapshot), Some(open)) = (early_saved_detail, self.open.as_mut()) {
+            open.apply_saved_detail(snapshot);
         }
         if let Some(result) = early_detail {
             self.apply_detail_result(result);
@@ -574,43 +919,101 @@ impl PullRequests {
         replaced
     }
 
+    /// Whether a saved detail of `number` could still be shown: its review
+    /// is not open yet, or has no detail.
+    pub(in crate::app) fn wants_saved_detail(&self, number: u64) -> bool {
+        match self.open.as_ref() {
+            Some(open) if open.summary.number == number => open.detail.is_none(),
+            _ => true,
+        }
+    }
+
+    /// Shows a saved detail of `number` if its review, open or opening, has
+    /// no detail yet. Returns whether anything visible changed; a snapshot
+    /// that arrives after the live detail is dropped.
+    pub(in crate::app) fn show_saved_detail(
+        &mut self,
+        number: u64,
+        snapshot: Snapshot<PullRequest>,
+    ) -> bool {
+        if let Some(open) = self
+            .open
+            .as_mut()
+            .filter(|open| open.summary.number == number)
+        {
+            return open.apply_saved_detail(snapshot);
+        }
+        if self.opening_number() == Some(number) && !matches!(self.early_detail, Some(Ok(_))) {
+            self.early_saved_detail = Some(snapshot);
+        }
+        false
+    }
+
+    /// When the latest detail load started: the time its answer is as of.
+    pub(in crate::app) fn detail_requested_at(&self) -> Instant {
+        self.detail_requested_at
+    }
+
+    /// Whether a detail load for the open pull request is running.
+    pub(in crate::app) fn detail_refreshing(&self) -> bool {
+        self.detail.in_flight()
+            && self.detail_number.is_some()
+            && self.detail_number == self.open_number()
+    }
+
     /// Records a finished detail load for the open (or opening) pull request.
-    /// Returns false for stale responses.
+    /// `None` for stale responses.
     pub(in crate::app) fn finish_detail(
         &mut self,
         id: u64,
         result: Result<PullRequest, ForgeError>,
-    ) -> bool {
+    ) -> Option<DetailOutcome> {
         if !self.detail.complete(id) {
-            return false;
+            return None;
         }
         let number = self.detail_number;
         if self.opening.as_ref().map(|summary| summary.number) == number {
             self.early_detail = Some(result);
-            return true;
+            return Some(DetailOutcome::Applied);
         }
         if self.open.as_ref().map(|open| open.summary.number) != number {
-            return false;
+            return None;
         }
-        self.apply_detail_result(result);
-        true
+        Some(self.apply_detail_result(result))
     }
 
-    fn apply_detail_result(&mut self, result: Result<PullRequest, ForgeError>) {
+    fn apply_detail_result(&mut self, result: Result<PullRequest, ForgeError>) -> DetailOutcome {
+        let requested_at = self.detail_requested_at;
         let Some(open) = self.open.as_mut() else {
-            return;
+            return DetailOutcome::Applied;
         };
         match result {
-            Ok(detail) if detail.summary.number == open.summary.number => open.apply_detail(detail),
-            Ok(_) => {}
-            Err(error) => open.detail_error = Some(error),
+            Ok(detail) if detail.summary.number == open.summary.number => {
+                open.apply_detail(detail, requested_at)
+            }
+            Ok(_) => DetailOutcome::Applied,
+            Err(error) => {
+                open.detail_error = Some(error);
+                DetailOutcome::Applied
+            }
         }
     }
 
     /// Reloads the open pull request's detail without refetching commits.
+    /// `None` while another pull request is opening: the two share one
+    /// detail request, and the opening one's load must not be aborted. The
+    /// open review is about to be replaced, and if the open fails its next
+    /// poll reloads it.
     pub(in crate::app) fn begin_detail_reload(&mut self) -> Option<(u64, u64)> {
         let number = self.open.as_ref()?.summary.number;
+        if self
+            .opening_number()
+            .is_some_and(|opening| opening != number)
+        {
+            return None;
+        }
         self.detail_number = Some(number);
+        self.detail_requested_at = Instant::now();
         Some((self.detail.begin(), number))
     }
 
@@ -635,9 +1038,11 @@ impl PullRequests {
     /// the pull request whose review ended.
     pub(in crate::app) fn close(&mut self) -> Option<u64> {
         let closed = self.open.take()?;
+        self.ended_review = Some(EndedReview::of(&closed));
         self.detail.cancel();
         self.detail_number = None;
         self.early_detail = None;
+        self.early_saved_detail = None;
         self.modal = None;
         Some(closed.summary.number)
     }
@@ -688,13 +1093,28 @@ impl PullRequests {
         self.mutation.current_id()
     }
 
-    #[cfg(test)]
     pub(in crate::app) fn gateway(&self) -> &ForgeGateway {
         &self.gateway
     }
 
+    pub(in crate::app) fn prefetch(&self) -> &Prefetch {
+        &self.prefetch
+    }
+
+    pub(in crate::app) fn prefetch_mut(&mut self) -> &mut Prefetch {
+        &mut self.prefetch
+    }
+
     pub(in crate::app) fn gateway_mut(&mut self) -> &mut ForgeGateway {
         &mut self.gateway
+    }
+
+    pub(in crate::app) fn saved(&self) -> &SavedSnapshots {
+        &self.saved
+    }
+
+    pub(in crate::app) fn saved_mut(&mut self) -> &mut SavedSnapshots {
+        &mut self.saved
     }
 
     pub(in crate::app) fn draft_persistence(&self) -> DraftPersistence {
@@ -773,7 +1193,7 @@ impl PullRequests {
         open.newer_head = None;
         // GitHub computes mergeability in the background without touching
         // `updated_at`, so an unknown answer is worth asking again.
-        let mergeability_pending = open.detail.as_ref().is_some_and(|detail| {
+        let mergeability_pending = open.detail().is_some_and(|detail| {
             detail.summary.state == PullRequestState::Open
                 && detail.mergeable == Mergeability::Unknown
         });

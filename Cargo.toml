@@ -49,6 +49,10 @@ unicode-segmentation = "1.12.0"
 neo_frizbee = "0.10.2"
 memchr = "2.7.6"
 
+[target.'cfg(unix)'.dependencies]
+# Detaching background git from the terminal and signalling its process group.
+libc = "0.2"
+
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 

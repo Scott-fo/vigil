@@ -6,6 +6,8 @@
 //! concatenated with exactly the fragments it uses, since GitHub rejects
 //! documents with unused fragments.
 
+use std::borrow::Cow;
+
 use serde_json::{Map, Value, json};
 
 use super::{
@@ -25,6 +27,8 @@ macro_rules! document {
 pub(super) mod documents {
     pub const PULL_REQUEST: &str = document!(
         "pull_request",
+        "merge_settings_fields",
+        "pull_request_fields",
         "summary_fields",
         "review_request_fields",
         "review_fields",
@@ -33,6 +37,25 @@ pub(super) mod documents {
         "thread_comment_fields",
         "check_fields",
     );
+    /// The batched form of [`PULL_REQUEST`], built by
+    /// [`pull_requests_request`](super::pull_requests_request): the query
+    /// around the pull requests, with a placeholder line for them.
+    pub const PULL_REQUESTS: &str = document!("pull_requests", "merge_settings_fields");
+    /// One pull request of a batch, repeated with `__NUMBER__` replaced.
+    pub const PULL_REQUESTS_ITEM: &str = document!("pull_requests_item");
+    /// The fragments every batched pull request shares.
+    pub const PULL_REQUESTS_FRAGMENTS: &str = document!(
+        "pull_request_fields",
+        "summary_fields",
+        "review_request_fields",
+        "review_fields",
+        "conversation_comment_fields",
+        "thread_fields",
+        "thread_comment_fields",
+    );
+    /// `CheckFields`, which reads `$number`; a batch repeats it per pull
+    /// request with the number filled in.
+    pub const CHECK_FIELDS: &str = document!("check_fields");
     pub const SUMMARY: &str = document!("summary", "summary_fields");
     pub const SEARCH: &str = document!("search", "summary_fields");
     pub const REVIEW_THREADS_PAGE: &str = document!(
@@ -50,6 +73,7 @@ pub(super) mod documents {
     pub const CHECKS_PAGE: &str = document!("checks_page", "check_fields");
     pub const PULL_REQUEST_ID: &str = document!("pull_request_id");
     pub const MERGE_TARGET: &str = document!("merge_target");
+    pub const REPOSITORY: &str = document!("repository");
 
     pub const MERGE: &str = document!("merge");
     pub const ENABLE_AUTO_MERGE: &str = document!("enable_auto_merge");
@@ -63,7 +87,8 @@ pub(super) mod documents {
     pub const UNRESOLVE_THREAD: &str = document!("unresolve_thread");
     pub const ADD_COMMENT: &str = document!("add_comment", "conversation_comment_fields");
 
-    /// Every read-only document, for live schema validation.
+    /// Every read-only document, for live schema validation. Documents
+    /// built at run time are in [`built_queries`].
     #[cfg(test)]
     pub const QUERIES: &[(&str, &str)] = &[
         ("PULL_REQUEST", PULL_REQUEST),
@@ -77,6 +102,7 @@ pub(super) mod documents {
         ("CHECKS_PAGE", CHECKS_PAGE),
         ("PULL_REQUEST_ID", PULL_REQUEST_ID),
         ("MERGE_TARGET", MERGE_TARGET),
+        ("REPOSITORY", REPOSITORY),
     ];
 
     /// Every mutation document, for live schema validation.
@@ -94,23 +120,46 @@ pub(super) mod documents {
         ("UNRESOLVE_THREAD", UNRESOLVE_THREAD),
         ("ADD_COMMENT", ADD_COMMENT),
     ];
+
+    /// Read-only documents built from templates, as sent, for live schema
+    /// validation alongside [`QUERIES`].
+    #[cfg(test)]
+    pub fn built_queries() -> Vec<(&'static str, String)> {
+        let repository = crate::forge::RepositoryRef {
+            host: "github.com".into(),
+            owner: "Scott-fo".into(),
+            name: "vigil".into(),
+        };
+        vec![(
+            "PULL_REQUESTS",
+            super::pull_requests_request(&repository, &[15, 16])
+                .document
+                .into_owned(),
+        )]
+    }
 }
 
 /// Most pull requests a list returns; GitHub search pages hold 50.
 pub(super) const LIST_LIMIT: usize = 100;
 
+/// Most pull requests one batched detail request asks for. GitHub prices a
+/// full batch at six rate-limit points (one alone costs one), and caps a
+/// query at 500,000 nodes and ten seconds.
+pub(super) const PULL_REQUEST_BATCH: usize = 10;
+
 /// One GraphQL operation, sent to `gh api graphql --input -` as JSON so user
 /// text never passes through `gh`'s `-f`/`-F` argument parsing.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct GraphqlRequest {
-    pub document: &'static str,
+    /// A document from [`documents`], or one built from its template.
+    pub document: Cow<'static, str>,
     pub variables: Value,
 }
 
 impl GraphqlRequest {
-    pub fn new(document: &'static str, variables: Value) -> Self {
+    pub fn new(document: impl Into<Cow<'static, str>>, variables: Value) -> Self {
         Self {
-            document,
+            document: document.into(),
             variables,
         }
     }
@@ -146,6 +195,49 @@ pub(super) fn graphql_args(repo: &RepositoryRef) -> Vec<String> {
 
 pub(super) fn pull_request_variables(repo: &RepositoryRef, number: u64) -> Value {
     json!({ "owner": repo.owner, "name": repo.name, "number": number })
+}
+
+/// The line of [`documents::PULL_REQUESTS`] the batched pull requests
+/// replace.
+const PULL_REQUESTS_PLACEHOLDER: &str = "    # pull requests\n";
+
+/// The response field holding pull request `number` in a batched request.
+pub(super) fn pull_request_alias(number: u64) -> String {
+    format!("pr{number}")
+}
+
+/// One request for the full detail of every pull request in `numbers`,
+/// each under its [`pull_request_alias`] beside the shared viewer and merge
+/// settings, selecting what [`documents::PULL_REQUEST`] selects.
+///
+/// GraphQL has no field listing pull requests by number, and `CheckFields`
+/// asks whether each check is required for one pull request number, so the
+/// numbers are written into the document: an alias per pull request and a
+/// copy of `CheckFields` per pull request. Numbers are integers, so nothing
+/// else can reach the document.
+pub(super) fn pull_requests_request(repo: &RepositoryRef, numbers: &[u64]) -> GraphqlRequest {
+    debug_assert!(documents::PULL_REQUESTS.contains(PULL_REQUESTS_PLACEHOLDER));
+    let mut items = String::new();
+    let mut fragments = String::new();
+    for number in numbers {
+        let number = number.to_string();
+        items.push_str(&documents::PULL_REQUESTS_ITEM.replace("__NUMBER__", &number));
+        fragments.push_str(
+            &documents::CHECK_FIELDS
+                .replacen(
+                    "fragment CheckFields ",
+                    &format!("fragment CheckFields{number} "),
+                    1,
+                )
+                .replace("$number", &number),
+        );
+    }
+    let mut document = documents::PULL_REQUESTS.replacen(PULL_REQUESTS_PLACEHOLDER, &items, 1);
+    if !numbers.is_empty() {
+        document.push_str(documents::PULL_REQUESTS_FRAGMENTS);
+        document.push_str(&fragments);
+    }
+    GraphqlRequest::new(document, json!({ "owner": repo.owner, "name": repo.name }))
 }
 
 pub(super) fn search_query(repo: &RepositoryRef, filter: PullRequestListFilter) -> String {
@@ -411,17 +503,91 @@ mod tests {
         assert!(documents::SUMMARY.contains("fragment SummaryFields"));
         assert!(!documents::SUMMARY.contains("fragment ThreadFields"));
         assert!(documents::REPLY_TO_THREAD.contains("fragment ThreadCommentFields"));
-        for (name, document) in documents::QUERIES.iter().chain(documents::MUTATIONS) {
+        let built = documents::built_queries();
+        let all = documents::QUERIES
+            .iter()
+            .chain(documents::MUTATIONS)
+            .map(|(name, document)| (*name, *document))
+            .chain(
+                built
+                    .iter()
+                    .map(|(name, document)| (*name, document.as_str())),
+            );
+        for (name, document) in all {
+            let spreads = document
+                .match_indices("...")
+                .filter_map(|(index, _)| document[index + 3..].split_whitespace().next())
+                .collect::<Vec<_>>();
             for fragment in document
                 .match_indices("fragment ")
                 .map(|(index, _)| document[index + 9..].split_whitespace().next().unwrap())
             {
                 assert!(
-                    document.contains(&format!("...{fragment}")),
+                    spreads.contains(&fragment),
                     "{name} defines unused fragment {fragment}"
                 );
             }
+            for spread in spreads.iter().filter(|spread| **spread != "on") {
+                assert!(
+                    document.contains(&format!("fragment {spread} on")),
+                    "{name} uses undefined fragment {spread}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn batched_detail_request_aliases_each_pull_request() {
+        let request = pull_requests_request(&repo(), &[12, 7696]);
+        let document = request.document.as_ref();
+
+        assert!(document.starts_with("query PullRequests($owner: String!, $name: String!) {"));
+        assert_eq!(
+            request.variables,
+            json!({ "owner": "Scott-fo", "name": "vigil" })
+        );
+        for number in [12, 7696] {
+            assert!(document.contains(&format!(
+                "    {}: pullRequest(number: {number}) {{\n      ...PullRequestFields\n",
+                pull_request_alias(number)
+            )));
+            assert!(document.contains(&format!("nodes {{ ...CheckFields{number} }}")));
+            assert!(document.contains(&format!(
+                "fragment CheckFields{number} on StatusCheckRollupContext"
+            )));
+            assert_eq!(
+                document
+                    .matches(&format!("isRequired(pullRequestNumber: {number})"))
+                    .count(),
+                2,
+                "check runs and statuses of #{number}"
+            );
+        }
+        assert_eq!(document.matches("pullRequest(number:").count(), 2);
+        assert_eq!(document.matches("fragment PullRequestFields ").count(), 1);
+        for leftover in ["$number", "__NUMBER__", "# pull requests"] {
+            assert!(!document.contains(leftover), "{leftover}");
+        }
+    }
+
+    #[test]
+    fn a_batched_pull_request_selects_what_a_single_load_does() {
+        // The single load's pull request, spelled as a batch item.
+        let item = documents::PULL_REQUESTS_ITEM
+            .replace("pr__NUMBER__: ", "")
+            .replace("CheckFields__NUMBER__", "CheckFields")
+            .replace("__NUMBER__", "$number");
+        assert!(documents::PULL_REQUEST.contains(&item), "{item}");
+        for fragment in documents::PULL_REQUESTS_FRAGMENTS
+            .split("\nfragment ")
+            .skip(1)
+        {
+            assert!(documents::PULL_REQUEST.contains(fragment));
+        }
+        assert!(documents::PULL_REQUEST.contains(documents::CHECK_FIELDS));
+
+        let empty = pull_requests_request(&repo(), &[]);
+        assert!(!empty.document.contains("fragment PullRequestFields"));
     }
 
     #[test]

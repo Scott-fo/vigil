@@ -1,0 +1,46 @@
+
+fragment PullRequestFields on PullRequest {
+  ...SummaryFields
+  id
+  body
+  createdAt
+  mergeable
+  mergeStateStatus
+  viewerDidAuthor
+  viewerCanUpdate
+  viewerCanClose
+  viewerCanReopen
+  viewerCanEnableAutoMerge
+  viewerCanDisableAutoMerge
+  viewerCanDeleteHeadRef
+  commitCount: commits { totalCount }
+  autoMergeRequest {
+    mergeMethod
+    enabledAt
+    enabledBy { login }
+  }
+  reviewRequests(first: 100) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ...ReviewRequestFields }
+  }
+  latestReviews(first: 100) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ...ReviewFields }
+  }
+  viewerPendingReviews: reviews(first: 1, states: [PENDING]) {
+    nodes {
+      id
+      createdAt
+      body
+      comments { totalCount }
+    }
+  }
+  comments(first: 100) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ...ConversationCommentFields }
+  }
+  reviewThreads(first: 50) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ...ThreadFields }
+  }
+}

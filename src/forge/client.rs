@@ -8,10 +8,12 @@ use serde_json::{Value, json};
 use super::{
     error::ForgeError,
     gh::run_gh,
+    repository::resolve_repository_locally,
     request::{
-        GraphqlRequest, LIST_LIMIT, PullRequestMutation, add_comment_request, api_args, documents,
-        graphql_args, head_ref_path, merge_request, pull_request_variables, reply_request,
-        resolve_request, review_body, review_path, search_query,
+        GraphqlRequest, LIST_LIMIT, PULL_REQUEST_BATCH, PullRequestMutation, add_comment_request,
+        api_args, documents, graphql_args, head_ref_path, merge_request, pull_request_variables,
+        pull_requests_request, reply_request, resolve_request, review_body, review_path,
+        search_query,
     },
     types::{
         ConversationComment, HeadBranchAction, HeadBranchOutcome, MergeOptions, MergeOutcome,
@@ -20,7 +22,7 @@ use super::{
     },
     wire::{
         CollectedPages, Connection, FirstPages, MergeTarget, PageInfo, PartialThread,
-        PullRequestData, RepositoryView, RestReview, SearchPage, WireCheck,
+        PullRequestData, PullRequestsData, RepositoryView, RestReview, SearchPage, WireCheck,
         WireConversationComment, WireReview, WireReviewRequest, WireSummary, WireThread,
         WireThreadComment, collect_pages, decode, decode_value, graphql_data, take_at,
     },
@@ -35,6 +37,8 @@ use super::{
 pub struct GitHub {
     repo_root: PathBuf,
     repository: RepositoryRef,
+    /// Whether GitHub itself named `repository`, rather than a remote URL.
+    confirmed: bool,
 }
 
 impl GitHub {
@@ -42,25 +46,64 @@ impl GitHub {
     /// from the git remotes, preferring `upstream` over `origin`, or the
     /// default set with `gh repo set-default`.
     ///
+    /// When local git config settles it (a `github.com` remote chosen
+    /// unambiguously), this reads only the config and never runs `gh`, so
+    /// success does not prove `gh` is installed or logged in: that surfaces
+    /// as [`ForgeError::GhNotInstalled`] or [`ForgeError::NotAuthenticated`]
+    /// from the first request. Otherwise it asks `gh repo view`.
+    ///
+    /// A locally resolved repository is named as the remote URL spells it,
+    /// which is stale after a rename or transfer; see
+    /// [`Self::is_repository_confirmed`] and [`Self::confirm_repository`].
+    ///
     /// Fails with [`ForgeError::NotGitHubRepository`] when no remote points
     /// at a GitHub host, which callers should treat as "PR features are
     /// unavailable" rather than as an error to report.
     pub async fn connect(repo_root: impl Into<PathBuf>) -> Result<Self, ForgeError> {
         let repo_root = repo_root.into();
+        if let Some(repository) = resolve_repository_locally(&repo_root).await {
+            return Ok(Self {
+                repo_root,
+                repository,
+                confirmed: false,
+            });
+        }
         let args = strings(&["repo", "view", "--json", "nameWithOwner,url"]);
         let stdout = run_gh(&repo_root, &args, None).await?;
         let view: RepositoryView = decode("repository", &stdout)?;
         Ok(Self {
             repo_root,
             repository: repository_ref(&view)?,
+            confirmed: true,
         })
     }
 
-    /// A client for a known repository, skipping remote resolution.
+    /// A client for a known repository, skipping remote resolution. The
+    /// caller vouches for `repository`, so it counts as confirmed.
     pub fn new(repo_root: impl Into<PathBuf>, repository: RepositoryRef) -> Self {
         Self {
             repo_root: repo_root.into(),
             repository,
+            confirmed: true,
+        }
+    }
+
+    /// A client left as a local [`Self::connect`] leaves it: `repository` as
+    /// a remote URL spells it, not yet confirmed.
+    #[cfg(test)]
+    pub(crate) fn unconfirmed(repo_root: impl Into<PathBuf>, repository: RepositoryRef) -> Self {
+        Self {
+            confirmed: false,
+            ..Self::new(repo_root, repository)
+        }
+    }
+
+    /// The same client for another checkout of the repository, such as a
+    /// worktree.
+    pub fn with_repo_root(&self, repo_root: impl Into<PathBuf>) -> Self {
+        Self {
+            repo_root: repo_root.into(),
+            ..self.clone()
         }
     }
 
@@ -70,6 +113,34 @@ impl GitHub {
 
     pub fn repo_root(&self) -> &Path {
         &self.repo_root
+    }
+
+    /// Whether GitHub itself named [`Self::repository`]. False after a
+    /// [`Self::connect`] that resolved it from a remote URL alone.
+    pub fn is_repository_confirmed(&self) -> bool {
+        self.confirmed
+    }
+
+    /// This client with GitHub's canonical `owner/name`, which follows
+    /// renames and transfers. One small GraphQL request.
+    ///
+    /// Most requests follow renames on their own, but GitHub search does
+    /// not: [`Self::list_pull_requests`] under an old name finds nothing.
+    /// Callers that connected locally should confirm in the background and
+    /// switch to the returned client if its repository differs.
+    pub async fn confirm_repository(&self) -> Result<Self, ForgeError> {
+        let request = GraphqlRequest::new(
+            documents::REPOSITORY,
+            json!({ "owner": self.repository.owner, "name": self.repository.name }),
+        );
+        let data = self.query("repository", &request).await?;
+        let view: RepositoryView =
+            decode_value("repository", take_at("repository", data, "/repository")?)?;
+        Ok(Self {
+            repo_root: self.repo_root.clone(),
+            repository: repository_ref(&view)?,
+            confirmed: true,
+        })
     }
 
     /// The pull request for the checked-out branch, found the way
@@ -163,6 +234,43 @@ impl GitHub {
             .collect_pull_request_pages(&variables, &shell.head_oid, first)
             .await?;
         Ok(shell.finish(pages))
+    }
+
+    /// Everything about several pull requests, as [`Self::load_pull_request`]
+    /// returns it for each, in the order of `numbers` (repeats dropped).
+    ///
+    /// Up to ten pull requests share one GraphQL request, so a batch costs
+    /// one round trip instead of one per pull request. A pull request whose
+    /// collections overflow their first page costs its follow-up requests
+    /// as it would alone; every result is complete, never truncated. The
+    /// batch fails as a whole, as when one of the numbers does not exist.
+    pub async fn load_pull_requests(
+        &self,
+        numbers: &[u64],
+    ) -> Result<Vec<PullRequest>, ForgeError> {
+        let mut unique = Vec::with_capacity(numbers.len());
+        for number in numbers {
+            if !unique.contains(number) {
+                unique.push(*number);
+            }
+        }
+        let mut pull_requests = Vec::with_capacity(unique.len());
+        for batch in unique.chunks(PULL_REQUEST_BATCH) {
+            let request = pull_requests_request(&self.repository, batch);
+            let data: PullRequestsData = decode_value(
+                "pull requests",
+                self.query("pull requests", &request).await?,
+            )?;
+            for (number, data) in data.into_each(batch)? {
+                let (shell, first) = data.split(number)?;
+                let variables = pull_request_variables(&self.repository, number);
+                let pages = self
+                    .collect_pull_request_pages(&variables, &shell.head_oid, first)
+                    .await?;
+                pull_requests.push(shell.finish(pages));
+            }
+        }
+        Ok(pull_requests)
     }
 
     async fn collect_pull_request_pages(
@@ -631,6 +739,46 @@ mod tests {
 
         #[tokio::test]
         #[ignore = "talks to github.com through gh"]
+        async fn confirming_follows_a_rename_that_search_does_not() {
+            // rust-lang/rustup was once rust-lang/rustup.rs.
+            let old_name = GitHub::unconfirmed(
+                repo_root(),
+                RepositoryRef {
+                    host: "github.com".into(),
+                    owner: "rust-lang".into(),
+                    name: "rustup.rs".into(),
+                },
+            );
+            let confirmed = old_name.confirm_repository().await.unwrap();
+            assert_eq!(confirmed.repository().name_with_owner(), "rust-lang/rustup");
+            assert!(confirmed.is_repository_confirmed());
+
+            let filter = PullRequestListFilter::AllOpen;
+            let stale = old_name.list_pull_requests(filter).await.unwrap();
+            assert_eq!(stale.total_count, 0, "search does not follow renames");
+            let current = confirmed.list_pull_requests(filter).await.unwrap();
+            assert!(current.total_count > 0);
+        }
+
+        #[tokio::test]
+        #[ignore = "talks to github.com through gh"]
+        async fn a_batch_loads_what_single_loads_do() {
+            let github = GitHub::connect(repo_root()).await.unwrap();
+            let batch = github.load_pull_requests(&[16, 15, 16]).await.unwrap();
+            let numbers = batch
+                .iter()
+                .map(|pull_request| pull_request.summary.number)
+                .collect::<Vec<_>>();
+            assert_eq!(numbers, [16, 15]);
+            assert_eq!(batch[0], github.load_pull_request(16).await.unwrap());
+            assert!(matches!(
+                github.load_pull_requests(&[16, 99_999]).await,
+                Err(ForgeError::NotFound { .. })
+            ));
+        }
+
+        #[tokio::test]
+        #[ignore = "talks to github.com through gh"]
         async fn follows_review_thread_pages() {
             // tokio-rs/tokio#2273 has 74 review threads, more than one page.
             let github = GitHub::new(
@@ -664,7 +812,17 @@ mod tests {
                 owner: "Scott-fo".into(),
                 name: "vigil".into(),
             };
-            for (name, document) in documents::QUERIES.iter().chain(documents::MUTATIONS) {
+            let built = documents::built_queries();
+            let all = documents::QUERIES
+                .iter()
+                .chain(documents::MUTATIONS)
+                .map(|(name, document)| (*name, *document))
+                .chain(
+                    built
+                        .iter()
+                        .map(|(name, document)| (*name, document.as_str())),
+                );
+            for (name, document) in all {
                 let body = serde_json::to_vec(&json!({
                     "query": format!("{document}\nquery VigilSchemaProbe {{ viewer {{ login }} }}\n"),
                     "operationName": "VigilSchemaProbe",

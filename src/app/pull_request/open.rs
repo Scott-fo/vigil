@@ -4,28 +4,56 @@ use tokio::task;
 
 use crate::{
     event::Event,
-    forge::{ForgeError, PullRequest, PullRequestSummary},
+    forge::{ForgeError, PullRequest, PullRequestSummary, Snapshot},
     git::{self, FetchedPullRequest, PullRequestFetch, PullRequestFetchError},
 };
 
 use super::{
     super::{ActivePane, App, ReviewMode, Screen, SnackbarVariant},
     PullRequestEvent, PullRequestSelection, PullRequestTimer,
-    state::{PollOutcome, PullRequestPage, ReviewOrigin},
+    prefetch::{OPEN_WAITS_FOR_PREFETCH, wait_for_landing},
+    saved::request_time,
+    state::{DetailOutcome, PollOutcome, PullRequestPage, ReviewOrigin},
     task::spawn_ticker,
 };
 
 /// How often the pull request under review is checked for new commits.
 const OPEN_PULL_REQUEST_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Where opening a pull request gets its commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommitSource {
+    /// The head GitHub last reported, straight from the object store when
+    /// its commits are already there; a fetch only when they are not.
+    LocalFirst,
+    /// Always fetch, for when the user asks for the newest commits.
+    Fetch,
+}
+
 impl App {
-    /// Fetches `summary`'s commits and opens it in the review screen. The
-    /// review switches over once the fetch lands; until then the current
-    /// review stays up. `origin` decides where Esc goes back to.
+    /// Opens `summary` in the review screen. When its head and base commits
+    /// are already local the review switches over in milliseconds; otherwise
+    /// they are fetched first, and until the fetch lands the current review
+    /// stays up. Its saved detail, if any, shows until the live one loads.
+    /// `origin` decides where Esc goes back to.
+    ///
+    /// `summary` must name the pull request's current head and base, as a
+    /// lookup, the current-branch chip, or a current list row does (see
+    /// [`RowCurrency`](super::list::RowCurrency)): its commits are trusted
+    /// when they are local. An outdated list row is looked up first instead.
     pub(in crate::app) fn open_pull_request(
         &mut self,
         summary: PullRequestSummary,
         origin: ReviewOrigin,
+    ) {
+        self.start_opening_pull_request(summary, origin, CommitSource::LocalFirst);
+    }
+
+    fn start_opening_pull_request(
+        &mut self,
+        summary: PullRequestSummary,
+        origin: ReviewOrigin,
+        source: CommitSource,
     ) {
         if !self.request_forge_connection() {
             return;
@@ -37,15 +65,41 @@ impl App {
         let request = PullRequestFetch {
             repository: github.repository().clone(),
             number,
+            head_oid: summary.head_oid.clone(),
             base_oid: summary.base_oid.clone(),
             base_ref_name: summary.base_ref_name.clone(),
         };
+        if self.pull_requests.lookup_in_flight() {
+            // `begin_open` drops it; its "looking up" status goes too.
+            self.status_message = Some(self.current_status_message());
+        }
         let (fetch_id, detail_id) = self.pull_requests.begin_open(summary, origin);
-        self.status_message = Some(format!("fetching pull request #{number}…"));
+        // A prefetch fetching these commits would race this open for the
+        // same ref; let it land, then take what it brought. A prefetch that
+        // does not land soon is left behind.
+        let prefetch_landing = self.pull_requests.prefetch().commits_landing(number);
 
         let repo_root = self.repo_root.clone();
         let sender = self.events.sender();
         let fetch = task::spawn(async move {
+            if let Some(landing) = prefetch_landing {
+                let _ = sender.send(Event::PullRequest(PullRequestEvent::FetchStarted {
+                    request_id: fetch_id,
+                }));
+                wait_for_landing(landing, OPEN_WAITS_FOR_PREFETCH).await;
+            }
+            if source == CommitSource::LocalFirst
+                && let Some(local) = git::resolve_local_pull_request(&repo_root, &request).await
+            {
+                let _ = sender.send(Event::PullRequest(PullRequestEvent::Fetched {
+                    request_id: fetch_id,
+                    result: Ok(local),
+                }));
+                return;
+            }
+            let _ = sender.send(Event::PullRequest(PullRequestEvent::FetchStarted {
+                request_id: fetch_id,
+            }));
             let result = git::fetch_pull_request(&repo_root, &request).await;
             let _ = sender.send(Event::PullRequest(PullRequestEvent::Fetched {
                 request_id: fetch_id,
@@ -54,6 +108,16 @@ impl App {
         });
         self.pull_requests.attach_fetch(fetch_id, fetch);
         self.spawn_pull_request_detail_load(github, detail_id, number);
+        self.read_saved_pull_request(number);
+    }
+
+    /// The commits were not local, so opening waits on the network: say so.
+    pub(super) fn handle_pull_request_fetch_started(&mut self, request_id: u64) -> bool {
+        let Some(number) = self.pull_requests.fetching_number(request_id) else {
+            return false;
+        };
+        self.status_message = Some(format!("fetching pull request #{number}…"));
+        true
     }
 
     fn spawn_pull_request_detail_load(
@@ -74,7 +138,8 @@ impl App {
     }
 
     /// Refetches the pull request under review and reloads its diff and
-    /// detail (the `r` key in pull request mode).
+    /// detail (the `r` key in pull request mode). Always fetches, even when
+    /// the known head is local: the user is asking for newer commits.
     pub(in crate::app) fn reload_open_pull_request(&mut self) {
         let Some((summary, origin)) = self
             .pull_requests
@@ -83,7 +148,7 @@ impl App {
         else {
             return;
         };
-        self.open_pull_request(summary, origin);
+        self.start_opening_pull_request(summary, origin, CommitSource::Fetch);
     }
 
     /// Esc in a review opened from the list: ends the review and shows the
@@ -144,8 +209,16 @@ impl App {
     ) -> color_eyre::Result<()> {
         let selection = PullRequestSelection::new(&summary, &fetched);
         let reloading = self.pull_requests.open_number() == Some(summary.number);
+        let number = summary.number;
         if let Some(replaced) = self.pull_requests.enter(summary, fetched.head_oid.clone()) {
             self.spawn_pull_request_ref_cleanup(replaced);
+        }
+        // Detail that landed during the fetch may already know of a newer
+        // head or base; `enter` clears the notices otherwise.
+        if self.pull_request_has_newer_head() {
+            self.announce_newer_head(number);
+        } else if self.pull_request_base_moved() {
+            self.announce_moved_base(number);
         }
         if !reloading {
             self.load_pull_request_drafts();
@@ -180,8 +253,20 @@ impl App {
         request_id: u64,
         result: Result<PullRequest, ForgeError>,
     ) -> bool {
-        if !self.pull_requests.finish_detail(request_id, result) {
+        let live = result.as_ref().ok().cloned();
+        let requested_at = self.pull_requests.detail_requested_at();
+        let Some(outcome) = self.pull_requests.finish_detail(request_id, result) else {
             return false;
+        };
+        if let Some(detail) = live {
+            self.save_pull_request(Snapshot::new(detail, request_time(requested_at)));
+        }
+        if let Some(number) = self.pull_requests.open_number() {
+            match outcome {
+                DetailOutcome::HeadMoved => self.announce_newer_head(number),
+                DetailOutcome::BaseMoved => self.announce_moved_base(number),
+                DetailOutcome::Applied => {}
+            }
         }
         if let Some(error) = self
             .pull_requests
@@ -241,10 +326,7 @@ impl App {
             None | Some(PollOutcome::Unchanged) => false,
             Some(PollOutcome::HeadMoved { first_notice }) => {
                 if first_notice && let Some(number) = self.pull_requests.open_number() {
-                    self.show_snackbar(
-                        format!("pull request #{number} has new commits · r to reload"),
-                        SnackbarVariant::Info,
-                    );
+                    self.announce_newer_head(number);
                 }
                 true
             }
@@ -253,6 +335,20 @@ impl App {
                 true
             }
         }
+    }
+
+    fn announce_newer_head(&mut self, number: u64) {
+        self.show_snackbar(
+            format!("pull request #{number} has new commits · r to reload"),
+            SnackbarVariant::Info,
+        );
+    }
+
+    fn announce_moved_base(&mut self, number: u64) {
+        self.show_snackbar(
+            format!("pull request #{number} base moved · r to reload"),
+            SnackbarVariant::Info,
+        );
     }
 
     /// Reloads reviews, comments, and checks for the pull request under

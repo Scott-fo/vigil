@@ -103,6 +103,11 @@ impl App {
             return false;
         }
         if self.pull_requests.pending() != Some(PendingAction::OpenCurrentBranch) {
+            // Opening the chip is the likeliest next step; have its detail
+            // saved by then.
+            if let Ok(Some(summary)) = &result {
+                self.prefetch_current_branch_detail(summary);
+            }
             return true;
         }
         self.pull_requests.take_pending();

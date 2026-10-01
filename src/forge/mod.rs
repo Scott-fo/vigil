@@ -14,19 +14,61 @@
 //!   [`GitHub::list_pull_requests`] return [`PullRequestSummary`] rows.
 //! - [`GitHub::load_pull_request`] returns a complete [`PullRequest`]:
 //!   reviews, conversation, checks, merge state, and every
-//!   [`ReviewThread`] with every comment.
+//!   [`ReviewThread`] with every comment. [`GitHub::load_pull_requests`]
+//!   loads several in one request, for prefetching.
 //! - [`GitHub::submit_review`], [`GitHub::reply_to_thread`],
 //!   [`GitHub::resolve_thread`], [`GitHub::merge_pull_request`], and friends
 //!   write back.
 //!
+//! [`ForgeCache`] keeps the last list pages and pull request details on
+//! disk between sessions, so screens can show them at once while a live
+//! load runs. It is separate from the client: callers read and save
+//! [`Snapshot`]s themselves.
+//!
 //! # Cost and staleness
 //!
-//! Every operation is async and spawns `gh` (tens to hundreds of
-//! milliseconds plus network). Nothing is cached: each result is a
-//! snapshot, and callers that display long-lived state own refreshing it.
+//! [`GitHub::connect`] usually costs two local `git` processes: when the
+//! remotes settle the repository unambiguously on `github.com`, it never runs
+//! `gh`. Otherwise (GitHub Enterprise, ssh host aliases, ties between
+//! remotes, `GH_REPO`/`GH_HOST` overrides) it asks `gh repo view`, one API
+//! round trip. Either way it happens once per session, and because the fast
+//! path does not run `gh`, a missing or logged-out `gh` first shows up as
+//! the error of the first request rather than of `connect`.
+//!
+//! The fast path names the repository as the remote URL spells it, which is
+//! stale after a rename or transfer. Most requests follow renames anyway,
+//! but GitHub search does not, so a list under the old name comes back
+//! empty. [`GitHub::confirm_repository`] asks GitHub for the canonical name
+//! in one small GraphQL request (about one rate-limit point); run it in the
+//! background after a local connect ([`GitHub::is_repository_confirmed`] is
+//! false) and switch clients if the name changed. The client is usable
+//! before it answers.
+//!
+//! Every other [`GitHub`] operation is async and spawns `gh` (tens to
+//! hundreds of milliseconds plus network). The client caches nothing: each
+//! result is a snapshot, and callers that display long-lived state own
+//! refreshing it. A cached [`Snapshot`] is older still and only for display
+//! until a live load replaces it; see [`ForgeCache`] for its staleness
+//! contract and write policy.
 //! Reads spend GitHub's GraphQL rate limit (5,000 points an hour); a full
 //! pull request load costs about one point, plus one request per extra page
 //! on pull requests with more than 50 threads or 100 comments or checks.
+//! [`GitHub::load_pull_requests`] asks for up to ten pull requests in one
+//! request, which GitHub prices at six points for ten (extra pages cost as
+//! they would alone).
+//!
+//! The app prefetches the details of the first ten rows of each list page
+//! it loads live, and of the current branch's pull request after each
+//! lookup, but only those whose saved detail is missing or was saved for
+//! another `updated_at`, head, or check rollup
+//! ([`ForgeCache::stale_pull_requests`], a local lookup). So a list refresh
+//! in which nothing changed costs no request beyond the list itself, and a
+//! changed pull request (including one whose CI moved on) costs its share
+//! of one batch. The worst case, all ten rows changing between every
+//! 60-second refresh while the list stays open, as when all of them are
+//! running CI, is six points a minute: about 7% of the hourly budget. A
+//! failed prefetch pauses for five minutes, fifteen after a rate limit,
+//! rather than retrying.
 //! GitHub computes mergeability in the background, so a fresh load may
 //! report [`Mergeability::Unknown`] until a later one. Dropping a future
 //! kills its `gh` process; for writes that leaves it unknown whether the
@@ -38,6 +80,8 @@
 //! logged-out `gh`, a checkout without a GitHub remote, missing objects,
 //! rate limiting, and invalid input from other failures. Invalid review
 //! input is rejected before any request is sent.
+//! [`ForgeError::leaves_forge_unavailable`] picks out the failures that will
+//! repeat on every request until the user fixes `gh` or the remote.
 //!
 //! # What callers should not rely on
 //!
@@ -45,13 +89,16 @@
 //! touches local branches, the working tree, or git refs, so after a merge
 //! the caller decides whether to fetch or switch branches.
 
+mod cache;
 mod client;
 mod error;
 mod gh;
+mod repository;
 mod request;
 mod types;
 mod wire;
 
+pub use self::cache::{ForgeCache, Snapshot};
 pub use self::client::GitHub;
 pub use self::error::ForgeError;
 pub use self::types::{

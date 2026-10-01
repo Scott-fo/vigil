@@ -1,16 +1,43 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use nucleo_matcher::{
     Config as MatcherConfig, Matcher,
     pattern::{CaseMatching, Normalization, Pattern},
 };
 
-use crate::forge::{ForgeError, PullRequestList, PullRequestListFilter, PullRequestSummary};
+use crate::forge::{
+    ForgeError, PullRequestList, PullRequestListFilter, PullRequestSummary, Snapshot,
+};
 
 use super::{
     super::navigation::{clamp_index, move_index},
+    saved::Freshness,
     task::{OwnedTask, RequestSlot},
 };
+
+/// How often the list reloads while it is on screen; a live page older
+/// than this may be out of date.
+pub(super) const LIST_POLL_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Whether a list row names its pull request's current head and base
+/// closely enough to open from.
+///
+/// Opening trusts a summary's commits when they are local, so an outdated
+/// row would review the commits it names, not the pull request's current
+/// ones, and diff them against a base the head may have been rebased off.
+/// An outdated row is looked up first and opened from the live summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum RowCurrency {
+    /// From a list load that started within the last list refresh, and not
+    /// behind what this session's review of the pull request knows.
+    Current,
+    /// From a saved page, a load older than a list refresh or followed by a
+    /// failed reload, or behind the head this session's review knows.
+    Outdated,
+}
 
 /// The tabs of the pull request list, in display order.
 pub const PULL_REQUEST_LIST_FILTERS: [PullRequestListFilter; 3] = [
@@ -28,15 +55,26 @@ pub enum QueryInput {
     Editing,
 }
 
+/// A tab's rows and how current they are.
+#[derive(Debug)]
+struct LoadedPage {
+    list: PullRequestList,
+    freshness: Freshness,
+}
+
 /// State behind the pull request list screen. Loaded pages are kept per
-/// filter so switching tabs shows the last page at once while it reloads.
+/// filter so switching tabs shows the last page at once while it reloads;
+/// a tab with nothing loaded yet can show a saved page until its first
+/// load lands.
 #[derive(Debug)]
 pub(in crate::app) struct PullRequestListState {
     filter: PullRequestListFilter,
-    loaded: HashMap<PullRequestListFilter, PullRequestList>,
+    loaded: HashMap<PullRequestListFilter, LoadedPage>,
     error: Option<(PullRequestListFilter, ForgeError)>,
     request: RequestSlot,
     requested_filter: Option<PullRequestListFilter>,
+    /// When the running or last load started.
+    requested_at: Option<Instant>,
     /// Indices into the current filter's page that match the query.
     visible: Vec<usize>,
     selected: usize,
@@ -55,6 +93,7 @@ impl Default for PullRequestListState {
             error: None,
             request: RequestSlot::default(),
             requested_filter: None,
+            requested_at: None,
             visible: Vec::new(),
             selected: 0,
             scroll: 0,
@@ -105,8 +144,10 @@ impl PullRequestListState {
         self.set_filter(PULL_REQUEST_LIST_FILTERS[next])
     }
 
-    pub(in crate::app) fn begin_load(&mut self) -> (u64, PullRequestListFilter) {
+    /// Starts loading the shown tab at `now`, which dates its answer.
+    pub(in crate::app) fn begin_load(&mut self, now: Instant) -> (u64, PullRequestListFilter) {
         self.requested_filter = Some(self.filter);
+        self.requested_at = Some(now);
         (self.request.begin(), self.filter)
     }
 
@@ -132,7 +173,14 @@ impl PullRequestListState {
         let selected_number = self.selected_summary().map(|summary| summary.number);
         match result {
             Ok(list) => {
-                self.loaded.insert(filter, list);
+                let requested_at = self.requested_at.unwrap_or_else(Instant::now);
+                self.loaded.insert(
+                    filter,
+                    LoadedPage {
+                        list,
+                        freshness: Freshness::Live { requested_at },
+                    },
+                );
                 if self
                     .error
                     .as_ref()
@@ -152,6 +200,48 @@ impl PullRequestListState {
         true
     }
 
+    /// Shows a saved page for `filter` if the tab has nothing yet. Returns
+    /// whether the page was taken; it never replaces a loaded page, so a
+    /// saved page that arrives after the live one is dropped.
+    pub(in crate::app) fn show_saved(
+        &mut self,
+        filter: PullRequestListFilter,
+        snapshot: Snapshot<PullRequestList>,
+    ) -> bool {
+        if self.loaded.contains_key(&filter) {
+            return false;
+        }
+        self.loaded.insert(
+            filter,
+            LoadedPage {
+                list: snapshot.value,
+                freshness: Freshness::Saved {
+                    fetched_at: snapshot.fetched_at,
+                },
+            },
+        );
+        if filter == self.filter {
+            self.refilter();
+        }
+        true
+    }
+
+    /// Forgets every tab's rows and errors, as when the repository turns out
+    /// to have been renamed: GitHub search under the old name found nothing,
+    /// and each tab should load (and read its saved page) under the new one.
+    pub(in crate::app) fn clear_pages(&mut self) {
+        self.loaded.clear();
+        self.error = None;
+        self.selected = 0;
+        self.scroll = 0;
+        self.refilter();
+    }
+
+    /// Whether `filter`'s tab has rows to show, live or saved.
+    pub(in crate::app) fn has_page(&self, filter: PullRequestListFilter) -> bool {
+        self.loaded.contains_key(&filter)
+    }
+
     /// Stops a running load and periodic refresh, as when the screen closes.
     pub(in crate::app) fn stop(&mut self) {
         self.request.cancel();
@@ -164,7 +254,20 @@ impl PullRequestListState {
     }
 
     pub(in crate::app) fn page(&self) -> Option<&PullRequestList> {
-        self.loaded.get(&self.filter)
+        self.loaded.get(&self.filter).map(|page| &page.list)
+    }
+
+    /// How current the shown tab's rows are; `None` when it has none.
+    pub(in crate::app) fn freshness(&self) -> Option<&Freshness> {
+        self.page_freshness(self.filter)
+    }
+
+    /// How current `filter`'s rows are; `None` when it has none.
+    pub(in crate::app) fn page_freshness(
+        &self,
+        filter: PullRequestListFilter,
+    ) -> Option<&Freshness> {
+        self.loaded.get(&filter).map(|page| &page.freshness)
     }
 
     pub(in crate::app) fn error(&self) -> Option<&ForgeError> {
@@ -176,7 +279,7 @@ impl PullRequestListState {
 
     /// Total count GitHub reported for `filter`'s last load.
     pub(in crate::app) fn total_count(&self, filter: PullRequestListFilter) -> Option<u64> {
-        self.loaded.get(&filter).map(|list| list.total_count)
+        self.loaded.get(&filter).map(|page| page.list.total_count)
     }
 
     pub(in crate::app) fn visible_rows(&self) -> Vec<&PullRequestSummary> {
@@ -275,7 +378,7 @@ impl PullRequestListState {
     }
 
     fn refilter(&mut self) {
-        let Some(page) = self.loaded.get(&self.filter) else {
+        let Some(page) = self.loaded.get(&self.filter).map(|page| &page.list) else {
             self.visible.clear();
             self.selected = 0;
             return;
