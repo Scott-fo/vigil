@@ -350,6 +350,66 @@ pub(super) fn build_highlight_config(
             "",
             "",
         )?,
+        "kotlin" => register_highlight_config(
+            &mut config,
+            "kotlin",
+            tree_sitter_kotlin_sg::LANGUAGE.into(),
+            "kotlin",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/nvim-treesitter/kotlin/highlights.scm"
+            )),
+            "",
+            "",
+        )?,
+        "groovy" => register_highlight_config(
+            &mut config,
+            "groovy",
+            tree_sitter_groovy::LANGUAGE.into(),
+            "groovy",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/tree-sitter-groovy/highlights.scm"
+            )),
+            "",
+            "",
+        )?,
+        "xml" => register_highlight_config(
+            &mut config,
+            "xml",
+            tree_sitter_xml::LANGUAGE_XML.into(),
+            "xml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/nvim-treesitter/xml/highlights.scm"
+            )),
+            "",
+            "",
+        )?,
+        "toml" => register_highlight_config(
+            &mut config,
+            "toml",
+            tree_sitter_toml_ng::LANGUAGE.into(),
+            "toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/nvim-treesitter/toml/highlights.scm"
+            )),
+            "",
+            "",
+        )?,
+        "properties" => register_highlight_config(
+            &mut config,
+            "properties",
+            tree_sitter_properties::LANGUAGE.into(),
+            "properties",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vendor/nvim-treesitter/properties/highlights.scm"
+            )),
+            "",
+            "",
+        )?,
         _ => return Ok(None),
     }
 

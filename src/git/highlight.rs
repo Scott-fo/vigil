@@ -90,6 +90,11 @@ impl HighlightRegistry {
             "css",
             "nix",
             "zig",
+            "kotlin",
+            "groovy",
+            "xml",
+            "toml",
+            "properties",
         ]
     }
 
@@ -256,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn highlights_rust_go_typescript_zig_and_markdown_without_falling_back() {
+    fn highlights_common_and_android_filetypes_without_falling_back() {
         let registry = HighlightRegistry::new().expect("highlight registry should initialize");
 
         for (filetype, line) in [
@@ -265,6 +270,11 @@ mod tests {
             ("typescript", "const value: Foo = await loadUser(id);"),
             ("tsx", "<Card title=\"demo\">{value}</Card>"),
             ("zig", "const value = Foo.init(bar);"),
+            ("kotlin", "fun buildUser(id: Int): User = User(id)"),
+            ("groovy", "implementation \"androidx.core:core-ktx:1.13.1\""),
+            ("xml", "<TextView android:id=\"@+id/title\" />"),
+            ("toml", "kotlin = \"2.0.0\""),
+            ("properties", "android.useAndroidX=true"),
             ("markdown", "# Heading"),
         ] {
             let spans = highlight_source_lines(&registry, filetype, line)
@@ -276,6 +286,26 @@ mod tests {
                 "expected syntax highlighting for {filetype}, got fallback spans: {spans:?}"
             );
         }
+    }
+
+    #[test]
+    fn kotlin_highlighting_applies_regex_predicates_and_keeps_nullable_types() {
+        let registry = HighlightRegistry::new_for_filetypes(["kotlin"])
+            .expect("kotlin registry should initialize");
+        let source = "fun load(bundle: Bundle?) {\n    val count = 1\n    val MAX_COUNT = 3\n}";
+        let lines = highlight_source_lines(&registry, "kotlin", source)
+            .expect("kotlin highlighting should succeed");
+        let name_of = |line: usize, text: &str| {
+            let line_source = source.split('\n').nth(line).unwrap();
+            lines[line]
+                .iter()
+                .find(|token| &line_source[token.start..token.end] == text)
+                .and_then(|token| token.highlight_name)
+        };
+
+        assert_eq!(name_of(0, "Bundle"), Some("type"));
+        assert_eq!(name_of(1, "count"), Some("variable"));
+        assert_eq!(name_of(2, "MAX_COUNT"), Some("constant"));
     }
 
     #[test]

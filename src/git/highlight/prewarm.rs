@@ -42,6 +42,11 @@ fn sample_source_for_filetype(filetype: &'static str) -> Option<&'static str> {
         "zig" => Some(
             "const User = struct { id: usize }; fn buildUser(id: usize) User { return .{ .id = id }; }",
         ),
+        "kotlin" => Some("fun buildUser(id: Int): User = User(id)"),
+        "groovy" => Some("dependencies { implementation \"androidx.core:core-ktx:1.13.1\" }"),
+        "xml" => Some("<TextView android:id=\"@+id/title\" />"),
+        "toml" => Some("[versions]\nkotlin = \"2.0.0\""),
+        "properties" => Some("android.useAndroidX=true"),
         "markdown" => Some("# Prefetch"),
         _ => None,
     }
