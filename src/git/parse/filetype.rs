@@ -18,7 +18,12 @@ pub(crate) fn resolve_diff_filetype(path: &str) -> Option<&'static str> {
             "cc" | "cp" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Some("cpp"),
             "cs" => Some("csharp"),
             "sh" | "bash" | "zsh" | "ksh" => Some("bash"),
-            "java" => Some("java"),
+            "java" | "aidl" => Some("java"),
+            "kt" | "kts" => Some("kotlin"),
+            "gradle" | "groovy" | "gvy" | "gy" | "gsh" => Some("groovy"),
+            "xml" | "xsd" | "xsl" | "xslt" | "svg" | "plist" => Some("xml"),
+            "toml" => Some("toml"),
+            "properties" => Some("properties"),
             "rb" => Some("ruby"),
             "php" | "php3" | "php4" | "php5" | "phtml" => Some("php"),
             "scala" | "sc" => Some("scala"),
@@ -42,5 +47,22 @@ mod tests {
     #[test]
     fn resolves_zig_filetype_from_extension() {
         assert_eq!(resolve_diff_filetype("src/main.zig"), Some("zig"));
+    }
+
+    #[test]
+    fn resolves_android_project_filetypes() {
+        for (path, expected) in [
+            ("app/src/main/java/com/example/MainActivity.kt", "kotlin"),
+            ("app/build.gradle.kts", "kotlin"),
+            ("settings.gradle.kts", "kotlin"),
+            ("app/build.gradle", "groovy"),
+            ("app/src/main/AndroidManifest.xml", "xml"),
+            ("app/src/main/res/layout/activity_main.xml", "xml"),
+            ("gradle/libs.versions.toml", "toml"),
+            ("gradle.properties", "properties"),
+            ("app/src/main/aidl/com/example/IService.aidl", "java"),
+        ] {
+            assert_eq!(resolve_diff_filetype(path), Some(expected), "{path}");
+        }
     }
 }
